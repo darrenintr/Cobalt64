@@ -47,7 +47,7 @@ constexpr bool isolated(const Isolation &g) {
            g.ownedPhysicalGpuPageTablePinned &&
            g.dmaIommuMappingHeld &&
            g.deviceCacheMaintenanceAvailable &&
-           g.exclusiveSdma0Queue &&
+           (g.exclusiveSdma0Queue || g.exclusiveSdma0Queue1) &&
            g.independentPowerCycleAndRecovery;
 }
 enum class Verdict : uint8_t {
@@ -123,6 +123,7 @@ inline Report run(const Isolation &e,
     // All validation is done BEFORE any MMIO write. The booleans below
     // are NOT a substitute for a hardware-derived proof on real silicon.
     if(!isolated(e) || !boundPlans(mmPlan,gfxPlan,table,copy) ||
+       (copy.queueIndex==0u && !e.exclusiveSdma0Queue) ||
        (copy.queueIndex==1u && !e.exclusiveSdma0Queue1) ||
        !hubPolls || hubPolls>100000u ||
        !fencePolls || fencePolls>100000u ||
