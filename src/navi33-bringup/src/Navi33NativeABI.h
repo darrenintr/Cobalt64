@@ -11,7 +11,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 4u /* adds owned, opt-in DMA staging selectors */
+#define N33_ABI_VERSION 5u /* adds read-only GMC11 paired-hub VRAM geometry */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -33,7 +33,8 @@ enum n33_selector {
   N33_SEL_PSP_STATUS=8, N33_SEL_SDMA_STATUS=9,
   N33_SEL_DMA_STAGE=10, N33_SEL_DMA_STATUS=11,
   N33_SEL_DMA_RELEASE=12, N33_SEL_HW_PREFLIGHT=13, N33_SEL_HW_ROM_PREFLIGHT=14,
-  N33_SEL_COUNT=15
+  N33_SEL_VRAM_GEOMETRY=15,
+  N33_SEL_COUNT=16
 };
 // PSP status is deliberately read-only, never a readiness flag for GFX.
 enum n33_psp_state {
@@ -104,6 +105,25 @@ struct n33_hw_preflight {
 };
 N33_STATIC_ASSERT(sizeof(struct n33_hw_preflight)==64,
                   "N33 hardware preflight ABI must be 64 bytes");
+// MMHUB+GFXHUB frame buffer registers: READ-ONLY measurements, never
+// evidence of free VRAM, BO ownership, GPU DMA or Metal acceleration.
+enum n33_vram_state {
+  N33_VRAM_DISABLED=0, N33_VRAM_NO_ROM=1, N33_VRAM_BAD_DISCOVERY=2,
+  N33_VRAM_NO_BAR5=3, N33_VRAM_BAD_OFFSETS=4, N33_VRAM_MAP_FAILED=5,
+  N33_VRAM_MMIO_FAILED=6, N33_VRAM_UNSTABLE=7,
+  N33_VRAM_DISAGREE=8, N33_VRAM_PAIRED_READ=9
+};
+#define N33_VRAM_FLAG_PAIRED (1u<<0)
+#define N33_VRAM_FLAG_BAR0_ASSIGNED (1u<<1)
+struct n33_vram_geometry_status {
+  uint32_t abi_version,size,state,flags;
+  uint32_t mm_fb_base,mm_fb_top,mm_fb_offset;
+  uint32_t gfx_fb_base,gfx_fb_top,gfx_fb_offset;
+  uint32_t bar0_mib,bar5_kib,read_count,mmhub_revision;
+  uint64_t candidate_physical_fb_base;
+};
+N33_STATIC_ASSERT(sizeof(struct n33_vram_geometry_status)==64,
+                  "N33 read-only VRAM geometry status must be 64 bytes");
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;
