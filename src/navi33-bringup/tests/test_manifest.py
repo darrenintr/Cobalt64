@@ -117,6 +117,13 @@ assert "kGpuRingSubmissionEnabled=false" in (root/"src/Navi33Sdma6Staging.h").re
 assert "#include \"Navi33Sdma6MmioQueue.h\"" not in source
 assert "#include \"Navi33Sdma6MmioQueue.h\"" not in client
 assert "N33_CAP_HW_SDMA" not in client
+# BAR0 write prototype must NEVER be linked into the live diagnostic Kext.
+for caller in (source,client):
+    assert '#include "Navi33Gmc11VramUpload.h"' not in caller
+assert "N33_SEL_VRAM_GEOMETRY" in client
+assert '"navi33-vram-read"' in source and '"navi33-vram-off"' in source
+assert "N33_CAP_ACCELERATION" not in source
+
 assert "kCanProgramGfxhub = false" in (root/"src/Navi33Gmc11Gart.h").read_text()
 assert "kCanSubmitToHardware = false" in (root/"src/Navi33Sdma6Ring.h").read_text()
 assert "kCanRingDoorbell = false" in (root/"src/Navi33Sdma6Ring.h").read_text()
