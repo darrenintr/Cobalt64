@@ -114,6 +114,8 @@ static void success() {
     a=q.stopAfterCompleted();
     assert(a.status==Code::Completed);
     assert(!(f.regs[kRbCntl]&kEnable));
+    assert(f.regs[kRbBase]==0u && f.regs[kRbBaseHi]==0u);
+    assert(f.regs[kRptr]==0u && f.regs[kWptr]==0u);
     assert(q.mayUnmapGpuMemory());
     assert(!q.requiresRecovery());
 }
@@ -176,6 +178,7 @@ static void refusalAndFaults() {
         assert(q.abortBeforeSubmit().status==Code::Completed);
         assert(q.mayUnmapGpuMemory());
         assert((f.regs[kRbCntl]&kEnable)==0u);
+        assert(f.regs[kRbBase]==0u && f.regs[kRbBaseHi]==0u);
         assert(q.submit().status==Code::Denied);
     }
 }
