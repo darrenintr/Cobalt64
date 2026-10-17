@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * N33N ABI v5 read-only RX7600 frame-buffer geometry probe.
+ * N33N ABI v6 read-only RX7600 framebuffer and NBIO capacity probe.
  * Compiled for macOS only. Requires a signed/loaded Navi33Probe Kext,
  * trusted ATY,bin_image IP Discovery, and explicit boot args:
  * navi33-probe=1 navi33-client=1 navi33-vram-read=1
@@ -25,6 +25,20 @@ static const char *stateText(uint32_t state) {
     case N33_VRAM_DISAGREE: return "MMHUB and GFXHUB disagree";
     case N33_VRAM_PAIRED_READ: return "matching read-only framebuffer geometry";
     default: return "unknown status";
+    }
+}
+static const char *capacityState(uint32_t state) {
+    switch(state) {
+    case N33_NBIO_NO_INVENTORY: return "NBIO IP not found";
+    case N33_NBIO_UNSUPPORTED: return "unsupported NBIO IP revision";
+    case N33_NBIO_MISSING_BASE: return "missing NBIO BAR5 base segment";
+    case N33_NBIO_BAD_OFFSET: return "NBIO register outside assigned BAR5";
+    case N33_NBIO_READ_FAILED: return "NBIO MMIO read error";
+    case N33_NBIO_UNSTABLE: return "NBIO memory size changed between reads";
+    case N33_NBIO_INVALID_CAPACITY: return "invalid NBIO MiB size";
+    case N33_NBIO_STABLE: return "stable NBIO register capacity";
+    case N33_NBIO_GEOMETRY_MISMATCH: return "capacity does not fit FB location";
+    default: return "unknown NBIO status";
     }
 }
 int main(int argc,char **argv) {
@@ -76,7 +90,19 @@ int main(int argc,char **argv) {
            status.bar0_mib,status.bar5_kib,status.read_count);
     printf("Candidate GPU physical FB base: 0x%llx\n",
            (unsigned long long)status.candidate_physical_fb_base);
-    puts("No GPU BO allocated; real VRAM size, free ranges, Queue0 ownership,");
-    puts("GART installation, hardware compute, and Metal remain UNPROVEN.");
-    return status.state==N33_VRAM_PAIRED_READ ? 0 : 7;
+    printf("NBIO4.3 capacity state: %u (%s); revision=%08x; reads=%u\\n",
+           status.nbio_state,capacityState(status.nbio_state),
+           status.nbio_revision,status.nbio_reads);
+    printf("Observed NBIO capacity: %u MiB\\n",status.nbio_memsize_mib);
+    if((status.flags&N33_VRAM_FLAG_MC_GEOMETRY_VALID)!=0u) {
+        printf("Cross-checked GPU MC start: 0x%llx; VRAM bytes: %llu\\n",
+               (unsigned long long)status.verified_mc_start,
+               (unsigned long long)status.verified_vram_bytes);
+    } else {
+        puts("No cross-checked GPU MC/VRAM geometry available.");
+    }
+    puts("No physical VRAM BO has been allocated or pinned by Cobalt64.");
+    puts("Free ranges, PCI/firmware/SDMA ownership, real GPU compute,");
+    puts("GART activation, and native Metal remain UNPROVEN.");
+    return (status.flags&N33_VRAM_FLAG_MC_GEOMETRY_VALID)!=0u ? 0 : 7;
 }
