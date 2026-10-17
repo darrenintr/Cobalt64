@@ -24,6 +24,7 @@ public:
     void releaseStageOwner(const void *client,uint64_t epoch);
     n33_psp_status pspStatus(); // opt-in, read-only MP0 sOS observation
     n33_sdma_status sdmaStatus(); // opt-in, read-only SDMA6 ring observation
+    n33_vram_geometry vramGeometry(); // read-only MMHUB3 FB location/offset
     n33_hw_preflight hardwarePreflight(const uint8_t *romBytes=nullptr,
                                      size_t romLength=0u); // no writes
     n33_capabilities nativeCapabilities() const {
