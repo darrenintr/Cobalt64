@@ -64,7 +64,8 @@ constexpr bool eligible(const Preconditions &p) {
 }
 enum class Code : uint8_t {
     NotBuilt, Denied, Invalid, Busy, ReadFailed, WriteFailed,
-    VerifyFailed, Ready, Submitted, Completed, Timeout, RecoveryRequired
+    VerifyFailed, Ready, Submitted, Completed, Timeout, RecoveryRequired,
+    Unstable
 };
 struct Request {
     uint64_t ringGpuVa=0u;  // actual device-mapped GPU VA, not OS IOVA
@@ -88,6 +89,29 @@ struct IO {
     ReadByte readByte=nullptr;
     Delay delayUs=nullptr;
 };
+// Two complete snapshots are a *conflict detector*, NOT an ownership
+// certificate. An independent PCI/firmware owner must already have
+// excluded all other agents before any register write is considered.
+constexpr uint32_t kSnapshotRegisters[8u]={
+    kRbCntl,kDoorbell,kRptr,kRptrHi,kWptr,kWptrHi,kRbBase,kRbBaseHi
+};
+struct QueueSnapshot {
+    uint32_t values[8u]{};
+};
+inline bool readQueueSnapshot(const IO &io,QueueSnapshot &out) {
+    if(!io.read)return false;
+    for(size_t i=0u;i<8u;++i) {
+        if(!io.read(io.ctx,kSnapshotRegisters[i],&out.values[i]) ||
+           out.values[i]==UINT32_MAX)return false;
+    }
+    return true;
+}
+inline bool sameQueueSnapshot(const QueueSnapshot &a,
+                              const QueueSnapshot &b) {
+    for(size_t i=0u;i<8u;++i)
+        if(a.values[i]!=b.values[i])return false;
+    return true;
+}
 struct Observation {
     Code status=Code::NotBuilt;
     uint32_t mmioWrites=0u;
@@ -132,17 +156,20 @@ public:
         if(!validRequest(req) || !io.read || !io.write ||
            !io.beforeGpu || !io.afterGpu || !io.readByte ||
            !io.delayUs) {result.status=Code::Invalid;return result;}
-        // Inspect the complete pre-existing ring state BEFORE the first write.
-        uint32_t ctl=0,db=0,rptr=0,rhi=0,wptr=0,whi=0;
-        if(!io.read(io.ctx,kRbCntl,&ctl) ||
-           !io.read(io.ctx,kDoorbell,&db) ||
-           !io.read(io.ctx,kRptr,&rptr) ||
-           !io.read(io.ctx,kRptrHi,&rhi) ||
-           !io.read(io.ctx,kWptr,&wptr) ||
-           !io.read(io.ctx,kWptrHi,&whi)) {
+        // Never infer a free queue merely from RB_ENABLE=0: stale
+        // pointers, firmware setup and a changing owner are all blockers.
+        QueueSnapshot first{},second{};
+        if(!readQueueSnapshot(io,first) ||
+           !readQueueSnapshot(io,second)) {
             result.status=Code::ReadFailed;return result;
         }
-        if((ctl&kEnable) || db!=0u || rptr || rhi || wptr || whi) {
+        if(!sameQueueSnapshot(first,second)) {
+            result.status=Code::Unstable;return result;
+        }
+        const uint32_t ctl=first.values[0u];
+        if((ctl&kEnable) || first.values[1u] || first.values[2u] ||
+           first.values[3u] || first.values[4u] || first.values[5u] ||
+           first.values[6u] || first.values[7u]) {
             result.status=Code::Busy;return result;
         }
         // Validate the exact pinned source, poisoned destination, COPY/FENCE
@@ -204,26 +231,34 @@ public:
         const uint32_t values[]={static_cast<uint32_t>(encoded),
                                  static_cast<uint32_t>(encoded>>32u),
                                  0u,0u,0u,0u,encodedCtl};
+        const uint32_t snapshotOld[7u]={
+            first.values[6u],first.values[7u],first.values[2u],
+            first.values[3u],first.values[4u],first.values[5u],
+            first.values[0u]
+        };
         uint32_t old[7]{};
         for(unsigned i=0;i<7u;++i) {
             if(!io.read(io.ctx,offsets[i],&old[i])) {
                 result.status=Code::ReadFailed;return result;
             }
+            if(old[i]!=snapshotOld[i]) {
+                result.status=Code::Unstable;return result;
+            }
         }
+        // An MMIO callback returning "false" could still have written
+        // silicon. From the first attempt onward the ring and its DMA
+        // backing are quarantined until INDEPENDENT hardware reset.
+        // Never try speculative software rollback on an unknown device.
+        touchedHardware_=true;
+        state_=Code::RecoveryRequired;
         unsigned written=0u;
         for(unsigned i=0;i<7u;++i) {
+            ++written; // count possibly-live attempts, not only successes
             if(!io.write(io.ctx,offsets[i],values[i])) {
-                // Unenabled queue: compensate *all* attempted writes.
-                bool restored=true;
-                for(unsigned j=0;j<=i;++j)
-                    if(!io.write(io.ctx,offsets[j],old[j]))
-                        restored=false;
                 result.mmioWrites=written;
-                result.status=restored?Code::WriteFailed:Code::RecoveryRequired;
-                if(!restored)state_=Code::RecoveryRequired;
+                result.status=Code::RecoveryRequired;
                 return result;
             }
-            ++written;
         }
         uint32_t verify=0u;
         for(unsigned i=0;i<7u;++i) {
@@ -383,7 +418,15 @@ public:
 #endif
     }
     bool requiresRecovery() const {return state_==Code::RecoveryRequired;}
-    bool mayUnmapGpuMemory() const {return state_==Code::Denied;}
+    // Even a completed queue or successfully restored register image does
+    // not prove that the GPU stopped using its GART/IOVA backing. Only an
+    // independent device reset plus VM-hub teardown can release memory.
+    bool requiresIndependentResetBeforeUnmap() const {
+        return touchedHardware_;
+    }
+    bool mayUnmapGpuMemory() const {
+        return state_==Code::Denied && !touchedHardware_;
+    }
 private:
 #ifdef COBALT_NAVI33_ENABLE_UNSAFE_MMIO
     bool restoreParked(uint32_t &writeCount) {
@@ -409,6 +452,7 @@ private:
     }
 #endif
     Code state_=Code::Denied;
+    bool touchedHardware_=false;
     Request req_{};
     IO io_{};
     [[maybe_unused]] uint32_t oldCtl_=0u;
