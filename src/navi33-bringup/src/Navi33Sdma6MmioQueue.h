@@ -239,6 +239,7 @@ public:
         req_=req;
         io_=io;
         oldCtl_=ctl;
+        for(unsigned i=0;i<7u;++i) savedRegisters_[i]=old[i];
         state_=Code::Ready;
         result.status=Code::Ready;
         result.mmioWrites=written;
@@ -355,13 +356,7 @@ public:
             o.status=Code::RecoveryRequired;
             return o;
         }
-        if(!io_.write(io_.ctx,kRbCntl,oldCtl_ & ~kEnable)) {
-            state_=Code::RecoveryRequired;
-            o.status=Code::RecoveryRequired;
-            return o;
-        }
-        ++o.mmioWrites;
-        if(!io_.read(io_.ctx,kRbCntl,&ctl) || (ctl&kEnable)) {
+        if(!restoreParked(o.mmioWrites)) {
             state_=Code::RecoveryRequired;
             o.status=Code::RecoveryRequired;
             return o;
@@ -379,14 +374,7 @@ public:
         if(state_!=Code::Completed) {
             o.status=Code::Denied;return o;
         }
-        const uint32_t disabled=oldCtl_ & ~kEnable;
-        if(!io_.write(io_.ctx,kRbCntl,disabled)) {
-            state_=Code::RecoveryRequired;
-            o.status=Code::RecoveryRequired;return o;
-        }
-        ++o.mmioWrites;
-        uint32_t ctl=0u;
-        if(!io_.read(io_.ctx,kRbCntl,&ctl) || (ctl&kEnable)) {
+        if(!restoreParked(o.mmioWrites)) {
             state_=Code::RecoveryRequired;
             o.status=Code::RecoveryRequired;return o;
         }
@@ -397,9 +385,33 @@ public:
     bool requiresRecovery() const {return state_==Code::RecoveryRequired;}
     bool mayUnmapGpuMemory() const {return state_==Code::Denied;}
 private:
+#ifdef COBALT_NAVI33_ENABLE_UNSAFE_MMIO
+    bool restoreParked(uint32_t &writeCount) {
+        const uint32_t registers[6u]={kRbBase,kRbBaseHi,kRptr,
+                                       kRptrHi,kWptr,kWptrHi};
+        // First disable ring and verify it is parked. Do not touch the
+        // mapped memory's base while GPU is still allowed to fetch packets.
+        if(!io_.write(io_.ctx,kRbCntl,oldCtl_ & ~kEnable))
+            return false;
+        ++writeCount;
+        uint32_t ctl=0u;
+        if(!io_.read(io_.ctx,kRbCntl,&ctl) || (ctl&kEnable))
+            return false;
+        for(unsigned i=0;i<6u;++i) {
+            if(!io_.write(io_.ctx,registers[i],savedRegisters_[i]))
+                return false;
+            ++writeCount;
+            uint32_t verify=0u;
+            if(!io_.read(io_.ctx,registers[i],&verify) ||
+               verify!=savedRegisters_[i])return false;
+        }
+        return true;
+    }
+#endif
     Code state_=Code::Denied;
     Request req_{};
     IO io_{};
     [[maybe_unused]] uint32_t oldCtl_=0u;
+    [[maybe_unused]] uint32_t savedRegisters_[7u]{};
 };
 } } // namespace navi33::sdma6_mmio
