@@ -72,6 +72,22 @@ reports SDMA0_STATUS_REG, UCODE_CHECKSUM and the PSP bootloader mailbox
 (C2PMSG_35) in `Navi33,LastHwPreflight`, and no longer classifies a zero
 SDMA0_STATUS_REG as an observed SDMA.
 
+### Physical test loop (Navi33Probe 0.0.5, N33N ABI 8)
+
+CI assembles the OPENCORE stick layout as the `navi33-usb-<runner>`
+artifact: `EFI/OC/Kexts/Navi33Probe.kext` plus `navi33/` with the tools,
+`rx7600-ipd.bin` and the `usb/` scripts. `run.sh` runs every diagnostic
+in one pass. `install-autorun.sh` adds a LaunchDaemon that runs it once
+per boot from the pinned stick, so a test cycle is boot, wait, reboot.
+
+`N33_SEL_MMIO_PEEK` reads up to 64 dwords from one window in
+`src/Navi33PeekWindows.h`, under the same `navi33-hw-probe=1` gate as the
+preflight. Each window was checked against the upstream offset headers:
+only defined registers, and none with read side effects (VM invalidation
+semaphores, ACKs, DATA/INDEX pairs, SDMA scratch RAM, INT_STATUS, EDC
+counters). A new read-only check is a new `n33peek` invocation; only a
+new window needs a Kext.
+
 ## Actual hardware compute remains BLOCKED
 
 A Queue1 ring and a ROM/register read do not confer ownership.

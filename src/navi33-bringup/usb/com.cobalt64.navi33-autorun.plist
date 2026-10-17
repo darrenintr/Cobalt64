@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cobalt64.navi33-autorun</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/cobalt64/n33autorun</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartOnMount</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/cobalt64-navi33-autorun.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/cobalt64-navi33-autorun.log</string>
+</dict>
+</plist>
