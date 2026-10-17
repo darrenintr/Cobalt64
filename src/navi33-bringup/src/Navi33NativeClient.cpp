@@ -11,8 +11,14 @@
 OSDefineMetaClassAndStructors(Navi33NativeClient, IOUserClient)
 
 void Navi33NativeClient::releaseStageLocked() {
-    // The current Kext NEVER enables a physical GPU queue, so this unpins
-    // only a CPU image with a live device-IOMMU mapping, not GPU work.
+    // No live Navi33 code may currently submit GPU jobs. If a future
+    // independently owned physical backend marks this Session as possibly
+    // GPU-accessible, process death MUST NOT revoke the device IOVA or
+    // permit another client to obtain the same provider stage lease.
+    if(dmaStage_.requiresExternalReset()) {
+        IOLog("Navi33NativeClient: retaining quarantined device IOMMU mapping and owner lease\n");
+        return;
+    }
     dmaStage_.release();
     if(owner_ && dmaLeaseEpoch_)
         owner_->releaseStageOwner(this,dmaLeaseEpoch_);
