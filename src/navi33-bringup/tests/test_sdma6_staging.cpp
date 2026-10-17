@@ -31,7 +31,14 @@ int main() {
         const uint64_t hi=read32(buffer.data()+kPageTablePage*kBytePage+i*8u+4u);
         const uint64_t pte=lo|(hi<<32u);
         assert(gmc11::parseSystemPte(pte).code==gmc11::Code::Pass);
+        assert(((pte & gmc11::kPteWriteable)!=0u)==(i!=kSourcePage));
     }
+    // Malformed target address must never be treated as a valid image.
+    write32(buffer.data()+kRingPage*kBytePage+20u,0xdeadbee0u);
+    assert(!verifyInitial(buffer.data(),buffer.size(),valid));
+    write32(buffer.data()+kRingPage*kBytePage+20u,
+            static_cast<uint32_t>(kGuestGpuVa+kTargetPage*kBytePage));
+    assert(verifyInitial(buffer.data(),buffer.size(),valid));
     buffer[0]^=0x80u;
     assert(!verifyInitial(buffer.data(),buffer.size(),valid));
     buffer[0]^=0x80u;
