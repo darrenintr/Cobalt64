@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Navi33 GMC11 MMHUB VMID0 GART setup + invalidate engine 17.
+// Navi33 GMC11 MMHUB/GFXHUB VMID0/VMID1 GART register plans + invalidate engine 17.
 // Sources: Linux amdgpu gmc_v11_0.c, mmhub_v3_0.c, mmhub_v3_0_2.c,
 // and mmhub_{3_0_0,3_0_2}_{offset,sh_mask}.h (AMD MIT).
 //
@@ -34,9 +34,26 @@ constexpr uint32_t kGfxhubGfx1102[kCount] = {
     0x1688u,0x16f3u,0x16f4u,0x1713u,0x1714u,0x1733u,0x1734u,
     0x16aau,0x16bcu,0x16ceu,0x16f1u,0x16f2u,0x15d7u
 };
-// GC11 GFXHUB uses the same VMID0 Context0/PT-base bit layout but does
+// GC11 GFXHUB uses the same ContextN/PT-base bit layout but does
 // NOT acquire the MMHUB invalidate semaphore or private cache bit.
+// Upstream offsets: MMVM_CONTEXT1_CNTL = CONTEXT0_CNTL+1,
+// context1 PT base/start/end pairs each follow context0 by 2 DWORDs.
+// The invalidate registers are SHARED between all VMIDs.
 enum class Hub : uint8_t { Mmhub=0, Gfxhub=1 };
+constexpr uint32_t kVmid1OffsetDwords[kCount]={
+    1u,2u,2u,2u,2u,2u,2u,0u,0u,0u,0u,0u,0u
+};
+static_assert(kMmhub302[0u]+kVmid1OffsetDwords[0u]==0x06c1u &&
+              kMmhub302[1u]+kVmid1OffsetDwords[1u]==0x072du &&
+              kMmhub302[3u]+kVmid1OffsetDwords[3u]==0x074du &&
+              kMmhub302[5u]+kVmid1OffsetDwords[5u]==0x076du &&
+              kMmhub300[0u]+kVmid1OffsetDwords[0u]==0x0741u &&
+              kMmhub300[1u]+kVmid1OffsetDwords[1u]==0x07adu &&
+              kGfxhubGfx1102[0u]+kVmid1OffsetDwords[0u]==0x1689u &&
+              kGfxhubGfx1102[1u]+kVmid1OffsetDwords[1u]==0x16f5u &&
+              kGfxhubGfx1102[3u]+kVmid1OffsetDwords[3u]==0x1715u &&
+              kGfxhubGfx1102[5u]+kVmid1OffsetDwords[5u]==0x1735u,
+              "Navi33 GMC11 VMID1 hardware register offsets");
 // Linux amdgpu_gmc_pd_addr() returns the translated VRAM BO
 // physical root combined with AMDGPU_PTE_VALID (bit 0) for
 // TTM_PL_VRAM. The *raw* GPU physical address is 4KiB-aligned,
@@ -47,6 +64,9 @@ constexpr uint32_t kContextDepth=0x06u; // depth=0 for flat GART
 constexpr uint32_t kInvalidateVmid0=1u;
 constexpr uint32_t kInvalidatePtePde=0x00f80000u;
 constexpr uint32_t kInvalidateRequest=kInvalidateVmid0|kInvalidatePtePde;
+constexpr uint32_t invalidateForVmid(uint8_t vmid) {
+    return kInvalidatePtePde|(1u<<vmid);
+}
 constexpr uint32_t kPrivateInvalidateBit=1u<<25u;
 constexpr uint32_t kRangeLoAll=0xffffffffu;
 constexpr uint32_t kRangeHiAll=0x1fu;
@@ -68,13 +88,16 @@ struct Plan {
     Code code=Code::NoDiscovery;
     Hub hub=Hub::Mmhub;
     uint8_t revision=0xffu;
+    uint8_t vmid=0u;
     uint64_t barBytes=0u;
     uint64_t offsets[kCount]{};
 };
 inline Plan planFromEntry(const IPEntry &entry,bool identifiedNavi33,
-                          uint64_t barBytes) {
+                          uint64_t barBytes,uint8_t vmid=0u) {
     Plan p{};
+    p.vmid=vmid;
     p.barBytes=barBytes;
+    if(vmid>1u) {p.code=Code::InvalidPlan;return p;}
     if(!identifiedNavi33 || entry.hwId!=ipid::MMHUB ||
        entry.instance!=0u || entry.numBases<1u) return p;
     if(entry.major!=3u || entry.minor!=0u ||
@@ -89,10 +112,12 @@ inline Plan planFromEntry(const IPEntry &entry,bool identifiedNavi33,
     const uint32_t *regs=(entry.revision==2u)?kMmhub302:kMmhub300;
     const uint64_t last=(barBytes-4u)/4u;
     for(size_t i=0;i<kCount;++i) {
-        if(base>last || regs[i]>last-base) {
+        const uint64_t reg=static_cast<uint64_t>(regs[i])+
+                           (vmid ? kVmid1OffsetDwords[i] : 0u);
+        if(base>last || reg>last-base) {
             p.code=Code::InvalidBar;return p;
         }
-        p.offsets[i]=(base+regs[i])*4u;
+        p.offsets[i]=(base+reg)*4u;
         for(size_t j=0;j<i;++j)
             if(p.offsets[j]==p.offsets[i]) {
                 p.code=Code::InvalidPlan;return p;
@@ -102,10 +127,12 @@ inline Plan planFromEntry(const IPEntry &entry,bool identifiedNavi33,
     return p;
 }
 inline Plan planGfxFromEntry(const IPEntry &entry,bool identifiedNavi33,
-                             uint64_t barBytes) {
+                             uint64_t barBytes,uint8_t vmid=0u) {
     Plan p{};
     p.hub=Hub::Gfxhub;
+    p.vmid=vmid;
     p.barBytes=barBytes;
+    if(vmid>1u) {p.code=Code::InvalidPlan;return p;}
     if(!identifiedNavi33 || entry.hwId!=ipid::GC || entry.instance!=0u ||
        entry.numBases<1u)return p;
     if(entry.major!=11u || entry.minor!=0u || entry.revision!=2u) {
@@ -117,10 +144,12 @@ inline Plan planGfxFromEntry(const IPEntry &entry,bool identifiedNavi33,
        barBytes<4u){p.code=Code::InvalidBar;return p;}
     const uint64_t last=(barBytes-4u)/4u;
     for(size_t i=0;i<kCount;++i) {
-        if(base>last || kGfxhubGfx1102[i]>last-base) {
+        const uint64_t reg=static_cast<uint64_t>(kGfxhubGfx1102[i])+
+                           (vmid ? kVmid1OffsetDwords[i] : 0u);
+        if(base>last || reg>last-base) {
             p.code=Code::InvalidBar;return p;
         }
-        p.offsets[i]=(base+kGfxhubGfx1102[i])*4u;
+        p.offsets[i]=(base+reg)*4u;
         for(size_t j=0;j<i;++j)
             if(p.offsets[i]==p.offsets[j]) {
                 p.code=Code::InvalidPlan;return p;
@@ -129,40 +158,45 @@ inline Plan planGfxFromEntry(const IPEntry &entry,bool identifiedNavi33,
     p.code=Code::Prepared;
     return p;
 }
-inline Plan planGfxFromDiscovery(const IPDiscovery &disc,uint64_t barBytes) {
+inline Plan planGfxFromDiscovery(const IPDiscovery &disc,uint64_t barBytes,
+                                 uint8_t vmid=0u) {
     Plan p{};
     p.hub=Hub::Gfxhub;
     if(inventory(disc).code!=InventoryCode::Pass ||
        !disc.isNavi33Candidate())return p;
     IPEntry gc{};
     if(!disc.find(ipid::GC,0u,gc))return p;
-    return planGfxFromEntry(gc,true,barBytes);
+    return planGfxFromEntry(gc,true,barBytes,vmid);
 }
-inline Plan planFromDiscovery(const IPDiscovery &disc,uint64_t barBytes) {
+inline Plan planFromDiscovery(const IPDiscovery &disc,uint64_t barBytes,
+                              uint8_t vmid=0u) {
     Plan p{};
     if(inventory(disc).code!=InventoryCode::Pass ||
        !disc.isNavi33Candidate())return p;
     IPEntry mmhub{};
     if(!disc.find(ipid::MMHUB,0u,mmhub))return p;
-    return planFromEntry(mmhub,true,barBytes);
+    return planFromEntry(mmhub,true,barBytes,vmid);
 }
 inline bool validPlan(const Plan &p) {
-    if(p.code!=Code::Prepared || p.barBytes<4u ||
+    if(p.code!=Code::Prepared || p.barBytes<4u || p.vmid>1u ||
        (p.hub!=Hub::Mmhub && p.hub!=Hub::Gfxhub) ||
        (p.revision!=0u && p.revision!=2u) ||
        (p.hub==Hub::Gfxhub && p.revision!=2u))return false;
     const uint32_t *regs=p.hub==Hub::Gfxhub ? kGfxhubGfx1102 :
         p.revision==2u ? kMmhub302 : kMmhub300;
-    if(p.offsets[0u]<(static_cast<uint64_t>(regs[0u])*4u))
+    const uint64_t firstReg=static_cast<uint64_t>(regs[0u])+
+                          (p.vmid ? kVmid1OffsetDwords[0u] : 0u);
+    if(p.offsets[0u]<(firstReg*4u))
         return false;
-    const uint64_t baseByteOffset=p.offsets[0u]-
-                                  static_cast<uint64_t>(regs[0u])*4u;
+    const uint64_t baseByteOffset=p.offsets[0u]-firstReg*4u;
     if(!baseByteOffset || (baseByteOffset&3u))return false;
     for(size_t i=0;i<kCount;++i) {
         const uint64_t off=p.offsets[i];
         if(!off || (off&3u) || off>p.barBytes ||
            p.barBytes-off<4u ||
-           off!=baseByteOffset+static_cast<uint64_t>(regs[i])*4u)
+           off!=baseByteOffset+
+                (static_cast<uint64_t>(regs[i])+
+                 (p.vmid ? kVmid1OffsetDwords[i] : 0u))*4u)
             return false;
         for(size_t j=0;j<i;++j)
             if(p.offsets[j]==off)return false;
