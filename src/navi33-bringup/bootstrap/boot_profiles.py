@@ -16,7 +16,8 @@ import plistlib
 import sys
 
 APPLE_BOOT_GUID = "7C436110-AB2A-4BBB-A880-FE41995C9F82"
-CONTROLLED_KEYS = ("navi33-fb=", "navi33-fb-off=", "navi33-probe=")
+CONTROLLED_KEYS = ("navi33-fb=", "navi33-fb-off=", "navi33-probe=",
+                   "navi33-dma-preflight=", "navi33-dma-off=")
 OUTPUTS = ("recovery", "vesa-baseline", "fb-trial")
 
 
@@ -59,6 +60,9 @@ def make_profile(config: dict, name: str) -> dict:
     # Never modify other boot arguments, SMBIOS, kernel patches, DeviceProperties
     # or SIP. The only NVRAM non-boot-args edit is deleting stale boot-args
     # *before* Add, to avoid an already set firmware variable defeating the test.
+    # No profile ever opts in to kernel DMA diagnostics. The kill switch
+    # is added to each variant to prevent stale boot arguments activating it.
+    tokens.append("navi33-dma-off=1")
     if name == "recovery":
         tokens.append("navi33-fb-off=1")
     elif name == "vesa-baseline":

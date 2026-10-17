@@ -40,6 +40,8 @@ class BootProfileTests(unittest.TestCase):
                 self.assertIn("keepsyms=1", tokens)
                 self.assertIn("agdpmod=pikera", tokens)
                 self.assertEqual(tokens.count("navi33-probe=1"), 0)
+                self.assertNotIn("navi33-dma-preflight=1", tokens)
+                self.assertEqual(tokens.count("navi33-dma-off=1"), 1)
                 self.assertEqual(result["ACPI"], frozen["ACPI"])
                 self.assertEqual(result["Kernel"], frozen["Kernel"])
                 self.assertEqual(result["DeviceProperties"], frozen["DeviceProperties"])

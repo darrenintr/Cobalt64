@@ -13,6 +13,8 @@
 #include "Navi33Gmc11Gart.h"
 #include "Navi33GpuVaArena.h"
 #include "Navi33Sdma6Ring.h"
+#include "Navi33DmaScatter.h"
+#include "Navi33DarwinDma.h"
 #include <libkern/c++/OSData.h>
 
 class Navi33Probe : public IOService {
@@ -88,6 +90,28 @@ bool Navi33Probe::start(IOService *provider) {
     setProperty("Navi33,SDMA6HardwareRingReady", static_cast<uint64_t>(0), 8);
     setProperty("Navi33,TLBInvalidationEnabled", static_cast<uint64_t>(0), 8);
     setProperty("Navi33,SDMA6DoorbellEnabled", static_cast<uint64_t>(0), 8);
+    setProperty("Navi33,DmaPreflightExecuted", static_cast<uint64_t>(0), 8);
+    // Separate explicit one-shot preflight. Default boot has no IOMMU mapping
+    // allocations. The navi33-dma-off kill switch always wins.
+    uint32_t dmaOptIn=0u, dmaOff=0u;
+    const bool disabled=PE_parse_boot_argn("navi33-dma-off", &dmaOff,
+                                           sizeof(dmaOff)) && dmaOff != 0u;
+    if (!disabled && PE_parse_boot_argn("navi33-dma-preflight", &dmaOptIn,
+                                        sizeof(dmaOptIn)) && dmaOptIn == 1u) {
+        const navi33::darwin_dma::Report dmaReport =
+            navi33::darwin_dma::runOnce(pci);
+        setProperty("Navi33,DmaPreflightExecuted", static_cast<uint64_t>(1), 8);
+        setProperty("Navi33,DmaPreflightStatus",
+                    static_cast<uint64_t>(dmaReport.code), 8);
+        setProperty("Navi33,DmaPreflightSegments",
+                    static_cast<uint64_t>(dmaReport.segmentCount), 8);
+        setProperty("Navi33,DmaPreflightPages",
+                    static_cast<uint64_t>(dmaReport.pageCount), 8);
+        IOLog("Navi33Probe: optional IOMMU staging returned %u (%u segments, %u pages), no GPU DMA\n",
+              static_cast<unsigned>(dmaReport.code),
+              static_cast<unsigned>(dmaReport.segmentCount),
+              static_cast<unsigned>(dmaReport.pageCount));
+    }
 
     // Inspect IOPCIFamily's *assigned resource metadata* only. In particular,
     // do not call setMemoryEnable(), mapDeviceMemoryWithRegister(), or touch

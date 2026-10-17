@@ -35,12 +35,16 @@ assert 'Navi33,Gmc11GartHardwareReady' in source
 assert 'Navi33,SDMA6HardwareRingReady' in source
 assert 'Navi33,TLBInvalidationEnabled' in source
 assert 'Navi33,SDMA6DoorbellEnabled' in source
+assert 'Navi33,DmaPreflightExecuted' in source
+assert 'PE_parse_boot_argn("navi33-dma-preflight"' in source
+assert 'PE_parse_boot_argn("navi33-dma-off"' in source
+assert 'navi33::darwin_dma::runOnce(pci)' in source
 parser = (root / "src" / "Navi33Discovery.h").read_text()
 assert "struct IPEntry" in parser and "isNavi33Candidate" in parser
 for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
     assert forbidden not in parser, f"IP parser gained {forbidden}"
 for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h", "Navi33Gmc11Gart.h",
-                 "Navi33GpuVaArena.h", "Navi33Sdma6Ring.h"):
+                 "Navi33GpuVaArena.h", "Navi33Sdma6Ring.h", "Navi33DmaScatter.h"):
     code = (root / "src" / filename).read_text()
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
@@ -48,4 +52,24 @@ for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.
 assert "kCanProgramGfxhub = false" in (root/"src/Navi33Gmc11Gart.h").read_text()
 assert "kCanSubmitToHardware = false" in (root/"src/Navi33Sdma6Ring.h").read_text()
 assert "kCanRingDoorbell = false" in (root/"src/Navi33Sdma6Ring.h").read_text()
-print("Navi33 metadata-only GART/VM/SDMA-ring/backend guards: static checks passed")
+kernel_dma=(root/"src/Navi33DarwinDma.cpp").read_text()
+assert "IOMapper::copyMapperForDevice(pci)" in kernel_dma
+assert "IODMACommand::withSpecification(" in kernel_dma
+assert "gen64IOVMSegments(" in kernel_dma
+assert "command->complete()" in kernel_dma
+assert "clearMemoryDescriptor(false)" in kernel_dma
+assert "memory->complete()" in kernel_dma
+assert "mapIntoShadow(" in kernel_dma
+for forbidden in ("configWrite", "setBusMasterEnable", "setMemoryEnable",
+                  "mapDeviceMemory", "WREG32", "RREG32", "setPowerState",
+                  "mmio", "doorbell"):
+    # References in source comments are permitted; detect executable patterns
+    if forbidden=="configWrite":
+        assert "->configWrite" not in kernel_dma
+    elif forbidden=="setBusMasterEnable":
+        assert "->setBusMasterEnable" not in kernel_dma
+    elif forbidden=="setMemoryEnable":
+        assert "->setMemoryEnable" not in kernel_dma
+    elif forbidden in ("WREG32","RREG32"):
+        assert forbidden+"(" not in kernel_dma
+print("Navi33 DMA mapping preflight and GPU access boundaries: static checks passed")

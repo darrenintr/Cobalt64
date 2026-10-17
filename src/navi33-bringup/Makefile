@@ -29,7 +29,11 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
 .PHONY: all clean host-test
 all: $(KEXT)
 
-$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h
+$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD)/Navi33DarwinDma.o: src/Navi33DarwinDma.cpp src/Navi33DarwinDma.h src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h src/Navi33Identity.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -37,9 +41,9 @@ $(BUILD)/kmod_info.o: src/kmod_info.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/kmod_info.o Info.plist
+$(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/kmod_info.o Info.plist
 	@mkdir -p $(KEXT)/Contents/MacOS
-	$(CXX) $(LDFLAGS) $(BUILD)/Navi33Probe.o $(BUILD)/kmod_info.o -o $(EXEC)
+	$(CXX) $(LDFLAGS) $(BUILD)/Navi33Probe.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/kmod_info.o -o $(EXEC)
 	cp Info.plist $(KEXT)/Contents/Info.plist
 	xattr -cr $(KEXT)
 	codesign --force --sign - $(KEXT)
@@ -79,11 +83,15 @@ $(BUILD)/test-sdma6-ring: tests/test_sdma6_ring.cpp src/Navi33Sdma6Ring.h src/Na
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_ring.cpp -o $@
 
+$(BUILD)/test-dma-scatter: tests/test_dma_scatter.cpp src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_dma_scatter.cpp -o $@
+
 $(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/Navi33Dcn321.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
 
-host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/discovery-dump $(BUILD)/backend-report
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
 	$(BUILD)/test-hardware-plan
@@ -91,6 +99,7 @@ host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware
 	$(BUILD)/test-sdma6-packet
 	$(BUILD)/test-gmc11-gart
 	$(BUILD)/test-sdma6-ring
+	$(BUILD)/test-dma-scatter
 	python3 tests/test_manifest.py
 
 clean:
