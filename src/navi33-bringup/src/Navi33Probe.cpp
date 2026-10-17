@@ -24,6 +24,7 @@
 #include "Navi33Sdma6Status.h"
 #include "Navi33Sdma6QueueCensus.h"
 #include "Navi33HwProbeLogic.h"
+#include "Navi33MmioPeek.h"
 #include "Navi33Gmc11VramLive.h"
 #include "Navi33VramSurvey.h"
 #include <libkern/c++/OSData.h>
@@ -570,6 +571,50 @@ n33_hw_preflight Navi33Probe::hardwarePreflight(
     // exclusive queue ownership or any working compute command path.
     IOLog("Navi33Probe: RX7600 physical HW preflight %s; no GPU copy submitted\n",
           raw);
+    return result;
+}
+
+// Root-only allowlisted BAR5 window read for new diagnostics that should
+// not need a new Kext. Same gate and kill switch as hardwarePreflight;
+// the window table, not the caller, decides which registers are readable.
+n33_peek_result Navi33Probe::peekRegisters(uint32_t window,uint32_t first,
+    uint32_t count,const uint8_t *romBytes,size_t romLength) {
+    uint32_t enabled=0u,off=0u;
+    const bool allowed=PE_parse_boot_argn("navi33-hw-probe",
+                                         &enabled,sizeof(enabled)) && enabled==1u;
+    const bool stopped=PE_parse_boot_argn("navi33-hw-off",
+                                         &off,sizeof(off)) && off!=0u;
+    if(!allowed || stopped)
+        return navi33::peek::blank(N33_PEEK_DISABLED,window,first,count);
+    auto *pci=OSDynamicCast(IOPCIDevice,getProvider());
+    if(!pci || !navi33::isSupported(navi33::inspectPci(
+           pci->configRead32(kIOPCIConfigVendorID),
+           pci->configRead32(kIOPCIConfigRevisionID))))
+        return navi33::peek::blank(N33_PEEK_NO_PROVIDER,window,first,count);
+    navi33::IPDiscovery disc;
+    if(!romBytes || romLength<64u ||
+       romLength>navi33::IPDiscovery::kMaxBlob ||
+       !disc.parse(romBytes,romLength))
+        return navi33::peek::blank(N33_PEEK_BAD_ROM,window,first,count);
+    IODeviceMemory *bar=pci->getDeviceMemoryWithRegister(
+        kIOPCIConfigBaseAddress5);
+    if(!bar || bar->getLength()<4u)
+        return navi33::peek::blank(N33_PEEK_NO_BAR5,window,first,count);
+    const uint64_t bytes=static_cast<uint64_t>(bar->getLength());
+    const navi33::peek::Plan plan=navi33::peek::plan(disc,window,first,
+                                                      count,bytes);
+    if(plan.state!=N33_PEEK_DONE)
+        return navi33::peek::blank(plan.state,window,first,count);
+    IOMemoryMap *mapped=bar->map();
+    if(!mapped)
+        return navi33::peek::blank(N33_PEEK_MAP_FAILED,window,first,count);
+    if(static_cast<uint64_t>(mapped->getLength())<bytes) {
+        mapped->release();
+        return navi33::peek::blank(N33_PEEK_MAP_FAILED,window,first,count);
+    }
+    const n33_peek_result result=navi33::peek::read(
+        plan,window,first,count,navi33ReadStatusDword,mapped);
+    mapped->release();
     return result;
 }
 

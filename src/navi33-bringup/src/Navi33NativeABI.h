@@ -11,7 +11,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 7u /* adds read-only physical SDMA6 Queue0 census */
+#define N33_ABI_VERSION 8u /* adds allowlisted read-only BAR5 MMIO_PEEK */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -34,7 +34,8 @@ enum n33_selector {
   N33_SEL_DMA_STAGE=10, N33_SEL_DMA_STATUS=11,
   N33_SEL_DMA_RELEASE=12, N33_SEL_HW_PREFLIGHT=13, N33_SEL_HW_ROM_PREFLIGHT=14,
   N33_SEL_VRAM_GEOMETRY=15, N33_SEL_QUEUE_CENSUS=16,
-  N33_SEL_COUNT=17
+  N33_SEL_MMIO_PEEK=17,
+  N33_SEL_COUNT=18
 };
 // PSP status is deliberately read-only, never a readiness flag for GFX.
 enum n33_psp_state {
@@ -157,6 +158,31 @@ struct n33_vram_geometry_status {
 };
 N33_STATIC_ASSERT(sizeof(struct n33_vram_geometry_status)==96,
                   "N33 read-only VRAM geometry status must be 96 bytes");
+// Root-only read of an allowlisted BAR5 register window (see
+// Navi33PeekWindows.h). New read-only checks need a new tool, not a new
+// Kext. The request is followed by rom_bytes of IP Discovery; the window
+// table is per IP version and never grants a write.
+#define N33_PEEK_MAX_DWORDS 64u
+enum n33_peek_state {
+  N33_PEEK_DISABLED=0, N33_PEEK_BAD_REQUEST=1, N33_PEEK_NOT_ALLOWED=2,
+  N33_PEEK_NO_PROVIDER=3, N33_PEEK_BAD_ROM=4, N33_PEEK_NO_BAR5=5,
+  N33_PEEK_MAP_FAILED=6, N33_PEEK_READ_FAILED=7, N33_PEEK_DONE=8
+};
+struct n33_peek_request {
+  uint32_t abi_version, size, window, first;
+  uint32_t count, rom_bytes;
+  uint64_t reserved0;
+};
+N33_STATIC_ASSERT(sizeof(struct n33_peek_request)==32,
+                  "N33 MMIO peek request must be 32 bytes");
+struct n33_peek_result {
+  uint32_t abi_version, size, state, window;
+  uint32_t first, count, reads, reserved0;
+  uint64_t bar5_offset, reserved1;
+  uint32_t values[N33_PEEK_MAX_DWORDS];
+};
+N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
+                  "N33 MMIO peek result must be 304 bytes");
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;

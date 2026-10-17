@@ -28,6 +28,9 @@ public:
     n33_vram_geometry_status vramGeometryStatus(); // root-only READ-ONLY paired FB registers
     n33_hw_preflight hardwarePreflight(const uint8_t *romBytes=nullptr,
                                      size_t romLength=0u); // no writes
+    n33_peek_result peekRegisters(uint32_t window,uint32_t first,
+                                  uint32_t count,const uint8_t *romBytes,
+                                  size_t romLength); // allowlisted reads
     n33_capabilities nativeCapabilities() const {
         n33_capabilities result{};
         result.abi_version = N33_ABI_VERSION;

@@ -57,9 +57,22 @@ int main() {
                     false,false,true,false)==Shape::BadArgument);
     assert(validate(N33_SEL_QUEUE_CENSUS,0,0,0,64,
                     false,false,true,true)==Shape::BadArgument);
+    // MMIO peek: 32-byte request plus inline IP Discovery, 304-byte result.
+    assert(validate(N33_SEL_MMIO_PEEK,0,0,32+464,sizeof(n33_peek_result),
+                    false,false,true,false)==Shape::Valid);
+    assert(validate(N33_SEL_MMIO_PEEK,0,0,32+63,sizeof(n33_peek_result),
+                    false,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_MMIO_PEEK,0,0,4097,sizeof(n33_peek_result),
+                    false,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_MMIO_PEEK,0,0,496,64,
+                    false,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_MMIO_PEEK,1,0,496,sizeof(n33_peek_result),
+                    true,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_MMIO_PEEK,0,0,496,sizeof(n33_peek_result),
+                    false,false,true,true)==Shape::BadArgument);
     assert(validate(N33_SEL_COUNT,0,0,0,64,
                     false,false,true,false)==Shape::Unsupported);
-    static_assert(N33_ABI_VERSION==7u,"read-only Queue0 ABI bump");
+    static_assert(N33_ABI_VERSION==8u,"allowlisted MMIO peek ABI bump");
     const n33_capabilities info={N33_ABI_VERSION,sizeof(n33_capabilities),
         N33_PCI_VENDOR,N33_PCI_DEVICE,N33_GFX_IP_VERSION,N33_FAMILY_GFX1102,
         N33_CAP_PCI_INVENTORY|N33_CAP_ROM_DISCOVERY,0u,0u,0u,0u,0u};

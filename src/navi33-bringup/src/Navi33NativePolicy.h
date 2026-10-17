@@ -27,7 +27,8 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         selector != N33_SEL_HW_PREFLIGHT &&
         selector != N33_SEL_HW_ROM_PREFLIGHT &&
         selector != N33_SEL_VRAM_GEOMETRY &&
-        selector != N33_SEL_QUEUE_CENSUS)
+        selector != N33_SEL_QUEUE_CENSUS &&
+        selector != N33_SEL_MMIO_PEEK)
         return Shape::Unsupported;
     if (selector == N33_SEL_HELLO)
         return scalarIn == 2u && scalarOut == 3u && !structIn &&
@@ -37,6 +38,13 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         return scalarIn==0u && scalarOut==0u &&
                structIn>=64u && structIn<=4u*1024u*1024u &&
                structOut==sizeof(n33_hw_preflight) &&
+               !haveScalarsIn && !haveScalarsOut && haveStructOut
+                   ? Shape::Valid : Shape::BadArgument;
+    // Request header plus an IP Discovery blob, inline only (<= 4 KiB).
+    if (selector == N33_SEL_MMIO_PEEK)
+        return scalarIn==0u && scalarOut==0u &&
+               structIn>=sizeof(n33_peek_request)+64u &&
+               structIn<=4096u && structOut==sizeof(n33_peek_result) &&
                !haveScalarsIn && !haveScalarsOut && haveStructOut
                    ? Shape::Valid : Shape::BadArgument;
     if (selector == N33_SEL_DMA_RELEASE)

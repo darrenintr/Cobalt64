@@ -129,6 +129,19 @@ for caller in (source,client):
     assert '#include "Navi33Gmc11VramUpload.h"' not in caller
 assert "N33_SEL_VRAM_GEOMETRY" in client
 assert "N33_SEL_QUEUE_CENSUS" in client
+# MMIO peek: allowlisted reads only, same gate as the hardware preflight.
+assert "N33_SEL_MMIO_PEEK" in client
+assert "owner_->peekRegisters(" in client
+assert "Navi33Probe::peekRegisters" in source
+assert "navi33::peek::plan(disc,window,first," in source
+peek=(root / "src/Navi33MmioPeek.h").read_text()
+for forbidden in ("->configWrite", "WREG32(", "writeMmio", "writeRegister",
+                  "volatile uint32_t *)", "= value", "*out=0"):
+    assert forbidden not in peek, f"MMIO peek gained a write: {forbidden}"
+windows=(root / "src/Navi33PeekWindows.h").read_text()
+for hazard in ("_SEM", "_ACK", "SCRATCH_RAM", "INT_STATUS", "EDC_COUNTER"):
+    assert hazard not in windows.split("*/",1)[1], f"hazard window: {hazard}"
+assert "N33_SEL_MMIO_PEEK" in (root / "tools/n33peek.c").read_text()
 assert "owner_->queueCensus()" in client
 assert 'Navi33Probe::queueCensus' in source
 assert 'navi33::queue_census::readStable' in source

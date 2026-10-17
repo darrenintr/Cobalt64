@@ -228,6 +228,28 @@ IOReturn Navi33NativeClient::externalMethod(
         IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
+    if (selector == N33_SEL_MMIO_PEEK) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        if (!args->structureInput) return kIOReturnBadArgument;
+        n33_peek_request req{};
+        bcopy(args->structureInput,&req,sizeof(req));
+        if (req.abi_version!=N33_ABI_VERSION || req.size!=sizeof(req) ||
+            req.reserved0 || req.rom_bytes!=inputBytes-sizeof(req))
+            return kIOReturnBadArgument;
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_);
+            return kIOReturnNotReady;
+        }
+        const uint8_t *rom=static_cast<const uint8_t *>(
+            args->structureInput)+sizeof(req);
+        const n33_peek_result result=owner_->peekRegisters(
+            req.window,req.first,req.count,rom,req.rom_bytes);
+        bcopy(&result,args->structureOutput,sizeof(result));
+        args->structureOutputSize=sizeof(result);
+        IOLockUnlock(dmaLock_);
+        return kIOReturnSuccess;
+    }
     if (selector == N33_SEL_DMA_STAGE ||
         selector == N33_SEL_DMA_STATUS ||
         selector == N33_SEL_DMA_RELEASE) {
