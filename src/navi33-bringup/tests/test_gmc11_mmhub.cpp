@@ -53,7 +53,7 @@ static Gate gate() {
     Gate g{};
     g.dedicatedGpuOwnership=true;
     g.noActiveDisplayConsumers=true;
-    g.mmhubExclusivelyOwned=true;
+    g.vmhubExclusivelyOwned=true;
     g.noOutstandingGpuJobs=true;
     g.firmwareAndHdpVerified=true;
     g.mmhubCacheAlreadyConfigured=true;
@@ -119,10 +119,10 @@ static void successfulMockFlush() {
     Fake f=fakeFor(p);
     Controller vm{};
     Gate g=gate();
-    g.mmhubExclusivelyOwned=false;
+    g.vmhubExclusivelyOwned=false;
     assert(vm.prepare(p,g,table(),callbacks(f)).code==Code::Denied);
     assert(f.writes==0u);
-    g.mmhubExclusivelyOwned=true;
+    g.vmhubExclusivelyOwned=true;
     Table t=table();
     t.entries[0u]|=gmc11::kPteWriteable;
     assert(vm.prepare(p,g,t,callbacks(f)).code==Code::InvalidTable);
@@ -144,6 +144,38 @@ static void successfulMockFlush() {
     assert(f.words[f.sem/4u]==0u);
     assert((f.words[p.offsets[12u]/4u]&kPrivateInvalidateBit)!=0u);
     assert(vm.abortBeforeActivation().code==Code::Denied);
+}
+static void gfxhubMockFlush() {
+    IPEntry gc{};
+    gc.hwId=ipid::GC;
+    gc.instance=0u;gc.major=11u;gc.minor=0u;gc.revision=2u;
+    gc.numBases=1u;gc.bases[0u]=0x100u;
+    const Plan p=planGfxFromEntry(gc,true,65536u);
+    assert(p.hub==Hub::Gfxhub && p.code==Code::Prepared);
+    assert(validPlan(p));
+    assert(p.offsets[0u]==(0x100ull+0x1688ull)*4ull);
+    assert(p.offsets[1u]==(0x100ull+0x16f3ull)*4ull);
+    assert(p.offsets[8u]==(0x100ull+0x16bcull)*4ull);
+    assert(p.offsets[9u]==(0x100ull+0x16ceull)*4ull);
+    assert(p.offsets[10u]==(0x100ull+0x16f1ull)*4ull);
+    assert(p.offsets[12u]==(0x100ull+0x15d7ull)*4ull);
+    IPEntry wrong=gc;wrong.revision=3u;
+    assert(planGfxFromEntry(wrong,true,65536u).code==
+           Code::UnsupportedVersion);
+    assert(planGfxFromEntry(gc,true,1024u).code==Code::InvalidBar);
+    Fake f=fakeFor(p);
+    f.acquireSemaphore=false; // GFXHUB must NOT acquire MMHUB's semaphore
+    Controller vm{};
+    assert(vm.prepare(p,gate(),table(),callbacks(f)).code==Code::Prepared);
+    const auto result=vm.invalidateAndActivate(5u,10u);
+    assert(result.code==Code::Flushed);
+    assert(result.acknowledgement==1u);
+    assert(f.hdps==1u && f.polls==0u);
+    assert(f.words[f.sem/4u]==0u); // untouched GFXHUB semaphore
+    assert(f.words[f.req/4u]==kInvalidateRequest);
+    assert(f.words[p.offsets[12u]/4u]==0u); // no MMHUB private flush on GC
+    assert(vm.canUseGpuPageTable());
+    assert(vm.requiresRecovery() && !vm.mayReleaseMappedMemory());
 }
 static void cancellationAndFaults() {
     {
@@ -210,6 +242,7 @@ int main() {
     static_assert(kWritePathCompiled,"mock harness only");
     offsetTests();
     successfulMockFlush();
+    gfxhubMockFlush();
     cancellationAndFaults();
     std::puts("GMC11 MMHUB3 VMID0 MMIO programming / TLB ACK tested on FAKE registers only");
 }
