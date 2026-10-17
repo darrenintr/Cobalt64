@@ -293,7 +293,7 @@ public:
         }
         // Never replace a running/GOP-owned MMHUB or invalidate an
         // engine 17 transaction that belongs to another driver.
-        if((old[0u]&kContextEnable) || (ack&kInvalidateVmid0) ||
+        if((old[0u]&kContextEnable) || (ack&(1u<<p.vmid)) ||
            request!=0u || (p.hub==Hub::Mmhub && (privateValue&kPrivateInvalidateBit))) {
             r.code=Code::Busy;return r;
         }
@@ -395,7 +395,7 @@ public:
         }
         if(!io_.write(io_.ctx,plan_.offsets[
                   static_cast<size_t>(Register::InvalidateReq)],
-                  kInvalidateRequest)) {
+                  invalidateForVmid(plan_.vmid))) {
             state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
         }
         ++r.writes;
@@ -407,7 +407,7 @@ public:
                 state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
             }
             r.acknowledgement=v;
-            if(v&kInvalidateVmid0){acknowledged=true;break;}
+            if(v&(1u<<plan_.vmid)){acknowledged=true;break;}
             io_.delayUs(io_.ctx,delayUs);
         }
         // Linux also releases the MMHUB semaphore on ACK timeout.
@@ -471,6 +471,7 @@ public:
 
     bool canUseGpuPageTable() const {return state_==Code::Flushed;}
     Hub currentHub() const {return plan_.hub;}
+    uint8_t currentVmid() const {return plan_.vmid;}
     uint64_t verifiedTableAddress() const {
         return state_==Code::Flushed ? gpuTable_ : 0u;
     }
@@ -494,6 +495,7 @@ inline bool dualHubReady(const Controller &mmhub,const Controller &gfxhub) {
     return mmhub.canUseGpuPageTable() && gfxhub.canUseGpuPageTable() &&
            mmhub.currentHub()==Hub::Mmhub &&
            gfxhub.currentHub()==Hub::Gfxhub &&
+           mmhub.currentVmid()==gfxhub.currentVmid() &&
            root!=0u && gfxhub.verifiedTableAddress()==root;
 }
 } } // namespace navi33::mmhub11
