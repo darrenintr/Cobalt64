@@ -11,7 +11,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 6u /* adds verified read-only NBIO 4.3 VRAM capacity */
+#define N33_ABI_VERSION 7u /* adds read-only physical SDMA6 Queue0 census */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -33,8 +33,8 @@ enum n33_selector {
   N33_SEL_PSP_STATUS=8, N33_SEL_SDMA_STATUS=9,
   N33_SEL_DMA_STAGE=10, N33_SEL_DMA_STATUS=11,
   N33_SEL_DMA_RELEASE=12, N33_SEL_HW_PREFLIGHT=13, N33_SEL_HW_ROM_PREFLIGHT=14,
-  N33_SEL_VRAM_GEOMETRY=15,
-  N33_SEL_COUNT=16
+  N33_SEL_VRAM_GEOMETRY=15, N33_SEL_QUEUE_CENSUS=16,
+  N33_SEL_COUNT=17
 };
 // PSP status is deliberately read-only, never a readiness flag for GFX.
 enum n33_psp_state {
@@ -61,6 +61,28 @@ struct n33_sdma_status {
   uint64_t reserved1, reserved2, reserved3;
 };
 N33_STATIC_ASSERT(sizeof(struct n33_sdma_status)==64,"N33 SDMA ABI must be 64B");
+// Physical SDMA6 Queue0 observation. A quiescent register image
+// NEVER grants PCI/firmware/queue ownership or a right to submit work.
+enum n33_queue_census_state {
+  N33_QUEUE_DISABLED=0, N33_QUEUE_NO_INVENTORY=1,
+  N33_QUEUE_BAD_MMIO_PLAN=2, N33_QUEUE_READ_ERROR=3,
+  N33_QUEUE_INVALID_READ=4, N33_QUEUE_UNSTABLE=5,
+  N33_QUEUE_OBSERVED=6
+};
+#define N33_QUEUE_FLAG_ENABLED (1u<<0)
+#define N33_QUEUE_FLAG_DOORBELL (1u<<1)
+#define N33_QUEUE_FLAG_POINTERS (1u<<2)
+#define N33_QUEUE_FLAG_RING_BASE (1u<<3)
+#define N33_QUEUE_FLAG_APPARENTLY_PARKED (1u<<4)
+struct n33_queue_census_status {
+  uint32_t abi_version, size, state, flags;
+  uint32_t ring_control, doorbell_control, ring_rptr_lo, ring_rptr_hi;
+  uint32_t ring_wptr_lo, ring_wptr_hi, ring_base_lo, ring_base_hi;
+  uint32_t read_count, reserved0;
+  uint64_t reserved1;
+};
+N33_STATIC_ASSERT(sizeof(struct n33_queue_census_status)==64,
+                  "N33 read-only Queue0 status must be 64 bytes");
 // Stateful N33N OS-IOMMU staging is NOT a GPU command submission.
 // HW_VM, HW_SDMA and HW_GFX are never set by this operation.
 enum n33_dma_stage_state {
