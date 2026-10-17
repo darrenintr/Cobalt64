@@ -15,6 +15,9 @@ struct Fake {
     std::vector<uint8_t> mem=std::vector<uint8_t>(staging::kBytes);
     h::Plan mm{},gfx{};
     std::array<uint64_t,vram_root::kRootWords> rootPtes{};
+    vram_geometry::Geometry geometry{};
+    vram_bo::Arena rootArena{};
+    vram_bo::Token rootToken{};
     queue_owner::Registry lease{};
     bool corruptRoot=false;
     unsigned writes=0u;
@@ -28,6 +31,22 @@ struct Fake {
         a.hwId=ipid::GC;a.major=11;a.revision=2;a.bases[0]=0x100u;
         gfx=h::planGfxFromEntry(a,true,131072u);
         assert(h::validPlan(mm)&&h::validPlan(gfx));
+        geometry.mcStart=0u;
+        geometry.mcWindowBytes=8ull*1024ull*1024ull*1024ull;
+        geometry.physicalFbBase=0u;
+        geometry.realBytes=geometry.mcWindowBytes;
+        geometry.cpuVisibleBytes=256ull*1024ull*1024ull;
+        vram_bo::Authority owner{};
+        owner.pciDeviceExclusive=true;
+        owner.allDisplayClientsStopped=true;
+        owner.firmwareAndDisplayRangesInventoried=true;
+        owner.independentRecoveryAvailable=true;
+        assert(rootArena.configure(geometry,owner,{0x400000ull,0x10000ull},
+                                   nullptr,0u)==vram_bo::Code::Pass);
+        const auto root=rootArena.allocate(this,staging::kBytePage);
+        assert(root.code==vram_bo::Code::Pass);
+        assert(root.address.gpuPhysicalAddress==0x400000ull);
+        rootToken=root.token;
     }
 };
 static bool hubRead(void *v,uint64_t offset,uint32_t *out) {
@@ -109,22 +128,13 @@ static bool readVramRoot(void *v,uint64_t addr,uint64_t *out) {
        (addr-0x400000ull)/8u>=f.rootPtes.size())return false;
     *out=f.rootPtes[(addr-0x400000ull)/8u];return true;
 }
-static vram_root::Reservation rootReservation() {
-    vram_root::Reservation r{};
-    r.mcVramStart=0x200000ull;
-    r.mcVramBytes=0x800000ull;
-    r.ownedBoMcStart=0x400000ull;
-    r.ownedBoBytes=4096ull;
-    r.rootMcAddress=0x400000ull;
-    return r;
-}
 static p::Report run(Fake &f,p::Isolation e=isolation()) {
     const auto t=table();
     for(size_t i=0;i<staging::kPages;++i)
         f.rootPtes[i]=t.entries[i]; // model a separately pinned VRAM BO
     if(f.corruptRoot)f.rootPtes[100u]=0xdeadbeefull;
-    return p::run(e,f.mm,f.gfx,t,request(),rootReservation(),
-                  readVramRoot,&f,f.lease,&f,
+    return p::run(e,f.mm,f.gfx,t,request(),f.geometry,
+                  f.rootArena,f.rootToken,readVramRoot,&f,f.lease,&f,
                   hubIO(f),hubIO(f),sdmaIO(f),4u,4u);
 }
 int main() {
@@ -146,9 +156,16 @@ int main() {
         assert(r.observedFence==staging::kFenceCookie);
         assert(!r.stagingMayBeReleased && r.physicalResetBeforeRelease);
         assert(f.lease.phase()==queue_owner::Phase::GpuMayHaveFetched);
+        assert(f.rootArena.isQuarantined());
+        assert(!f.rootArena.release(&f,f.rootToken));
         const unsigned written=f.writes;
         assert(run(f).verdict==p::Verdict::Refused);
         assert(f.writes==written); // second job cannot reprogram Queue0
+    }
+    {
+        Fake f;assert(f.rootArena.release(&f,f.rootToken));
+        assert(run(f).verdict==p::Verdict::Refused);
+        assert(f.writes==0u);
     }
     {
         Fake f;f.corruptRoot=true;
