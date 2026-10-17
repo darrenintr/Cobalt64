@@ -121,14 +121,28 @@ IOReturn Navi33NativeClient::externalMethod(
         IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
-    if (selector == N33_SEL_HW_PREFLIGHT) {
+    if (selector == N33_SEL_HW_PREFLIGHT ||
+        selector == N33_SEL_HW_ROM_PREFLIGHT) {
         if (!dmaLock_) return kIOReturnNotReady;
         IOLockLock(dmaLock_);
         if (!active_ || !owner_) {
             IOLockUnlock(dmaLock_);
             return kIOReturnNotReady;
         }
-        const n33_hw_preflight report = owner_->hardwarePreflight();
+        // The second selector provides an ephemeral VBIOS blob; the
+        // Kext parses only IP Discovery and never uploads that firmware.
+        const uint8_t *rom=nullptr;
+        size_t romLen=0u;
+        if(selector == N33_SEL_HW_ROM_PREFLIGHT) {
+            if(!args->structureInput || args->structureInputSize<64u ||
+               args->structureInputSize>4u*1024u*1024u) {
+                IOLockUnlock(dmaLock_);
+                return kIOReturnBadArgument;
+            }
+            rom=static_cast<const uint8_t *>(args->structureInput);
+            romLen=args->structureInputSize;
+        }
+        const n33_hw_preflight report = owner_->hardwarePreflight(rom,romLen);
         bcopy(&report,args->structureOutput,sizeof(report));
         args->structureOutputSize=sizeof(report);
         IOLockUnlock(dmaLock_);
