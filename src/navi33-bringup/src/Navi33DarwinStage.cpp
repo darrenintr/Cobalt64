@@ -31,6 +31,7 @@ void Session::release() {
         command_=nullptr;
     }
     dmaPrepared_=false;
+    hostSynced_=false;
     descriptorBound_=false;
     candidatePtIova_=0u;
     if(memory_) {
@@ -52,6 +53,40 @@ n33_dma_stage_status Session::failure(n33_dma_stage_state code) {
 n33_dma_stage_status Session::snapshot() const {
     return cached_.size==sizeof(cached_)
            ? cached_ : state(N33_DMA_NOT_PREPARED);
+}
+
+bool Session::pinnedAndMapped() const {
+    return dmaPrepared_ && descriptorBound_ && memoryPrepared_ &&
+           memory_ && command_ && mapper_ &&
+           cached_.state==N33_DMA_STAGED;
+}
+
+bool Session::readByte(size_t offset,uint8_t *out) const {
+    if(!hostSynced_ || !pinnedAndMapped() || !out ||
+       offset>=staging::kBytes || offset>=memory_->getLength())
+        return false;
+    const auto *data=static_cast<const uint8_t *>(memory_->getBytesNoCopy());
+    if(!data)return false;
+    *out=data[offset];
+    return true;
+}
+
+bool Session::synchronizeForDevice() {
+    if(!pinnedAndMapped() || !hostSynced_)return false;
+    // User memory is already prepared and pinned to this exact PCI
+    // IOMapper domain. Synchronization does not install a GPU VM root.
+    if(command_->synchronize(kIODirectionOut)!=kIOReturnSuccess)
+        return false;
+    hostSynced_=false; // require explicit invalidate before CPU readback
+    return true;
+}
+
+bool Session::synchronizeForHost() {
+    if(!pinnedAndMapped())return false;
+    if(command_->synchronize(kIODirectionIn)!=kIOReturnSuccess)
+        return false;
+    hostSynced_=true; // coherent CPU reads may now inspect fence/destination
+    return true;
 }
 
 n33_dma_stage_status Session::prepare(IOPCIDevice *pci) {
@@ -127,6 +162,7 @@ n33_dma_stage_status Session::prepare(IOPCIDevice *pci) {
     // hardware verification, not as a claim of GPU physical mapping.
     candidatePtIova_=report.candidatePageTableDmaIova;
     cached_=state(N33_DMA_STAGED);
+    hostSynced_=true; // no GPU operation has begun
     cached_.flags=N33_DMA_FLAG_IOMMU_MAPPED|N33_DMA_FLAG_CPU_IMAGE_READY|
                   N33_DMA_FLAG_DEVICE_SYNCED;
     cached_.page_count=report.pages;
