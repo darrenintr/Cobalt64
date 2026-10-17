@@ -123,3 +123,62 @@ DMA/queue-lease prototype). This is NOT working GPU compute/Metal.
   safe GPUMMU/SDMA6 queue activation remain unimplemented. CI uses fake
   MMIO, fake VRAM BOs and synthetic register values. Do not claim an
   actual RX7600 copy, free VRAM page or Metal acceleration.
+
+## Stage G11: NBIO capacity census, DMA owner lifecycle, and mock-only BAR0 root upload
+
+Branch: feature/navi33-nbio-vram-capacity-lifecycle (draft follow-up to
+the GMC11 MC geometry/VRAM BO ledger). This stage does NOT enable 3D or
+Metal, and is NOT a working RX7600 hardware-copy driver.
+
+- Fix N33N user-client stop and clientClose: release the 64-KiB pinned
+  DMA staging buffer AND its provider-wide lease while the Navi33Probe
+  owner pointer is still valid. Before this, a dead root client could
+  strand an epoch and make later DMA_STAGE requests report BUSY.
+- Navi33Nbio43Capacity.h implements a bounded, read-only NBIO 4.3.0 or
+  4.3.1 RCC_CONFIG_MEMSIZE register plan. The register is at DWORD
+  0x00c3, IP Discovery NBIF BASE_IDX=2, as in Linux nbio_v4_3.c
+  and nbio_4_3_0_offset.h. The capacity field is in MiB.
+  Two identical reads, basic capacity plausibility, and valid ROM/IP
+  revision/BAR5 bounds are mandatory.
+- N33N ABI **v6** expands the root-only VRAM survey from 64 to 96 bytes.
+  Besides the paired MMHUB/GFXHUB framebuffer registers, it separately
+  reports stable NBIO capacity, reads, revision, and only when both
+  pass a GMC11 capacity-fit check, the validated geometry:
+  N33_VRAM_FLAG_MC_GEOMETRY_VALID.
+  A stable NBIO result is NOT authorization to allocate any VRAM.
+- The macOS n33vram --read CLI prints the additional NBIO capacity
+  state, MiB size, and checked GPU MC base. Rebuild both N33N user
+  client and diagnostic tool for ABI v6. It remains opt-in:
+    navi33-probe=1 navi33-client=1 navi33-vram-read=1
+  Kill switch: navi33-vram-off=1.
+  BAR5/MMIO operations on this selector are strictly READ ONLY.
+- Navi33Gmc11VramUpload.h is an isolated CPU BAR0 upload *backend*.
+  It requires an independently owned 4-KiB VRAM BO lease in the
+  existing software ledger, a verified physical root address,
+  a clean VRAM destination, external PCI/firmware ownership, a
+  transport-specific CPU-to-device BAR0 write sync, and an independent
+  device recovery facility. It writes the 512-word diagnostic PTE
+  image and verifies all words through callbacks only if the unsafe
+  compile macro is defined. Before the first potentially live write
+  it permanently quarantines the memory lease. It never activates
+  GPU VM, never submits SDMA, and cannot claim GPU work.
+- Production Navi33Probe.kext DOES NOT include or link this uploader,
+  and no user-facing boot argument or N33N selector enables it.
+  Only tests/test_gmc11_vram_upload.cpp defines the unsafe macro
+  against a synthetic VRAM buffer. tests/test_gmc11_vram_upload_off.cpp
+  confirms the default path is disabled. CI must not be mistaken
+  for real RX7600 BAR0 readback or any physically allocated VRAM BO.
+
+**Remaining first-hardware-copy blockers**:
+1. A real OS/firmware-approved exclusive PCI + VRAM ownership handover
+   that does not steal an active single-GPU GOP/macOS framebuffer.
+2. Real VRAM BO reserve/pin/unpin and BAR0 aperture-mapped access,
+   including firmware/display memory exclusion and live fault handling.
+3. PSP/SMU firmware and GPU clocks, coherent root/IOVA mapping,
+   fully initialized GMC11 TLB caches and system aperture registers.
+4. Exclusive SDMA6 ring control and independent hardware reset/teardown.
+5. Proof that silicon executed COPY/FENCE and wrote the result without
+   CPU emulation; a graphics/Metal bridge is further work.
+
+Nothing here flashes VBIOS, programs SPI flash, changes permanent
+GPU parameters, or starts a real command on the user's RX 7600.
