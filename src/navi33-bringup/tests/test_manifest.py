@@ -35,6 +35,9 @@ assert 'N33_CAP_ROM_DISCOVERY' in source
 client=(root/"src/Navi33NativeClient.cpp").read_text()
 assert "Navi33NativeClient::externalMethod" in client
 assert "Navi33NativeClient::clientClose" in client
+assert client.count("releaseStageLocked();\n    owner_ = nullptr;")==2, (
+    "client close/stop must release the provider-scoped DMA lease first")
+
 assert "N33_SEL_PSP_STATUS" in client
 assert "N33_SEL_SDMA_STATUS" in client
 assert "N33_SEL_HW_PREFLIGHT" in client
