@@ -17,7 +17,11 @@ jobs:
         run: |
           gcc -std=c11 -Wall -Wextra -Werror -pedantic -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer src/dcn321/dcn321.c src/dcn321/tests/test_dcn321.c -o /tmp/dcn321-test
           /tmp/dcn321-test
+          gcc -std=c11 -Wall -Wextra -Werror -pedantic -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer src/dcn321/dcn321.c src/dcn321/tests/test_dcn321_plane.c -o /tmp/dcn321-plane-test
+          /tmp/dcn321-plane-test
       - name: C++17 compatibility
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -pedantic -x c++ src/dcn321/dcn321.c src/dcn321/tests/test_dcn321.c -o /tmp/dcn321-test-cxx
           /tmp/dcn321-test-cxx
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -x c++ src/dcn321/dcn321.c src/dcn321/tests/test_dcn321_plane.c -o /tmp/dcn321-plane-test-cxx
+          /tmp/dcn321-plane-test-cxx
