@@ -30,6 +30,12 @@ assert "Navi33NativeClient::externalMethod" in client
 assert "Navi33NativeClient::clientClose" in client
 assert "N33_SEL_PSP_STATUS" in client
 assert "N33_SEL_SDMA_STATUS" in client
+assert "N33_SEL_DMA_STAGE" in client
+assert "N33_SEL_DMA_STATUS" in client
+assert "N33_SEL_DMA_RELEASE" in client
+assert '"navi33-dma-stage"' in client
+assert '"navi33-dma-stage-off"' in client
+assert "dmaStage_.release()" in client
 assert "owner_->sdmaStatus()" in client
 assert "owner_->pspStatus()" in client
 assert "clientHasPrivilege" in client
@@ -68,7 +74,7 @@ for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
 for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h", "Navi33Gmc11Gart.h",
                  "Navi33GpuVaArena.h", "Navi33Sdma6Ring.h", "Navi33DmaScatter.h",
                  "Navi33Psp13Status.h", "Navi33Psp13Firmware.h",
-                 "Navi33Sdma6Status.h"):
+                 "Navi33Sdma6Status.h", "Navi33Sdma6Staging.h"):
     code = (root / "src" / filename).read_text()
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
@@ -96,4 +102,19 @@ for forbidden in ("configWrite", "setBusMasterEnable", "setMemoryEnable",
         assert "->setMemoryEnable" not in kernel_dma
     elif forbidden in ("WREG32","RREG32"):
         assert forbidden+"(" not in kernel_dma
-print("Navi33 DMA mapping preflight and GPU access boundaries: static checks passed")
+
+stager = (root/"src/Navi33DarwinStage.cpp").read_text()
+assert "IOMapper::copyMapperForDevice(pci)" in stager
+assert "IODMACommand::withSpecification(" in stager
+assert "gen64IOVMSegments(" in stager
+assert "command_->complete()" in stager
+assert "clearMemoryDescriptor(false)" in stager
+assert "memory_->complete()" in stager
+assert "staging::prepare(" in stager
+for forbidden in ("->configWrite", "->setMemoryEnable",
+                  "->setBusMasterEnable", "WREG32(",
+                  "IOConnectCallMethod(", "setPowerState("):
+    assert forbidden not in stager, f"DMA stager gained GPU I/O: {forbidden}"
+assert "kGpuRingSubmissionEnabled=false" in (root/"src/Navi33Sdma6Staging.h").read_text()
+assert "kGartHardwareEnabled=false" in (root/"src/Navi33Sdma6Staging.h").read_text()
+print("Navi33 device IOMMU staging and GPU submission boundaries: static checks passed")

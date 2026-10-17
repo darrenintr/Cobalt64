@@ -300,3 +300,13 @@ The native read-only N33N user client now can return a five-register
 SDMA0 queue snapshot if `navi33-sdma-read=1` is explicitly enabled
 and `navi33-sdma-off=1` is not. No GPU work is submitted; a readable
 ring pointer does not mean GFX11, Metal or acceleration works.
+
+## Stage G5: opt-in pinned GMC11/SDMA6 staging
+
+Native N33N selectors `DMA_STAGE`, `DMA_STATUS`, `DMA_RELEASE`
+allocate and retain 64-KiB of device-IOMMU-mapped *system RAM* and
+place software GMC11 PTEs, SDMA6 COPY and FENCE packets in it. Activation
+requires `navi33-probe=1 navi33-client=1 navi33-dma-stage=1` and a
+root client. `navi33-dma-stage-off=1` overrides allocation. Both
+explicit release and client death revoke the IOVA before unpinning.
+**No GPU page-table programming or SDMA execution is enabled.**

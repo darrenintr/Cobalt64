@@ -29,11 +29,15 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
 .PHONY: all clean host-test
 all: $(KEXT)
 
-$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h src/Navi33LiveMmio.h src/Navi33Psp13Status.h src/Navi33Psp13Firmware.h src/Navi33Sdma6Status.h src/Navi33Probe.hpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h
+$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h src/Navi33LiveMmio.h src/Navi33Psp13Status.h src/Navi33Psp13Firmware.h src/Navi33Sdma6Status.h src/Navi33Probe.hpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h src/Navi33DarwinStage.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD)/Navi33NativeClient.o: src/Navi33NativeClient.cpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h src/Navi33Probe.hpp src/Navi33NativeABI.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD)/Navi33DarwinStage.o: src/Navi33DarwinStage.cpp src/Navi33DarwinStage.h src/Navi33Sdma6Staging.h src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -45,9 +49,9 @@ $(BUILD)/kmod_info.o: src/kmod_info.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/kmod_info.o Info.plist
+$(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/kmod_info.o Info.plist
 	@mkdir -p $(KEXT)/Contents/MacOS
-	$(CXX) $(LDFLAGS) $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/kmod_info.o -o $(EXEC)
+	$(CXX) $(LDFLAGS) $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/kmod_info.o -o $(EXEC)
 	cp Info.plist $(KEXT)/Contents/Info.plist
 	xattr -cr $(KEXT)
 	codesign --force --sign - $(KEXT)
@@ -119,11 +123,15 @@ $(BUILD)/test-sdma6-status: tests/test_sdma6_status.cpp src/Navi33Sdma6Status.h 
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_status.cpp -o $@
 
+$(BUILD)/test-sdma6-staging: tests/test_sdma6_staging.cpp src/Navi33Sdma6Staging.h src/Navi33DmaScatter.h src/Navi33Sdma6Packet.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_staging.cpp -o $@
+
 $(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/Navi33Dcn321.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
 
-host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sdma6-status
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-staging
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
 	$(BUILD)/test-hardware-plan
@@ -138,6 +146,7 @@ host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware
 	$(BUILD)/test-psp13-status
 	$(BUILD)/test-psp13-firmware
 	$(BUILD)/test-sdma6-status
+	$(BUILD)/test-sdma6-staging
 	$(BUILD)/native-caps
 	python3 tests/test_manifest.py
 

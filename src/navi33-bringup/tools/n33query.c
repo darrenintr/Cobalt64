@@ -70,6 +70,15 @@ int main(void) {
     } else {
         fprintf(stderr,"N33N SDMA read unavailable: 0x%x\n",sdmarc);
     }
+    struct n33_dma_stage_status mapped={0};
+    size_t mapped_size=sizeof(mapped);
+    const kern_return_t maprc=IOConnectCallStructMethod(
+        conn,N33_SEL_DMA_STATUS,NULL,0u,&mapped,&mapped_size);
+    if(maprc==KERN_SUCCESS && mapped_size==sizeof(mapped) &&
+       mapped.abi_version==N33_ABI_VERSION && mapped.size==sizeof(mapped)) {
+        printf("N33N DMA stage state=%u (2=IOMMU STAGED only), pages=%u, GPU execution=NO\n",
+               mapped.state,mapped.page_count);
+    }
     IOServiceClose(conn);
     printf("GFX11 hardware command submission: %s; Metal: %s\n",
         n33_can_submit(&caps) ? "reported READY (still verify on GPU)" : "DISABLED",

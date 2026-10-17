@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
-// Root-only N33N read-only IOUserClient; never maps memory or submits a GPU job.
+// Root-only N33N query and opt-in OS IOMMU staging; NO GPU submission.
 #pragma once
 #include <IOKit/IOUserClient.h>
+#include <IOKit/IOLib.h>
+#include "Navi33DarwinStage.h"
 class Navi33Probe;
 
 class Navi33NativeClient : public IOUserClient {
@@ -13,6 +15,7 @@ public:
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
     IOReturn clientClose() override;
+    void free() override;
     IOReturn externalMethod(uint32_t selector,
                             IOExternalMethodArguments *args,
                             IOExternalMethodDispatch *dispatch,
@@ -20,4 +23,6 @@ public:
 private:
     Navi33Probe *owner_ = nullptr; // IOKit attachment owns provider lifetime.
     bool active_ = false;
+    IOLock *dmaLock_ = nullptr; // serializes stage/snapshot/release and stop
+    navi33::darwin_stage::Session dmaStage_{};
 };

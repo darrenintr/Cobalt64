@@ -4,6 +4,8 @@
 #include "Navi33NativeABI.h"
 #include "Navi33NativePolicy.h"
 #include <libkern/libkern.h>
+#include <IOKit/pci/IOPCIDevice.h>
+#include <pexpert/pexpert.h>
 
 OSDefineMetaClassAndStructors(Navi33NativeClient, IOUserClient)
 
@@ -13,7 +15,10 @@ bool Navi33NativeClient::initWithTask(task_t owningTask, void *securityID,
         clientHasPrivilege(securityID, kIOClientPrivilegeAdministrator)
             != kIOReturnSuccess)
         return false;
-    return super::initWithTask(owningTask, securityID, type, properties);
+    if (!super::initWithTask(owningTask, securityID, type, properties))
+        return false;
+    dmaLock_ = IOLockAlloc();
+    return dmaLock_ != nullptr;
 }
 
 bool Navi33NativeClient::start(IOService *provider) {
@@ -25,16 +30,28 @@ bool Navi33NativeClient::start(IOService *provider) {
 }
 
 void Navi33NativeClient::stop(IOService *provider) {
+    if (dmaLock_) IOLockLock(dmaLock_);
     active_ = false;
     owner_ = nullptr;
+    dmaStage_.release(); // revoke the device IOVA mapping before detach
+    if (dmaLock_) IOLockUnlock(dmaLock_);
     super::stop(provider);
 }
 
 IOReturn Navi33NativeClient::clientClose() {
+    if (dmaLock_) IOLockLock(dmaLock_);
     active_ = false;
     owner_ = nullptr;
+    dmaStage_.release(); // close/client death is equivalent to RELEASE
+    if (dmaLock_) IOLockUnlock(dmaLock_);
     terminate();
     return kIOReturnSuccess;
+}
+
+void Navi33NativeClient::free() {
+    dmaStage_.release(); // idempotent last-resort revoke
+    if (dmaLock_) { IOLockFree(dmaLock_); dmaLock_ = nullptr; }
+    super::free();
 }
 
 IOReturn Navi33NativeClient::externalMethod(
@@ -80,6 +97,44 @@ IOReturn Navi33NativeClient::externalMethod(
         const n33_sdma_status status = owner_->sdmaStatus();
         bcopy(&status, args->structureOutput, sizeof(status));
         args->structureOutputSize = sizeof(status);
+        return kIOReturnSuccess;
+    }
+    if (selector == N33_SEL_DMA_STAGE ||
+        selector == N33_SEL_DMA_STATUS ||
+        selector == N33_SEL_DMA_RELEASE) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_);
+            return kIOReturnNotReady;
+        }
+        if (selector == N33_SEL_DMA_RELEASE) {
+            dmaStage_.release(); // always permitted even with kill switch
+            IOLockUnlock(dmaLock_);
+            return kIOReturnSuccess;
+        }
+        n33_dma_stage_status status{};
+        if (selector == N33_SEL_DMA_STATUS) {
+            status = dmaStage_.snapshot(); // cached: no I/O
+        } else {
+            uint32_t enabled=0u, kill=0u;
+            const bool on=PE_parse_boot_argn("navi33-dma-stage",
+                                  &enabled,sizeof(enabled)) && enabled==1u;
+            const bool off=PE_parse_boot_argn("navi33-dma-stage-off",
+                                  &kill,sizeof(kill)) && kill!=0u;
+            if (!on || off) {
+                status.abi_version=N33_ABI_VERSION;
+                status.size=sizeof(status);
+                status.state=N33_DMA_DISABLED;
+            } else {
+                IOPCIDevice *pci=OSDynamicCast(IOPCIDevice,
+                                               owner_->getProvider());
+                status=dmaStage_.prepare(pci);
+            }
+        }
+        bcopy(&status,args->structureOutput,sizeof(status));
+        args->structureOutputSize=sizeof(status);
+        IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
     return kIOReturnUnsupported;

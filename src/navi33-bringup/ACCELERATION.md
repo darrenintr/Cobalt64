@@ -103,3 +103,37 @@ cannot claim any rendering. A future dedicated hardware pass of this
 program, combined with a proven non-software Navi33 Metal device, is an
 acceptance requirement before advertising native acceleration. The
 compiled binary is NOT run by CI and not installed automatically.
+
+## Stage G5: Persistent OS-IOMMU GMC11 / SDMA6 staging (no GPU execution)
+
+A new `Navi33DarwinStage::Session` owns a device-associated macOS
+`IOMapper`, a 64-KiB pinned `IOBufferMemoryDescriptor`, and its
+`IODMACommand` until the root-only N33N client explicitly releases it
+or closes/dies. Mapping and staging require the separate
+`navi33-dma-stage=1` boot argument; `navi33-dma-stage-off=1` overrides.
+No process can obtain DMA addresses, mapped RAM pointers, or a memory
+descriptor through the API.
+
+`N33_SEL_DMA_STAGE` returns a 64-byte status:
+- `N33_DMA_STAGED` means device-IOMMU pages are **pinned and retained**,
+  a 16-PTE GMC11 GART **CPU image** was generated (not installed in HW),
+  and SDMA6 COPY + uncached FENCE + NOP commands were encoded in mapped
+  ordinary system RAM (not uploaded to a GPU ring).
+- The 64-KiB image reserves 4-KiB source, destination, ring, fence and
+  PTE pages. Remaining pages are reserved/zeroed. It stores initial source
+  and destination FNV-1a hashes and expected fence cookie, never claims
+  the cookie was written by GPU.
+- `N33_SEL_DMA_STATUS` is a cached read; `N33_SEL_DMA_RELEASE` always
+  revokes mappings and unpins RAM even if the opt-in flag is disabled.
+- `clientClose`, `stop` and `free` provide idempotent, serialized
+  cleanup. A failed allocation or IOVA lookup drops every partial resource.
+- ABI version is **2** so previous N33N userland callers can detect the
+  change. All GPU/Metal capability bits remain disabled.
+
+**Cannot yet submit** because GC/GFXHUB/MMHUB VMID, hardware page tables,
+HDP flush, TLB invalidation, firmware/engine ownership, SDMA ring base,
+wptr/doorbell and GPU fence retirement have not been implemented or
+validated. A host test may validate the buffer image but can NEVER prove
+that the RX7600 ran it. Do not set `N33_CAP_HW_SDMA` or
+`N33_CAP_HW_VM` based on the staging status. No code writes a GPU
+register in this branch.

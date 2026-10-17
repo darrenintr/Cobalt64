@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Separate RX 7600 user/kernel ABI: never reinterpret Navi48 N48N requests.
- * All currently accepted operations are QUERY ONLY; GPU submission is denied.
+ * Only diagnostic queries and explicitly gated OS-IOMMU staging exist.
+ * Genuine GPU execution and GPU-VM programming remain disabled.
  */
 #ifndef COBALT_NAVI33_NATIVE_ABI_H
 #define COBALT_NAVI33_NATIVE_ABI_H
@@ -10,7 +11,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 1u
+#define N33_ABI_VERSION 2u /* adds owned, opt-in DMA staging selectors */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -29,7 +30,9 @@ enum n33_selector {
   N33_SEL_HELLO=0, N33_SEL_QUERY_CAPS=1,
   N33_SEL_BO_CREATE=2, N33_SEL_BO_FREE=3, N33_SEL_VM_MAP=4,
   N33_SEL_CTX_CREATE=5, N33_SEL_SUBMIT=6, N33_SEL_WAIT=7,
-  N33_SEL_PSP_STATUS=8, N33_SEL_SDMA_STATUS=9, N33_SEL_COUNT=10
+  N33_SEL_PSP_STATUS=8, N33_SEL_SDMA_STATUS=9,
+  N33_SEL_DMA_STAGE=10, N33_SEL_DMA_STATUS=11,
+  N33_SEL_DMA_RELEASE=12, N33_SEL_COUNT=13
 };
 // PSP status is deliberately read-only, never a readiness flag for GFX.
 enum n33_psp_state {
@@ -56,6 +59,24 @@ struct n33_sdma_status {
   uint64_t reserved1, reserved2, reserved3;
 };
 N33_STATIC_ASSERT(sizeof(struct n33_sdma_status)==64,"N33 SDMA ABI must be 64B");
+// Stateful N33N OS-IOMMU staging is NOT a GPU command submission.
+// HW_VM, HW_SDMA and HW_GFX are never set by this operation.
+enum n33_dma_stage_state {
+  N33_DMA_NOT_PREPARED=0, N33_DMA_DISABLED=1, N33_DMA_STAGED=2,
+  N33_DMA_BAD_PROVIDER=3, N33_DMA_NO_MAPPER=4,
+  N33_DMA_NO_MEMORY=5, N33_DMA_PREPARE_FAILED=6,
+  N33_DMA_COMMAND_FAILED=7, N33_DMA_SCATTER_FAILED=8,
+  N33_DMA_IMAGE_FAILED=9
+};
+#define N33_DMA_FLAG_IOMMU_MAPPED (1u<<0)
+#define N33_DMA_FLAG_CPU_IMAGE_READY (1u<<1)
+struct n33_dma_stage_status {
+  uint32_t abi_version, size, state, flags;
+  uint32_t page_count, segment_count, ring_dwords, reserved0;
+  uint64_t source_hash, destination_hash, fence_cookie, reserved1;
+};
+N33_STATIC_ASSERT(sizeof(struct n33_dma_stage_status)==64,
+                  "N33 DMA staging ABI must be 64B");
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;
