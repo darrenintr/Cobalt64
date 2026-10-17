@@ -3,6 +3,7 @@
 // No GPU hardware register writes or command submission in this class.
 #pragma once
 #include "Navi33NativeABI.h"
+#include "Navi33DmaLifetime.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -24,6 +25,13 @@ public:
     bool readByte(size_t offset,uint8_t *out) const;
     bool synchronizeForDevice();
     bool synchronizeForHost();
+    // Kernel-only: caller MUST quarantine before its first MMIO write.
+    // Once set, client close may NOT unpin this memory without a real
+    // externally verified GPU reset. No in-process reset override exists.
+    bool quarantineBeforePossibleGpuAccess();
+    bool requiresExternalReset() const {
+        return lifetime_.requiresExternalHardwareReset();
+    }
     // Kernel-only diagnostic data, never copied to N33N userspace.
     // IOVA alone cannot authorize GMC11 page-table register writes.
     uint64_t candidateTableDeviceIova() const {
@@ -40,6 +48,7 @@ private:
     bool descriptorBound_=false;
     bool dmaPrepared_=false;
     bool hostSynced_=false;
+    dma_lifetime::State lifetime_{};
     uint64_t candidatePtIova_=0u;
     n33_dma_stage_status cached_{};
     n33_dma_stage_status failure(n33_dma_stage_state code);
