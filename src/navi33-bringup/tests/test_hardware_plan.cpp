@@ -160,6 +160,11 @@ int main() {
     {auto f=make(false,false,false,true);
         assert(disc.parse(f.bytes.data(),f.bytes.size()));
         assert(inventory(disc).code==InventoryCode::Pass);
+        const auto gfxhub=mmhub11::planGfxFromDiscovery(disc,65536u);
+        assert(gfxhub.code==mmhub11::Code::Prepared);
+        assert(gfxhub.hub==mmhub11::Hub::Gfxhub);
+        assert(gfxhub.offsets[0u]==(0x100ull+0x1688ull)*4ull);
+        assert(gfxhub.offsets[8u]==(0x100ull+0x16bcull)*4ull);
         const auto mmhub=mmhub11::planFromDiscovery(disc,65536u);
         assert(mmhub.code==mmhub11::Code::Prepared);
         assert(mmhub.revision==2u);
