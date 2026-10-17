@@ -146,6 +146,18 @@ IOReturn Navi33NativeClient::externalMethod(
         IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
+    if (selector == N33_SEL_VRAM_GEOMETRY) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_); return kIOReturnNotReady;
+        }
+        const n33_vram_geometry geometry=owner_->vramGeometry();
+        bcopy(&geometry,args->structureOutput,sizeof(geometry));
+        args->structureOutputSize=sizeof(geometry);
+        IOLockUnlock(dmaLock_);
+        return kIOReturnSuccess;
+    }
     if (selector == N33_SEL_HW_PREFLIGHT ||
         selector == N33_SEL_HW_ROM_PREFLIGHT) {
         if (!dmaLock_) return kIOReturnNotReady;
