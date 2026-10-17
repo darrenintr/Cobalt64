@@ -112,6 +112,9 @@ static void offsetTests() {
     assert(!validPlan(tampered));
     tampered=p;tampered.offsets[5u]=p.barBytes+4u;
     assert(!validPlan(tampered));
+    tampered=p;
+    tampered.offsets[5u]+=4u; // aligned and within BAR5 but wrong register
+    assert(!validPlan(tampered));
     assert(planFromDiscovery(IPDiscovery{},65536u).code==Code::NoDiscovery);
 }
 static void successfulMockFlush() {
