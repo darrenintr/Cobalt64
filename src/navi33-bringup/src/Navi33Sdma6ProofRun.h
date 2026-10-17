@@ -10,6 +10,8 @@
 #pragma once
 #include "Navi33Gmc11Mmhub.h"
 #include "Navi33Sdma6MmioQueue.h"
+#include "Navi33Gmc11RootVram.h"
+#include "Navi33Sdma6QueueOwner.h"
 
 namespace navi33 { namespace sdma6_proof {
 
@@ -96,6 +98,9 @@ inline Report run(const Isolation &e,
                   const mmhub11::Plan &gfxPlan,
                   const mmhub11::Table &table,
                   const sdma6_mmio::Request &copy,
+                  const vram_root::Reservation &ownedVramRoot,
+                  vram_root::ReadWord readRootVram,void *rootReaderContext,
+                  queue_owner::Registry &queueLeases,const void *client,
                   mmhub11::IO mmIo,mmhub11::IO gfxIo,
                   sdma6_mmio::IO sdmaIo,
                   unsigned hubPolls=1000u,
@@ -105,6 +110,8 @@ inline Report run(const Isolation &e,
     !defined(COBALT_NAVI33_ENABLE_UNSAFE_MMIO)
     (void)e;(void)mmPlan;(void)gfxPlan;(void)table;(void)copy;
     (void)mmIo;(void)gfxIo;(void)sdmaIo;(void)hubPolls;(void)fencePolls;
+    (void)ownedVramRoot;(void)readRootVram;(void)rootReaderContext;
+    (void)queueLeases;(void)client;
     return r;
 #else
     r.verdict=Verdict::Refused;
@@ -120,6 +127,26 @@ inline Report run(const Isolation &e,
        !sdmaIo.read || !sdmaIo.write || !sdmaIo.beforeGpu ||
        !sdmaIo.afterGpu || !sdmaIo.readByte || !sdmaIo.delayUs)
         return r;
+
+    // Do not feed an IODMACommand IOVA to the GPU-MC Context0 root.
+    // Linux AMDGPU allocates the GART root in a pinned VRAM BO. Require
+    // exact readback of the complete root (including unused zero PTEs)
+    // from a SEPARATELY owned VRAM allocation before ANY GPU MMIO writes.
+    const auto rootProof=vram_root::inspect(
+        ownedVramRoot,table,readRootVram,rootReaderContext);
+    if(rootProof.code!=vram_root::Code::ImageMatches)return r;
+
+    // Software lease prevents two independent Cobalt64 Queue0 transactions.
+    // It does NOT magically claim firmware/EFI/another macOS driver's queue.
+    // The entire caller must be under a provider-wide lock.
+    const auto lease=queueLeases.acquire(client);
+    if(!lease.epoch)return r;
+    // A failed write may still have reached silicon. Poison the lease
+    // BEFORE first register-writing callback; never release on clientClose.
+    if(!queueLeases.markHardwareTouched(client,lease)) {
+        (void)queueLeases.releaseUnmodified(client,lease);
+        return r;
+    }
 
     const mmhub11::Gate vmGate{
         e.exclusiveGpuAndBothVmHubs,
