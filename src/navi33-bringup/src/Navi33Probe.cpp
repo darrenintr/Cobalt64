@@ -20,6 +20,7 @@
 #include "Navi33NativeABI.h"
 #include "Navi33Gfx11Command.h"
 #include "Navi33LiveMmio.h"
+#include "Navi33Psp13Status.h"
 #include <libkern/c++/OSData.h>
 
 
@@ -269,6 +270,69 @@ bool Navi33Probe::start(IOService *provider) {
           id.vendorId, id.deviceId, id.revisionId);
     registerService();
     return true;
+}
+
+// PSP13 status does not load firmware, start queues, write a mailbox,
+// or change power states. Called synchronously from root-gated N33N query.
+// A non-zero mailbox indicates an existing sOS reported life, NOT gfx ready.
+n33_psp_status Navi33Probe::pspStatus() {
+    navi33::psp13::Sample sample{};
+    uint32_t enabled=0u, disabled=0u;
+    const bool off = PE_parse_boot_argn("navi33-psp-off", &disabled,
+                                       sizeof(disabled)) && disabled != 0u;
+    const bool on = PE_parse_boot_argn("navi33-psp-read", &enabled,
+                                      sizeof(enabled)) && enabled == 1u;
+    if (!on || off) return navi33::psp13::report(sample);
+    auto *pci = OSDynamicCast(IOPCIDevice, getProvider());
+    if (!pci) {
+        sample.state = N33_PSP_NO_INVENTORY;
+        return navi33::psp13::report(sample);
+    }
+    const navi33::Identity id = navi33::inspectPci(
+        pci->configRead32(kIOPCIConfigVendorID),
+        pci->configRead32(kIOPCIConfigRevisionID));
+    if (!navi33::isSupported(id)) {
+        sample.state = N33_PSP_NO_INVENTORY;
+        return navi33::psp13::report(sample);
+    }
+    auto *snapshot = OSDynamicCast(OSData, pci->getProperty("ATY,bin_image"));
+    if (!snapshot || snapshot->getLength() < 32u ||
+        snapshot->getLength() > navi33::IPDiscovery::kMaxBlob) {
+        sample.state = N33_PSP_NO_INVENTORY;
+        return navi33::psp13::report(sample);
+    }
+    navi33::IPDiscovery disc;
+    if (!disc.parse(static_cast<const uint8_t *>(snapshot->getBytesNoCopy()),
+                    snapshot->getLength()) ||
+        navi33::inventory(disc).code != navi33::InventoryCode::Pass) {
+        sample.state = N33_PSP_NO_INVENTORY;
+        return navi33::psp13::report(sample);
+    }
+    IODeviceMemory *bar = pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress5);
+    const uint64_t barLength = bar ? static_cast<uint64_t>(bar->getLength()) : 0u;
+    const navi33::psp13::Plan plan = navi33::psp13::buildPlan(disc, barLength);
+    if (plan.state != N33_PSP_STOPPED) {
+        sample.state = plan.state;
+        return navi33::psp13::report(sample);
+    }
+    if (!bar) {
+        sample.state = N33_PSP_BAD_MMIO_PLAN;
+        return navi33::psp13::report(sample);
+    }
+    IOMemoryMap *mapping = bar->map();
+    if (!mapping) {
+        sample.state = N33_PSP_READ_ERROR;
+        return navi33::psp13::report(sample);
+    }
+    // Mapping may be shorter than IOPCIFamily's assigned BAR resource.
+    if (mapping->getLength() < barLength) {
+        sample.state = N33_PSP_BAD_MMIO_PLAN;
+    } else {
+        sample = navi33::psp13::readOnce(plan, true,
+                                         navi33ReadStatusDword, mapping);
+    }
+    mapping->release();
+    return navi33::psp13::report(sample);
 }
 
 void Navi33Probe::stop(IOService *provider) {
