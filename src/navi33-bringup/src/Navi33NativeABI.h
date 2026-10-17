@@ -67,10 +67,11 @@ enum n33_dma_stage_state {
   N33_DMA_BAD_PROVIDER=3, N33_DMA_NO_MAPPER=4,
   N33_DMA_NO_MEMORY=5, N33_DMA_PREPARE_FAILED=6,
   N33_DMA_COMMAND_FAILED=7, N33_DMA_SCATTER_FAILED=8,
-  N33_DMA_IMAGE_FAILED=9
+  N33_DMA_IMAGE_FAILED=9, N33_DMA_CACHE_SYNC_FAILED=10
 };
 #define N33_DMA_FLAG_IOMMU_MAPPED (1u<<0)
 #define N33_DMA_FLAG_CPU_IMAGE_READY (1u<<1)
+#define N33_DMA_FLAG_DEVICE_SYNCED (1u<<2)
 struct n33_dma_stage_status {
   uint32_t abi_version, size, state, flags;
   uint32_t page_count, segment_count, ring_dwords, reserved0;
