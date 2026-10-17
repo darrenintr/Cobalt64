@@ -270,3 +270,26 @@ not instantiate MMHUB MMIO code or access a physical GPU.
 are unverified, there is no safe MMHUB ownership on a GOP-backed
 single-GPU display, and the SDMA6 write backend remains isolated.
 Do not enable either unsafe compile flag on the primary video card.
+
+## Stage G8b — GFXHUB3 companion mapping and paired flush
+
+The same isolated GMC11 transaction backend now supports the **GC11
+GFXHUB3 (gfx1102)** register map (GC IP Discovery BASE_IDX 0).
+Linux `gfxhub_v3_0.c`, `gc_11_0_0_offset.h`, and its field-mask
+header define the Context0 base/start/end, engine-17 invalidate
+request/ACK and range. GFXHUB deliberately **does not acquire the
+MMHUB semaphore or issue the MMHUB-only private invalidate**.
+Independent Host MMIO simulations verify both layouts and the
+different invalidate paths.
+
+`dualHubReady(mmhub,gfxhub)` requires both backends to have passed
+their *own* TLB ACK, the correct Hub identities, and the **same verified
+GPU-physical page-table root address**. One valid Hub alone is not
+accepted as ready for SDMA6.
+
+This remains opt-in **compile-time isolated and not linked to the
+macOS Kext**. A simulated `dualHubReady` pass is not proof of GPU
+execution. The existing pinned-memory staging yields a device-IOMMU
+address, which still needs independent validation as a GPU MC address
+before supplying it to either Hub. GPU graphics/rendering is not yet
+available.
