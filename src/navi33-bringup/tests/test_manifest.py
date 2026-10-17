@@ -24,4 +24,10 @@ for forbidden in (
     assert forbidden not in source, f"read-only source gained {forbidden}"
 assert "pci->configRead32" in source
 assert "getDeviceMemoryWithRegister" in source
+assert '"ATY,bin_image"' in source
+assert 'Navi33Discovery.h' in source
+parser = (root / "src" / "Navi33Discovery.h").read_text()
+assert "struct IPEntry" in parser and "isNavi33Candidate" in parser
+for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
+    assert forbidden not in parser, f"IP parser gained {forbidden}"
 print("Navi33 manifest/read-only regression checks passed (static checks only)")

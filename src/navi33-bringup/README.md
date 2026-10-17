@@ -22,9 +22,33 @@ Vulkan, Metal, or firmware loading.
   Nevertheless, experimental kexts can still affect boot stability:
   back up your EFI and use a recovery boot entry.
 
-The IOKit property 'Navi33,Stage' must say 'PCI configuration inventory only'.
-No visible change to macOS graphics performance is expected. Successful
-Stage 0 merely gives a validated entry point for real RDNA3 work.
+The IOKit property 'Navi33,Stage' states that the driver is inventory-only.
+No visible change to macOS graphics performance is expected. It is not a
+GPU compute / render driver.
+
+## Stage 1: read-only IP Discovery verification (implemented)
+
+- Adds a new bounds-checked `Navi33Discovery.h` that scans supplied AMD
+  flash/TMR snapshots. Checks binary and per-table checksums, offsets, die
+  count, record lengths and 32/64-bit register bases. It never calls hardware.
+- Looks for the optional `ATY,bin_image` OSData property on the PCI provider.
+  If absent, the kext only reports that no ROM was supplied; it does not
+  attempt to fetch it from PCI ROM, MM_INDEX/MM_DATA or VRAM.
+- Reports discovered GC/SDMA/MP0/MP1/DMU versions in IORegistry. The target
+  fingerprint is GC 11.0.2, SDMA 6.0.2, MP0/MP1 13.0.7, DMU 3.2.1. A version
+  match identifies a supplied snapshot; it NEVER authorizes register writes.
+- Host-side test fixtures include truncated/corrupt blobs, v1/v2 binary
+  headers, v3/v4 IP structures, 32/64-bit bases and 4,000 mutations.
+
+Offline snapshots can be inspected without booting macOS:
+
+~~~sh
+make -C src/navi33-bringup host-test
+src/navi33-bringup/build/discovery-dump /path/to/full-rom-or-tmr-snapshot.bin
+~~~
+
+These are synthetic host tests, not measured results from a real RX 7600.
+The driver must NOT load/execute Navi48 firmware or GPU commands.
 
 ## Host tests (Linux, macOS, CI)
 
@@ -53,15 +77,13 @@ bootable EFI until the build is reviewed and a recovery route is ready.
 
 ## Next milestones (not implemented yet)
 
-1. Read and parse Navi 33 IP Discovery safely, validating discovered hardware
-   versions against Linux amdgpu (GC11, PSP13, SMU13, SDMA6, DCN3.2.1).
-   Keep unknown combinations fail-closed.
-2. Create independent RDNA3 firmware, GART/GMC, queue/interrupt and GFX11
-   implementations. Never call Navi 48 GC12 / PSP14 / SDMA7 register paths.
-3. Validate command submission, fence completion and a small gfx1102
-   compute shader with readback **before** enabling render/scanout.
-4. Adapt Cobalt64's Darwin RADV winsys to Navi 33 device information, then
-   Metal and WindowServer integration. Keep GOP fallback for diagnostics.
+1. Provide safe runtime IP Discovery acquisition from real Navi33 TMR/flash,
+   with strict bounds, isolation and recovery. Current only parses **supplied** snapshots.
+2. Build separate RDNA3 firmware, GMC/GART and GFX11 queues, interrupts and
+   power management. Never call Navi48 GC12 / PSP14 / SDMA7 routines.
+3. Validate fences and a real gfx1102 compute dispatch/readback.
+4. Adapt RADV Darwin winsys to Navi33; then Metal and WindowServer.
+   Keep the GOP display for recovery.
 
 Base: Almosst-DEV/Cobalt64 (MIT). Linux amdgpu/Mesa are implementation
 references, not proofs that this port works. No firmware or Apple binaries

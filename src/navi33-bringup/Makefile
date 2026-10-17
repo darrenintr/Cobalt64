@@ -29,7 +29,7 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
 .PHONY: all clean host-test
 all: $(KEXT)
 
-$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h
+$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -45,12 +45,23 @@ $(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/kmod_info.o Info.plist
 	codesign --force --sign - $(KEXT)
 	@echo "Built $(KEXT); NOT installed"
 
+HOST_FLAGS ?= -std=c++17 -Wall -Wextra -Werror -pedantic
+
 $(BUILD)/test-identity: tests/test_identity.cpp src/Navi33Identity.h
 	@mkdir -p $(BUILD)
-	$(HOST_CXX) -std=c++17 -Wall -Wextra -Werror -pedantic tests/test_identity.cpp -o $@
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_identity.cpp -o $@
 
-host-test: $(BUILD)/test-identity
+$(BUILD)/test-discovery: tests/test_discovery.cpp src/Navi33Discovery.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_discovery.cpp -o $@
+
+$(BUILD)/discovery-dump: tools/discovery_dump.cpp src/Navi33Discovery.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tools/discovery_dump.cpp -o $@
+
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/discovery-dump
 	$(BUILD)/test-identity
+	$(BUILD)/test-discovery
 	python3 tests/test_manifest.py
 
 clean:
