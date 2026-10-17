@@ -33,9 +33,11 @@ static const char *why(uint32_t value) {
 }
 int main(int argc,char **argv) {
     const int usingFile=(argc==3 && strcmp(argv[1],"--rom")==0);
-    if(!usingFile && (argc!=2 || strcmp(argv[1],"--probe")!=0)) {
-        fputs("Usage: sudo n33compute --probe | --rom rx7600.rom\n"
-              "Both operations are read-only hardware diagnostics.\n",stderr);
+    const int usingQueue=(argc==2 && strcmp(argv[1],"--queue")==0);
+    if(!usingFile && !usingQueue &&
+       (argc!=2 || strcmp(argv[1],"--probe")!=0)) {
+        fputs("Usage: sudo n33compute --probe | --queue | --rom rx7600.rom\n"
+              "All operations are read-only hardware diagnostics.\n",stderr);
         return 1;
     }
     if(geteuid()!=0) {
@@ -59,6 +61,37 @@ int main(int argc,char **argv) {
        hello[1]!=N33_UC_TYPE || hello[2]!=N33_SEL_COUNT) {
         fputs("N33N ABI version mismatch.\n",stderr);
         IOServiceClose(conn);return 5;
+    }
+    if(usingQueue) {
+        struct n33_queue_census_status q={0};
+        size_t qBytes=sizeof(q);
+        kr=IOConnectCallStructMethod(conn,N33_SEL_QUEUE_CENSUS,
+                                     NULL,0u,&q,&qBytes);
+        IOServiceClose(conn);
+        if(kr!=KERN_SUCCESS || qBytes!=sizeof(q) ||
+           q.abi_version!=N33_ABI_VERSION ||
+           q.size!=sizeof(q) || q.reserved0 || q.reserved1) {
+            fprintf(stderr,"N33N Queue0 census failed: 0x%x\n",kr);
+            return 6;
+        }
+        printf("RX7600 physical SDMA6 Queue0: state=%u reads=%u flags=0x%08x\n",
+               q.state,q.read_count,q.flags);
+        if(q.state==N33_QUEUE_OBSERVED) {
+            printf("RB_CNTL=%08x DOORBELL=%08x\n",
+                   q.ring_control,q.doorbell_control);
+            printf("RPTR=%08x:%08x WPTR=%08x:%08x\n",
+                   q.ring_rptr_hi,q.ring_rptr_lo,
+                   q.ring_wptr_hi,q.ring_wptr_lo);
+            printf("RB_BASE=%08x:%08x (256-byte units)\n",
+                   q.ring_base_hi,q.ring_base_lo);
+            puts((q.flags&N33_QUEUE_FLAG_APPARENTLY_PARKED)
+                  ? "Registers appear parked, but ownership is UNPROVEN."
+                  : "Existing Queue0 registers are in use/configured; no takeover.");
+        } else {
+            puts("Queue0 observation unavailable or unstable; no takeover.");
+        }
+        puts("GPU Copy submitted: NO; this only reads physical BAR5.");
+        return q.state==N33_QUEUE_OBSERVED ? 0 : 7;
     }
     void *rom=NULL;
     size_t romLen=0u;
