@@ -145,34 +145,76 @@ int dcn321_program_otg_timing(struct dcn321_device *d, unsigned p,
 #undef SET
     return apply_edits(d, p, edits, 12u);
 }
-int dcn321_flip_primary(struct dcn321_device *d,unsigned p,const struct dcn321_scanout *s) {
+int dcn321_flip_primary(struct dcn321_device *d, unsigned p,
+                        const struct dcn321_scanout *s) {
     uint64_t size;
-    uint32_t a,ctl;
+    uint32_t ctl, clock, lock, flip, pitch, surface, tiling, dcc, viewport;
+    uint32_t high_addr, low_addr, old_high, old_low;
     int rc;
-    if (!ready(d) || !s || p>=4) return DCN321_ARG;
+    if (!ready(d) || !s || p >= DCN321_PIPE_COUNT) return DCN321_ARG;
     if (!d->armed) return DCN321_DISABLED;
-    if (!s->pitch_pixels || !s->height || s->pitch_pixels>16384u ||
-        s->address==0 || (s->address&255u)) return DCN321_ARG;
-    size=(uint64_t)s->pitch_pixels*(uint64_t)s->height*4u;
-    if (s->address<d->vram_base || s->address>=d->vram_limit ||
-        size>d->vram_limit-s->address) return DCN321_RANGE;
-    /* Fail closed unless display timing already runs; all other pipe resources are caller-owned. */
-    rc=rd(d,dcn321_r_otg_otg_control,p,&ctl);
-    if(rc)return rc;
-    if (!(ctl&DCN321_F_OTG_OTG_CONTROL_OTG_MASTER_EN_MASK))return DCN321_PRECONDITION;
-    rc=rd(d,dcn321_r_hubpreq_dcsurf_flip_control,p,&ctl);
-    if(rc)return rc;
-    if (ctl&DCN321_F_HUBPREQ_DCSURF_FLIP_CONTROL_SURFACE_UPDATE_LOCK_MASK)
-        return DCN321_PRECONDITION;
-    rc=address(d,dcn321_r_hubpreq_dcsurf_primary_surface_address_high,p,&a);
-    if(rc)return rc;
-    if(d->io.write(d->io.cookie,a,(uint32_t)(s->address>>32)))return DCN321_IO;
-    rc=address(d,dcn321_r_hubpreq_dcsurf_primary_surface_address,p,&a);
-    if(rc)return rc;
-    /* AMD DC requires high DWORD first, then low DWORD to latch. */
-    return d->io.write(d->io.cookie,a,(uint32_t)s->address)?DCN321_IO:DCN321_OK;
-}
+    if (!s->pitch_pixels || !s->height || s->pitch_pixels > 16384u ||
+        !s->address || (s->address & 255u)) return DCN321_ARG;
+    size = (uint64_t)s->pitch_pixels * (uint64_t)s->height * 4u;
+    if (s->address < d->vram_base || s->address >= d->vram_limit ||
+        size > d->vram_limit - s->address) return DCN321_RANGE;
 
+    /* Strictly a 32bpp linear, DCC-off surface in a preconfigured,
+     * currently running pipe.  This does not validate physical VRAM pinning,
+     * clocks, link, or the upstream MPC/OPP/DPP configuration. */
+#define FLIP_READ(reg, var) do { \
+        rc = rd(d, dcn321_r_##reg, p, &(var)); if (rc) return rc; \
+    } while (0)
+    FLIP_READ(otg_otg_control, ctl);
+    FLIP_READ(otg_otg_clock_control, clock);
+    FLIP_READ(otg_otg_master_update_lock, lock);
+    FLIP_READ(hubpreq_dcsurf_flip_control, flip);
+    FLIP_READ(hubpreq_dcsurf_surface_pitch, pitch);
+    FLIP_READ(hubp_dcsurf_surface_config, surface);
+    FLIP_READ(hubp_dcsurf_tiling_config, tiling);
+    FLIP_READ(hubpreq_dcsurf_surface_control, dcc);
+    FLIP_READ(hubp_dcsurf_pri_viewport_dimension, viewport);
+#undef FLIP_READ
+    if (!(ctl & DCN321_F_OTG_OTG_CONTROL_OTG_MASTER_EN_MASK) ||
+        !(clock & DCN321_F_OTG_OTG_CLOCK_CONTROL_OTG_CLOCK_ON_MASK) ||
+        (lock & (DCN321_F_OTG_OTG_MASTER_UPDATE_LOCK_OTG_MASTER_UPDATE_LOCK_MASK |
+                 DCN321_F_OTG_OTG_MASTER_UPDATE_LOCK_UPDATE_LOCK_STATUS_MASK)) ||
+        (flip & (DCN321_F_HUBPREQ_DCSURF_FLIP_CONTROL_SURFACE_UPDATE_LOCK_MASK |
+                 DCN321_F_HUBPREQ_DCSURF_FLIP_CONTROL_SURFACE_FLIP_PENDING_MASK)) ||
+        ((pitch & DCN321_F_HUBPREQ_DCSURF_SURFACE_PITCH_PITCH_MASK) + 1u !=
+         s->pitch_pixels) ||
+        ((surface & DCN321_F_HUBP_DCSURF_SURFACE_CONFIG_SURFACE_PIXEL_FORMAT_MASK)
+         != 8u) ||
+        (tiling & DCN321_F_HUBP_DCSURF_TILING_CONFIG_SW_MODE_MASK) ||
+        (dcc & DCN321_F_HUBPREQ_DCSURF_SURFACE_CONTROL_PRIMARY_SURFACE_DCC_EN_MASK) ||
+        (viewport & DCN321_F_HUBP_DCSURF_PRI_VIEWPORT_DIMENSION_PRI_VIEWPORT_WIDTH_MASK) >
+        s->pitch_pixels ||
+        ((viewport & DCN321_F_HUBP_DCSURF_PRI_VIEWPORT_DIMENSION_PRI_VIEWPORT_HEIGHT_MASK)
+         >> DCN321_F_HUBP_DCSURF_PRI_VIEWPORT_DIMENSION_PRI_VIEWPORT_HEIGHT_SHIFT) >
+        s->height)
+        return DCN321_PRECONDITION;
+
+    /* Resolve and snapshot both registers before the first GPU write. */
+    rc = address(d, dcn321_r_hubpreq_dcsurf_primary_surface_address_high,
+                 p, &high_addr);
+    if (rc) return rc;
+    rc = address(d, dcn321_r_hubpreq_dcsurf_primary_surface_address,
+                 p, &low_addr);
+    if (rc) return rc;
+    if (d->io.read(d->io.cookie, high_addr, &old_high) ||
+        d->io.read(d->io.cookie, low_addr, &old_low))
+        return DCN321_IO;
+
+    /* AMD requires high first and low second to latch the MC address. */
+    if (d->io.write(d->io.cookie, high_addr, (uint32_t)(s->address >> 32u)) ||
+        d->io.write(d->io.cookie, low_addr, (uint32_t)s->address)) {
+        int failed = 0;
+        if (d->io.write(d->io.cookie, high_addr, old_high)) failed = 1;
+        if (d->io.write(d->io.cookie, low_addr, old_low)) failed = 1;
+        return failed ? DCN321_ROLLBACK : DCN321_IO;
+    }
+    return DCN321_OK;
+}
 
 /* Read-only pipe inventory.  Caller must ensure BAR/ASIC lifetime and MMIO
  * serialization.  Values describe internal display state, not photons. */
