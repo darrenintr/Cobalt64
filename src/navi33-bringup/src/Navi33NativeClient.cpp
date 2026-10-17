@@ -5,6 +5,7 @@
 #include "Navi33NativePolicy.h"
 #include <libkern/libkern.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <IOKit/IOMemoryDescriptor.h>
 #include <pexpert/pexpert.h>
 
 OSDefineMetaClassAndStructors(Navi33NativeClient, IOUserClient)
@@ -64,13 +65,23 @@ IOReturn Navi33NativeClient::externalMethod(
     (void)dispatch; (void)target; (void)reference;
     if (!active_ || !owner_) return kIOReturnNotReady;
     if (!args) return kIOReturnBadArgument;
+    // IOKit may use an out-of-line input descriptor for real 128KiB+
+    // VBIOS buffers. All other selectors continue to refuse descriptors.
+    const bool romDescriptor=selector==N33_SEL_HW_ROM_PREFLIGHT &&
+                             args->structureInputDescriptor!=nullptr;
+    const uint64_t inputBytes=romDescriptor ?
+        static_cast<uint64_t>(args->structureInputDescriptor->getLength()) :
+        static_cast<uint64_t>(args->structureInputSize);
+    if(inputBytes>UINT32_MAX || args->structureOutputSize>UINT32_MAX)
+        return kIOReturnBadArgument;
+    const bool illegalDescriptor=args->structureOutputDescriptor!=nullptr ||
+        (args->structureInputDescriptor!=nullptr && !romDescriptor);
     const navi33::native_policy::Shape result = navi33::native_policy::validate(
         selector, args->scalarInputCount, args->scalarOutputCount,
-        args->structureInputSize, args->structureOutputSize,
+        static_cast<uint32_t>(inputBytes),
+        static_cast<uint32_t>(args->structureOutputSize),
         args->scalarInput != nullptr, args->scalarOutput != nullptr,
-        args->structureOutput != nullptr,
-        args->structureInputDescriptor != nullptr ||
-        args->structureOutputDescriptor != nullptr);
+        args->structureOutput != nullptr, illegalDescriptor);
     if (result == navi33::native_policy::Shape::Unsupported)
         return kIOReturnUnsupported; // Cannot submit or allocate GPU memory.
     if (result != navi33::native_policy::Shape::Valid)
@@ -132,17 +143,37 @@ IOReturn Navi33NativeClient::externalMethod(
         // The second selector provides an ephemeral VBIOS blob; the
         // Kext parses only IP Discovery and never uploads that firmware.
         const uint8_t *rom=nullptr;
+        void *copied=nullptr;
         size_t romLen=0u;
-        if(selector == N33_SEL_HW_ROM_PREFLIGHT) {
-            if(!args->structureInput || args->structureInputSize<64u ||
-               args->structureInputSize>4u*1024u*1024u) {
+        if(selector==N33_SEL_HW_ROM_PREFLIGHT) {
+            if(inputBytes<64u || inputBytes>4u*1024u*1024u) {
                 IOLockUnlock(dmaLock_);
                 return kIOReturnBadArgument;
             }
-            rom=static_cast<const uint8_t *>(args->structureInput);
-            romLen=args->structureInputSize;
+            romLen=static_cast<size_t>(inputBytes);
+            if(romDescriptor) {
+                copied=IOMalloc(romLen);
+                if(!copied) {
+                    IOLockUnlock(dmaLock_);
+                    return kIOReturnNoMemory;
+                }
+                if(args->structureInputDescriptor->readBytes(
+                       0,copied,romLen)!=romLen) {
+                    IOFree(copied,romLen);
+                    IOLockUnlock(dmaLock_);
+                    return kIOReturnBadArgument;
+                }
+                rom=static_cast<const uint8_t *>(copied);
+            } else {
+                if(!args->structureInput) {
+                    IOLockUnlock(dmaLock_);
+                    return kIOReturnBadArgument;
+                }
+                rom=static_cast<const uint8_t *>(args->structureInput);
+            }
         }
         const n33_hw_preflight report = owner_->hardwarePreflight(rom,romLen);
+        if(copied)IOFree(copied,romLen);
         bcopy(&report,args->structureOutput,sizeof(report));
         args->structureOutputSize=sizeof(report);
         IOLockUnlock(dmaLock_);
