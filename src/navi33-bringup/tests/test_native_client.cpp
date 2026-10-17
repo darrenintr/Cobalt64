@@ -35,6 +35,12 @@ int main() {
                     false,false,true,false)==Shape::BadArgument);
     assert(validate(N33_SEL_HW_PREFLIGHT,0,0,0,64,
                     false,false,true,true)==Shape::BadArgument);
+    assert(validate(N33_SEL_HW_ROM_PREFLIGHT,0,0,4096,64,
+                    false,false,true,false)==Shape::Valid);
+    assert(validate(N33_SEL_HW_ROM_PREFLIGHT,0,0,32,64,
+                    false,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_HW_ROM_PREFLIGHT,0,0,4194305u,64,
+                    false,false,true,false)==Shape::BadArgument);
     const n33_capabilities info={N33_ABI_VERSION,sizeof(n33_capabilities),
         N33_PCI_VENDOR,N33_PCI_DEVICE,N33_GFX_IP_VERSION,N33_FAMILY_GFX1102,
         N33_CAP_PCI_INVENTORY|N33_CAP_ROM_DISCOVERY,0u,0u,0u,0u,0u};
