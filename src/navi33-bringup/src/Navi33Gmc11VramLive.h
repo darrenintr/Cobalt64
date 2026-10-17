@@ -22,13 +22,12 @@ struct Plan {
     uint64_t offsets[6u]{}; // MM BASE,TOP,OFFSET; GC BASE,TOP,OFFSET
     uint32_t mmRevision=0xffffffffu;
 };
-inline Plan fromDiscovery(const IPDiscovery &disc,uint64_t bar5Bytes) {
+inline Plan fromEntries(const IPEntry &mm,const IPEntry &gc,
+                        bool identifiedNavi33,uint64_t bar5Bytes) {
     Plan p{};
-    if(inventory(disc).code!=InventoryCode::Pass ||
-       !disc.isNavi33Candidate())return p;
-    IPEntry mm{},gc{};
-    if(!disc.find(ipid::MMHUB,0u,mm) ||
-       !disc.find(ipid::GC,0u,gc))return p;
+    if(!identifiedNavi33 || mm.hwId!=ipid::MMHUB || mm.instance!=0u ||
+       gc.hwId!=ipid::GC || gc.instance!=0u)
+        return p;
     if(mm.major!=3u || mm.minor!=0u ||
        (mm.revision!=0u && mm.revision!=2u) ||
        !mm.numBases || gc.major!=11u || gc.minor!=0u ||
@@ -63,6 +62,14 @@ inline Plan fromDiscovery(const IPDiscovery &disc,uint64_t bar5Bytes) {
     p.code=PlanCode::Pass;
     p.mmRevision=mm.revision;
     return p;
+}
+inline Plan fromDiscovery(const IPDiscovery &disc,uint64_t bar5Bytes) {
+    if(inventory(disc).code!=InventoryCode::Pass ||
+       !disc.isNavi33Candidate())return {};
+    IPEntry mm{},gc{};
+    if(!disc.find(ipid::MMHUB,0u,mm) ||
+       !disc.find(ipid::GC,0u,gc))return {};
+    return fromEntries(mm,gc,true,bar5Bytes);
 }
 using Read=bool (*)(void*,uint64_t,uint32_t*);
 struct Sample {
