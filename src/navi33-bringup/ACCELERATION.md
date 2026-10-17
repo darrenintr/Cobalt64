@@ -137,3 +137,35 @@ validated. A host test may validate the buffer image but can NEVER prove
 that the RX7600 ran it. Do not set `N33_CAP_HW_SDMA` or
 `N33_CAP_HW_VM` based on the staging status. No code writes a GPU
 register in this branch.
+
+## Stage G6: SDMA6 hardware acceptance gate
+
+`Navi33Sdma6HardwareGate.h` specifies an explicit per-RX7600
+`Evidence` chain: PCI identity, PSP/firmware validation, pinned DMA
+pages, **installed** GMC11 GPU hardware VM mappings, completed GPU
+TLB sync, exclusive SDMA ring ownership, independently tested reset
+recovery, actual fence retirement, and matching source/target bytes.
+
+This is intentionally *not* a GPU submit implementation. All inputs to
+the host-only test are synthetic. The existing root-gated N33N client
+does not populate, trust or consume a fabricated `Evidence` object;
+the flag `kDeviceSubmissionImplemented` stays `false`.
+Nothing here can claim a successful GPU render or hardware copy.
+
+### Required next concrete hardware work
+
+- Obtain live Navi33 firmware/IP Discovery/PSP status from a safely
+  recoverable device, and verify memory-mapped register offsets on silicon.
+- Implement device/queue ownership arbitration separate from the
+  existing GOP/display driver, with restoration on initialization failure.
+- Install *owned* GMC11 VM context and page-table mapping, verify HDP/TLB
+  flush and fault reporting on an independent test queue.
+- Initialize an SDMA6 ring with exact firmware ABI, wptr/rptr/doorbell
+  configuration and an explicit bounded timeout/recovery.
+- Use a GPU-written fence in mapped CPU-readable memory and read back
+  the 4-KiB destination, proving no CPU side copy occurred.
+
+Do **not** use a single display GPU for the first destructive MMIO
+write without an independent headless/remote recovery console and a
+known rollback environment. CI and software host tests cannot replace
+hardware observations.
