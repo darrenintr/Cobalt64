@@ -22,3 +22,18 @@ jobs:
         run: make -C src/navi33-bringup clean host-test HOST_CXX=clang++
       - name: Python compile check
         run: python3 -m compileall -q src/navi33-bringup/tests
+
+  macos-kext-compile:
+    name: macOS x86_64 Kext compile (no install)
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch MacKernelSDK at RDNA4FB submodule revision
+        run: git clone --depth 1 --recurse-submodules https://github.com/somestupidgirl/RDNA4FB.git /tmp/RDNA4FB
+      - name: Build stand-alone Navi33Probe.kext (no firmware or driver loading)
+        run: make -C src/navi33-bringup MKSDK=/tmp/RDNA4FB/MacKernelSDK all
+      - name: Check output files
+        run: |
+          test -f src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe
+          test -f src/navi33-bringup/build/Navi33Probe.kext/Contents/Info.plist
