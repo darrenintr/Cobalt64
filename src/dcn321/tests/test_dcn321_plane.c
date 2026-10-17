@@ -223,12 +223,67 @@ static void test_timing_transaction(void) {
     assert(f.regs[SEG + 0x1b41] == 0u); /* never enable OTG */
 }
 
+static void configure_active_linear(struct fake *f) {
+    f->regs[SEG + 0x1b41] = 1u; /* active OTG */
+    f->regs[SEG + 0x1b85] = 0x100u; /* clock on */
+    f->regs[SEG + 0x0607] = 1919u;
+    f->regs[SEG + 0x05e5] = 8u;
+    f->regs[SEG + 0x05ea] = (1080u << 16u) | 1920u;
+    f->regs[SEG + 0x060a] = 0x10090000u;
+}
+static void test_flip_preflight_and_rollback(void) {
+    struct fake f;
+    struct dcn321_device d;
+    struct dcn321_scanout s = surface_1080p();
+    uint32_t saved[REG_COUNT];
+    setup(&f, &d);
+    d.armed = true;
+    configure_active_linear(&f);
+    f.regs[SEG + 0x061b] = 0x100u;
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_PRECONDITION);
+    assert(f.successful_writes == 0u);
+    f.regs[SEG + 0x061b] = 0u;
+    f.regs[SEG + 0x0607] = 1918u;
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_PRECONDITION);
+    f.regs[SEG + 0x0607] = 1919u;
+    f.regs[SEG + 0x061a] = 0x02u; /* DCC incompatible */
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_PRECONDITION);
+    f.regs[SEG + 0x061a] = 0u;
+    f.regs[SEG + 0x05e7] = 2u; /* not linear */
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_PRECONDITION);
+    f.regs[SEG + 0x05e7] = 0u;
+    assert(f.successful_writes == 0u);
+
+    memcpy(saved, f.regs, sizeof(saved));
+    f.fail_read_at = f.read_calls + 5u;
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_IO);
+    assert(f.successful_writes == 0u);
+    assert(memcmp(saved, f.regs, sizeof(saved)) == 0);
+    f.fail_read_at = 0u;
+
+    f.fail_write_at = 2u; /* high write succeeds, low latch fails */
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_IO);
+    assert(memcmp(saved, f.regs, sizeof(saved)) == 0);
+    f.fail_write_at = 0u;
+    f.write_calls = 0u;
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_OK);
+    assert(f.regs[SEG + 0x060a] == 0x10010000u);
+
+    setup(&f, &d);
+    d.armed = true;
+    configure_active_linear(&f);
+    f.fail_write_at = 2u;
+    f.fail_write_again_at = 3u; /* cannot restore old high */
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_ROLLBACK);
+}
+
 int main(void) {
     test_linear_plane();
     test_guards();
     test_rollback();
     test_frame_watch();
     test_timing_transaction();
+    test_flip_preflight_and_rollback();
     puts("DCN321 linear plane / MMIO failure / frame-progress tests passed (mock only)");
     return 0;
 }
