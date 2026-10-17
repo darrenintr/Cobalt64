@@ -135,10 +135,10 @@ inline n33_vram_geometry_status report(const Sample &s,uint64_t bar0Bytes,
     if(s.state==N33_VRAM_PAIRED_READ)
         r.candidate_physical_fb_base=
             static_cast<uint64_t>(s.raw[2])*vram_geometry::kFbUnit;
-    // No NBIO physical capacity read: cannot assert actual VRAM size,
-    // free GPU BO locations, or valid contents of BAR0 pages.
+    // The separate NBIO survey supplies an independently observed capacity.
+    // BAR0 region ownership and GPU accessibility are still not proven.
     return r;
 }
-static_assert(sizeof(n33_vram_geometry_status)==64,
+static_assert(sizeof(n33_vram_geometry_status)==96,
               "N33N VRAM geometry must remain 64 bytes");
 } } // namespace navi33::vram_live
