@@ -26,4 +26,7 @@ private:
     bool active_ = false;
     IOLock *dmaLock_ = nullptr; // serializes stage/snapshot/release and stop
     navi33::darwin_stage::Session dmaStage_{};
+    uint64_t dmaLeaseEpoch_=0u;
+    // Called under dmaLock_ where present; safe with idempotent release.
+    void releaseStageLocked();
 };
