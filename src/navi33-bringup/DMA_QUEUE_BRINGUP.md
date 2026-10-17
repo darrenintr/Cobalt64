@@ -213,3 +213,32 @@ to the NBIO capacity/VRAM uploader prototype). No real silicon compute.
 - This stage intentionally does not acquire PCI ownership, initialize
   PSP/GMC11, map GPU-visible live VRAM, issue a real SDMA command or
   provide native Metal acceleration.
+
+## Stage G13: N33N ABI v7 real read-only Queue0 BAR5 census
+
+- Navi33Sdma6QueueCensus.h uses verified Navi33 IP Discovery (GFX11 GC
+  BASE_IDX0, BAR5 bounds) to resolve eight SDMA0 Queue0 register offsets:
+  control, doorbell, low/high RPTR, low/high WPTR and low/high ring base.
+  The observer performs TWO full read-only snapshots, detects instability,
+  rejects invalid all-ones reads, and never assumes a parked queue is free.
+- New N33N root-only selector 16 returns a 64-byte v7 status structure,
+  including the register image, 16-read count, stability state and flags.
+  No acceleratation / GPU-owned-memory capabilities are set.
+- Navi33Probe.kext hosts a root-gated query using its EXISTING read-only
+  BAR5 mapping callback, opt-in with the existing boot arguments:
+
+      navi33-probe=1 navi33-client=1 navi33-sdma-read=1
+
+  Kill switch: navi33-sdma-off=1 (or navi33-client-off=1). No status
+  polling is required at boot; only the explicit root client query
+  reads physical registers.
+- Compile the native CLI with this same Kext/ABI revision and invoke
+  sudo n33compute --queue for a physical, *observation-only* report.
+  An inactive ring with zero base/pointers is only 'apparently parked';
+  firmware/driver PCI ownership is NOT proven by these observations.
+- Host tests include a mocked 16-read snapshot, changes between reads,
+  invalid register layouts/offsets and unavailable/unmapped BAR5 state.
+  Hardware writes, ring enable and GPU execution remain absent.
+- The diagnostic is not sufficient to enable unsafe GMC11 or SDMA writes.
+  No real RX7600 SDMA COPY/FENCE, GPU BO ownership, or Metal compute proof
+  exists at this stage.
