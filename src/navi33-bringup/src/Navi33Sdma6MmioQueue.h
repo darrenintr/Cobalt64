@@ -63,9 +63,9 @@ struct Preconditions {
 };
 constexpr bool eligible(const Preconditions &p) {
     return p.firmwareVerified && p.queueExclusivelyOwned &&
-           p.vmid0MappedByThisDriver && p.tlbFlushedAfterMap &&
-           p.ringGpuVaResolved && p.dmaOwnershipHeld &&
-           p.independentGpuRecovery && p.cpuGpuCacheMaintenance;
+           p.tlbFlushedAfterMap && p.ringGpuVaResolved &&
+           p.dmaOwnershipHeld && p.independentGpuRecovery &&
+           p.cpuGpuCacheMaintenance;
 }
 enum class Code : uint8_t {
     NotBuilt, Denied, Invalid, Busy, ReadFailed, WriteFailed,
@@ -162,6 +162,7 @@ public:
             result.status=Code::Busy;return result;
         }
         if(!eligible(gate) ||
+           (req.vmid==0u && !gate.vmid0MappedByThisDriver) ||
            (req.vmid==1u && (!gate.vmid1MappedByThisDriver ||
                              !gate.vmid1ExclusivelyOwned))) {
             result.status=Code::Denied;return result;
