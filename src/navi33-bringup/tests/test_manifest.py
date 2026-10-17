@@ -23,6 +23,10 @@ for forbidden in (
 ):
     assert forbidden not in source, f"read-only source gained {forbidden}"
 assert "Navi33Probe::newUserClient" in source
+assert "Navi33Probe::vramGeometry" in source
+assert '"navi33-vram-read"' in source and '"navi33-vram-off"' in source
+assert "navi33::vram_census::makePlan" in source
+assert "navi33::vram_census::observe" in source
 assert "Navi33Probe::hardwarePreflight" in source
 assert '"navi33-hw-probe"' in source and '"navi33-hw-off"' in source
 assert "navi33::hwprobe::planHubs" in source
@@ -35,6 +39,8 @@ assert "N33_SEL_PSP_STATUS" in client
 assert "N33_SEL_SDMA_STATUS" in client
 assert "N33_SEL_HW_PREFLIGHT" in client
 assert "owner_->hardwarePreflight(rom,romLen)" in client
+assert "N33_SEL_VRAM_GEOMETRY" in client
+assert "owner_->vramGeometry()" in client
 assert "N33_SEL_HW_ROM_PREFLIGHT" in client
 assert "structureInputDescriptor->readBytes(" in client
 assert "IOFree(copied,romLen)" in client
@@ -80,7 +86,7 @@ parser = (root / "src" / "Navi33Discovery.h").read_text()
 assert "struct IPEntry" in parser and "isNavi33Candidate" in parser
 for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
     assert forbidden not in parser, f"IP parser gained {forbidden}"
-for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h", "Navi33Gmc11Gart.h",
+for filename in ("Navi33VramCensus.h", "Navi33VramBoLedger.h", "Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h", "Navi33Gmc11Gart.h",
                  "Navi33GpuVaArena.h", "Navi33Sdma6Ring.h", "Navi33DmaScatter.h",
                  "Navi33Psp13Status.h", "Navi33Psp13Firmware.h",
                  "Navi33Sdma6Status.h", "Navi33Sdma6Staging.h"):
@@ -143,4 +149,6 @@ for forbidden in ("->configWrite", "->setMemoryEnable",
     assert forbidden not in stager, f"DMA stager gained GPU I/O: {forbidden}"
 assert "kGpuRingSubmissionEnabled=false" in (root/"src/Navi33Sdma6Staging.h").read_text()
 assert "kGartHardwareEnabled=false" in (root/"src/Navi33Sdma6Staging.h").read_text()
+assert "COBALT_NAVI33_ENABLE_UNSAFE_MMIO" not in (root/"src/Navi33VramBoLedger.h").read_text()
+assert "N33_VRAM_OBSERVED" in (root/"src/Navi33NativeABI.h").read_text()
 print("Navi33 device IOMMU staging and GPU submission boundaries: static checks passed")
