@@ -116,11 +116,19 @@ n33_dma_stage_status Session::prepare(IOPCIDevice *pci) {
        !staging::verifyInitial(host,staging::kBytes,report))
         return failure(N33_DMA_IMAGE_FAILED);
 
+    // CPU filled the backing memory AFTER IODMACommand::prepare().
+    // For double-buffered/noncoherent DMA this MUST be synchronized so the
+    // actual PCI device DMA mapping sees the PTE, ring and source contents.
+    // This is necessary for DMA, but not sufficient for GMC11 VM mapping.
+    if(command_->synchronize(kIODirectionOut)!=kIOReturnSuccess)
+        return failure(N33_DMA_CACHE_SYNC_FAILED);
+
     // Retain the *candidate* OS device-IOMMU address for future
     // hardware verification, not as a claim of GPU physical mapping.
     candidatePtIova_=report.candidatePageTableDmaIova;
     cached_=state(N33_DMA_STAGED);
-    cached_.flags=N33_DMA_FLAG_IOMMU_MAPPED|N33_DMA_FLAG_CPU_IMAGE_READY;
+    cached_.flags=N33_DMA_FLAG_IOMMU_MAPPED|N33_DMA_FLAG_CPU_IMAGE_READY|
+                  N33_DMA_FLAG_DEVICE_SYNCED;
     cached_.page_count=report.pages;
     cached_.segment_count=report.segments;
     cached_.ring_dwords=report.packetDwords;
