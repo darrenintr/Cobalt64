@@ -37,6 +37,11 @@ constexpr uint32_t kGfxhubGfx1102[kCount] = {
 // GC11 GFXHUB uses the same VMID0 Context0/PT-base bit layout but does
 // NOT acquire the MMHUB invalidate semaphore or private cache bit.
 enum class Hub : uint8_t { Mmhub=0, Gfxhub=1 };
+// Linux amdgpu_gmc_pd_addr() returns the translated VRAM BO
+// physical root combined with AMDGPU_PTE_VALID (bit 0) for
+// TTM_PL_VRAM. The *raw* GPU physical address is 4KiB-aligned,
+// but the VM_CONTEXT0_PAGE_TABLE_BASE register receives the PDE flags.
+constexpr uint64_t kPdeValid=1ull;
 constexpr uint32_t kContextEnable=0x01u;
 constexpr uint32_t kContextDepth=0x06u; // depth=0 for flat GART
 constexpr uint32_t kInvalidateVmid0=1u;
@@ -261,12 +266,13 @@ public:
         if(!io.syncTableForDevice(io.ctx)) {
             r.code=Code::Denied;return r;
         }
+        const uint64_t encodedRoot=table.gpuPhysicalPageTable|kPdeValid;
         const uint64_t start=table.gpuVirtualBase>>12u;
         const uint64_t end=(table.gpuVirtualBase+table.mappedBytes-1u)>>12u;
         const uint32_t next[9u]={
             static_cast<uint32_t>(old[0u]&~(kContextEnable|kContextDepth)),
-            static_cast<uint32_t>(table.gpuPhysicalPageTable),
-            static_cast<uint32_t>(table.gpuPhysicalPageTable>>32u),
+            static_cast<uint32_t>(encodedRoot),
+            static_cast<uint32_t>(encodedRoot>>32u),
             static_cast<uint32_t>(start),static_cast<uint32_t>(start>>32u),
             static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32u),
             kRangeLoAll,kRangeHiAll
