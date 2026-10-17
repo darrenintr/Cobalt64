@@ -23,7 +23,7 @@ int main(){
     assert(s.values[0]==0x400u && s.values[4]==0x404u);
     const n33_sdma_status out=report(s);
     assert(out.size==64u && out.ring_wptr==0x404u);
-    assert(out.reserved1==0u && out.reserved4==0u);
+    assert(out.reserved1==0u && out.reserved3==0u);
     f=Fake{};f.failAt=3u;
     s=readOnce(plan,true,read,&f);
     assert(s.state==N33_SDMA_READ_ERROR);
