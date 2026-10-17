@@ -82,3 +82,44 @@ do not program VM_CONTEXT0_PAGE_TABLE_BASE_ADDR with it.
 
 References: Linux AMDGPU gmc_v11_0.c, amdgpu_gart.c, sdma_v6_0.c;
 Apple Kernel IODMACommand::synchronize and PCI device ownership APIs.
+
+## Stage G10: VRAM MC address translation and read-only Kext census
+
+Branch: feature/navi33-vram-allocator-mc-geometry (stacked on the G9
+DMA/queue-lease prototype). This is NOT working GPU compute/Metal.
+
+- Navi33Gmc11VramGeometry.h uses validated MMHUB3 + GFXHUB11 FB_BASE,
+  FB_TOP (inclusive), and FB_OFFSET to translate three distinct spaces:
+  (a) BO offset into dedicated VRAM, (b) GPU MC address = VRAM MC
+  base + BO offset, (c) GPU physical address = FB_OFFSET + BO offset.
+  BAR0 aperture offsets are reported only when the range is visible.
+  This follows Linux amdgpu_gmc_vram_mc2pa, not CPU RAM IOVA reuse.
+- Navi33VramBoAllocator.h manages a fixed-size interval ledger within a
+  region ALREADY EXCLUSIVELY OWNED by some future, real device/firmware
+  owner. It rejects unauthorized or overlapping reservations, supports
+  generation-safe leases, and never reuses any page after a potentially
+  live GPU transaction. It has no hardware allocation or VRAM writer.
+- Navi33Gmc11VramLease.h binds an existing 4-KiB ledger lease to the
+  complete 512-entry GART root readback acceptance gate. The isolated
+  SDMA6 proof harness refuses fabricated root pointers and quarantines
+  the lease before GPU register writes are even attempted.
+- The shipping Navi33Probe.kext now exposes N33N ABI **v5**, root-only
+  selector N33_SEL_VRAM_GEOMETRY=15. It checks a checksum-valid Navi33
+  IP Discovery ROM, validates MMHUB 3.0.0 or 3.0.2 and GC 11.0.2
+  BASE_IDX0 offsets against the assigned BAR5, reads six FB registers
+  TWICE, and rejects inconsistent/unmapped reads. The status is read-only
+  and DOES NOT prove physical VRAM size or ownership.
+- The native macOS CLI **n33vram --read** is compiled by CI and can
+  query the live MMHUB/GFXHUB raw values after loading the Kext with
+  explicit boot flags:
+
+      navi33-probe=1 navi33-client=1 navi33-vram-read=1
+
+  Kill switch: navi33-vram-off=1. The normal Kext makes NO GPU writes,
+  even if these flags are enabled. Do NOT copy experimental EFI/Kext
+  into a single-GPU boot path without a separately tested recovery EFI.
+- Physical NBIO-reported VRAM capacity, a trustworthy GPU VRAM owner,
+  exact firmware/display reservations, BAR0 real read/write upload and
+  safe GPUMMU/SDMA6 queue activation remain unimplemented. CI uses fake
+  MMIO, fake VRAM BOs and synthetic register values. Do not claim an
+  actual RX7600 copy, free VRAM page or Metal acceleration.
