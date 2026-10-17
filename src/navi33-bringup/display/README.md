@@ -23,8 +23,12 @@ mode. Its `isConsoleDevice()` reports true. No hardware mode setting occurs.
 
 The Kext does **not** reinitialize the DCN display controller, query VRAM
 through BAR5, alter PCI COMMAND, map GPU registers, initialize firmware,
-submit shaders or enable hardware acceleration. Only the OS may write
-software-composited pixels into the provided existing framebuffer aperture.
+submit shaders or enable hardware acceleration. By default, only
+macOS writes software-composited pixels into the provided framebuffer
+aperture. With the separately gated `navi33-fb-pattern=1` diagnostic
+flag, the Kext can also map **only the first 32 rows** of the
+previously validated BAR0 scanout and write CPU-generated colour bars.
+This writes framebuffer pixels, not display-controller registers.
 
 Requirements for any successful screen: the GOP framebuffer must still
 exist, PCI memory decode must already be enabled, and the display engine must
