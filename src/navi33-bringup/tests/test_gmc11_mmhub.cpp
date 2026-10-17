@@ -176,6 +176,18 @@ static void gfxhubMockFlush() {
     assert(f.words[p.offsets[12u]/4u]==0u); // no MMHUB private flush on GC
     assert(vm.canUseGpuPageTable());
     assert(vm.requiresRecovery() && !vm.mayReleaseMappedMemory());
+
+    const Plan mp=makePlan(2u);
+    Fake mf=fakeFor(mp);
+    Controller mm{};
+    assert(!dualHubReady(mm,vm)); // one flush is insufficient
+    assert(mm.prepare(mp,gate(),table(),callbacks(mf)).code==Code::Prepared);
+    assert(!dualHubReady(mm,vm)); // merely programming registers is not enough
+    assert(mm.invalidateAndActivate(5u,10u).code==Code::Flushed);
+    assert(dualHubReady(mm,vm));
+    assert(!dualHubReady(vm,mm)); // hub identity matters
+    assert(mm.verifiedTableAddress()==0x400000ull);
+    assert(vm.verifiedTableAddress()==0x400000ull);
 }
 static void cancellationAndFaults() {
     {
