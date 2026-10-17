@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT
+// RX 7600 native probe service. Read-only N33N query contract.
+#pragma once
+#include <IOKit/IOService.h>
+#include <IOKit/IOUserClient.h>
+#include <stddef.h>
+#include "Navi33NativeABI.h"
+#include "Navi33StageOwner.h"
+#include <IOKit/IOLib.h>
+
+class Navi33Probe : public IOService {
+    OSDeclareDefaultStructors(Navi33Probe)
+    using super = IOService;
+
+public:
+    IOService *probe(IOService *provider, SInt32 *score) override;
+    bool start(IOService *provider) override;
+    void stop(IOService *provider) override;
+    void free() override;
+    IOReturn newUserClient(task_t owningTask, void *securityID, UInt32 type,
+                           OSDictionary *properties, IOUserClient **handler) override;
+    // Provider-scoped root-client DMA staging lease, NOT PCI/SDMA ownership.
+    uint64_t claimStageOwner(const void *client);
+    void releaseStageOwner(const void *client,uint64_t epoch);
+    n33_psp_status pspStatus(); // opt-in, read-only MP0 sOS observation
+    n33_sdma_status sdmaStatus(); // opt-in, read-only SDMA6 ring observation
+    n33_queue_census_status queueCensus(); // root-only physical Queue0 READ-ONLY
+    n33_vram_geometry_status vramGeometryStatus(); // root-only READ-ONLY paired FB registers
+    n33_hw_preflight hardwarePreflight(const uint8_t *romBytes=nullptr,
+                                     size_t romLength=0u); // no writes
+    n33_capabilities nativeCapabilities() const {
+        n33_capabilities result{};
+        result.abi_version = N33_ABI_VERSION;
+        result.size = sizeof(result);
+        result.vendor_id = N33_PCI_VENDOR;
+        result.device_id = N33_PCI_DEVICE;
+        result.gfx_ip_version = N33_GFX_IP_VERSION;
+        result.family = N33_FAMILY_GFX1102;
+        // No acceleration, VRAM size or GTT size is inferred from PCI BARs.
+        result.capabilities = nativeFlags_ &
+            (N33_CAP_PCI_INVENTORY | N33_CAP_ROM_DISCOVERY);
+        return result;
+    }
+
+private:
+    // Written in start() before registerService(), read thereafter.
+    uint32_t nativeFlags_ = N33_CAP_PCI_INVENTORY;
+    IOLock *stageOwnerLock_ = nullptr;
+    navi33::stage_owner::Registry stageOwner_{};
+};

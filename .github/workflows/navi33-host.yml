@@ -1,0 +1,117 @@
+name: Navi33 host verification
+
+on:
+  push:
+    branches: ['feature/navi33-*']
+    paths: ['src/navi33-bringup/**', '.github/workflows/navi33-host.yml']
+  pull_request:
+    paths: ['src/navi33-bringup/**', '.github/workflows/navi33-host.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: GCC host tests
+        run: make -C src/navi33-bringup clean host-test HOST_CXX=g++
+      - name: Clang host tests
+        run: make -C src/navi33-bringup clean host-test HOST_CXX=clang++
+      - name: Run Navi33 tests with ASan and UBSan (Clang)
+        run: |
+          make -C src/navi33-bringup clean host-test HOST_CXX=clang++             HOST_FLAGS="-std=c++17 -Wall -Wextra -Werror -pedantic -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"
+      - name: Verify separate gfx1102 ABI with C11 compiler
+        run: |
+          printf '#include "src/navi33-bringup/src/Navi33NativeABI.h"\nint main(void){struct n33_capabilities c={0};return n33_can_submit(&c);}\n' | cc -std=c11 -Wall -Wextra -Werror -pedantic -x c -I. - -o /tmp/test-n33abi
+          /tmp/test-n33abi
+      - name: Verify GOP framebuffer geometry (GCC)
+        run: make -C src/navi33-bringup/display clean host-test HOST_CXX=g++
+      - name: Verify GOP framebuffer geometry (Clang)
+        run: make -C src/navi33-bringup/display clean host-test HOST_CXX=clang++
+      - name: Offline OpenCore / AuxKC bootstrap tests
+        run: python3 -W error::ResourceWarning -m unittest discover -s src/navi33-bringup/bootstrap/tests -p 'test_*.py' -v
+      - name: Python compile check
+        run: python3 -m compileall -q src/navi33-bringup/tests src/navi33-bringup/display/tests src/navi33-bringup/bootstrap
+
+  macos-kext-compile:
+    name: macOS Kext compile (no install) - ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15-intel, macos-26-intel]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch MacKernelSDK at RDNA4FB submodule revision
+        run: git clone --depth 1 --recurse-submodules https://github.com/somestupidgirl/RDNA4FB.git /tmp/RDNA4FB
+      - name: Build stand-alone Navi33Probe.kext (no firmware or driver loading)
+        run: make -C src/navi33-bringup MKSDK=/tmp/RDNA4FB/MacKernelSDK all
+      - name: Compile isolated native Queue1 physical BAR5/IOMMU bridge (never link or load)
+        run: |
+          make -C src/navi33-bringup MKSDK=/tmp/RDNA4FB/MacKernelSDK physical-io-check
+          test -f src/navi33-bringup/build/Navi33DarwinQueue1IO.o
+          test -f src/navi33-bringup/build/Navi33DarwinRootReadback.o
+          # Verify this prototype is not linked into Navi33Probe.kext.
+          ! nm src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe | grep 'Navi33DarwinQueue1IO'
+      - name: Compile N33N read-only macOS user-space diagnostic (do not run)
+        run: |
+          clang -arch x86_64 -std=c11 -Wall -Wextra -Werror -pedantic -mmacosx-version-min=12.0 \
+            src/navi33-bringup/tools/n33query.c -framework IOKit -framework CoreFoundation \
+            -o /tmp/n33query
+          file /tmp/n33query
+      - name: Compile root-only N33N DMA staging diagnostic (do not execute)
+        run: |
+          clang -arch x86_64 -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33dma.c \
+            -framework IOKit -framework CoreFoundation -o /tmp/n33dma
+          file /tmp/n33dma
+      - name: Compile actual hardware preflight CLI (do not execute)
+        run: |
+          clang -arch x86_64 -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33compute.c \
+            -framework IOKit -framework CoreFoundation -o /tmp/n33compute
+          file /tmp/n33compute
+      - name: Compile paired GMC11 framebuffer location diagnostic (no execution)
+        run: |
+          clang -arch x86_64 -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33vram.c \
+            -framework IOKit -framework CoreFoundation -o /tmp/n33vram
+          file /tmp/n33vram
+      - name: Compile strict Metal triangle readback proof (do not execute)
+        run: |
+          clang -arch x86_64 -fobjc-arc -O2 -std=gnu11 -Wall -Wextra -Werror \
+            -mmacosx-version-min=12.0 src/navi33-bringup/tools/metal_frame_proof.m \
+            -framework Foundation -framework Metal -framework IOKit \
+            -o /tmp/n33-metal-frame-proof
+          file /tmp/n33-metal-frame-proof
+      - name: Check output files
+        run: |
+          test -f src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe
+          test -f src/navi33-bringup/build/Navi33Probe.kext/Contents/Info.plist
+      - name: Build Navi33 GOP framebuffer kext (no install)
+        run: make -C src/navi33-bringup/display MKSDK=/tmp/RDNA4FB/MacKernelSDK all
+      - name: Verify GOP framebuffer Kext output
+        run: |
+          test -f src/navi33-bringup/display/build/Navi33GOPFB.kext/Contents/MacOS/Navi33GOPFB
+          test -f src/navi33-bringup/display/build/Navi33GOPFB.kext/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:Navi33GOPFB:IOPCIPrimaryMatch" src/navi33-bringup/display/build/Navi33GOPFB.kext/Contents/Info.plist
+      - name: Preflight AuxKC Kext compatibility (no installation)
+        run: python3 src/navi33-bringup/bootstrap/auxkc_preflight.py --kext src/navi33-bringup/display/build/Navi33GOPFB.kext
+      - name: Audit live macOS AuxKC staging plan (dry-run; no installation)
+        run: python3 src/navi33-bringup/bootstrap/auxkc_stage.py --kext src/navi33-bringup/display/build/Navi33GOPFB.kext
+      - name: Verify Kext signing
+        run: codesign --verify --verbose=2 src/navi33-bringup/display/build/Navi33GOPFB.kext
+      - name: Preserve compiled Kexts as CI artifacts (NOT boot-tested)
+        uses: actions/upload-artifact@v4
+        with:
+          name: navi33-prototype-kexts-${{ matrix.runner }}
+          path: |
+            src/navi33-bringup/build/Navi33Probe.kext
+            src/navi33-bringup/display/build/Navi33GOPFB.kext
+            /tmp/n33compute
+          if-no-files-found: error
+          retention-days: 30
