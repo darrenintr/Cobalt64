@@ -55,6 +55,11 @@ struct Preconditions {
     bool dmaOwnershipHeld=false;
     bool independentGpuRecovery=false;
     bool cpuGpuCacheMaintenance=false;
+    // VMID1 requires independent evidence that BOTH MMHUB and GFXHUB
+    // context1 are owned, page-table bases installed and TLB flushed.
+    // A synthetic boolean is not hardware ownership evidence.
+    bool vmid1MappedByThisDriver=false;
+    bool vmid1ExclusivelyOwned=false;
 };
 constexpr bool eligible(const Preconditions &p) {
     return p.firmwareVerified && p.queueExclusivelyOwned &&
@@ -74,6 +79,7 @@ struct Request {
     uint64_t fenceGpuVa=0u;
     uint32_t cookie=0u;
     uint32_t ringDwords=kHwRingDwords;
+    uint32_t vmid=0u; // opt-in isolated Queue1 may use VMID1
 };
 using ReadRegister=bool (*)(void*,uint32_t,uint32_t*);
 using WriteRegister=bool (*)(void*,uint32_t,uint32_t);
@@ -129,7 +135,8 @@ inline bool validRequest(const Request &r) {
        !r.sourceGpuVa || (r.sourceGpuVa&4095ull)!=0ull ||
        !r.targetGpuVa || (r.targetGpuVa&4095ull)!=0ull ||
        !r.fenceGpuVa || (r.fenceGpuVa&4095ull)!=0ull ||
-       r.ringDwords!=kHwRingDwords || r.cookie!=staging::kFenceCookie)
+       r.ringDwords!=kHwRingDwords || r.cookie!=staging::kFenceCookie ||
+       r.vmid>1u)
         return false;
     if(r.ringGpuVa>=maxAddress || r.sourceGpuVa>=maxAddress ||
        r.targetGpuVa>=maxAddress || r.fenceGpuVa>=maxAddress)
@@ -154,7 +161,11 @@ public:
         if(state_!=Code::Denied || touchedHardware_) {
             result.status=Code::Busy;return result;
         }
-        if(!eligible(gate)) {result.status=Code::Denied;return result;}
+        if(!eligible(gate) ||
+           (req.vmid==1u && (!gate.vmid1MappedByThisDriver ||
+                             !gate.vmid1ExclusivelyOwned))) {
+            result.status=Code::Denied;return result;
+        }
         if(!validRequest(req) || !io.read || !io.write ||
            !io.beforeGpu || !io.afterGpu || !io.readByte ||
            !io.delayUs) {result.status=Code::Invalid;return result;}
@@ -227,7 +238,8 @@ public:
         const uint32_t rbSizeLog2=10u; // 1024 DWORDs
         const uint32_t encodedCtl=
             (ctl & ~kCtlUpdateMask) |
-            ((rbSizeLog2<<1u)&kRbSizeMask) | kRbPriv;
+            ((rbSizeLog2<<1u)&kRbSizeMask) | kRbPriv |
+            ((req.vmid<<24u)&kVmidMask);
         const uint32_t offsets[]={kRbBase,kRbBaseHi,kRptr,kRptrHi,
                                   kWptr,kWptrHi,kRbCntl};
         const uint32_t values[]={static_cast<uint32_t>(encoded),
@@ -304,7 +316,8 @@ public:
             o.status=Code::ReadFailed;return o;
         }
         const uint32_t ctl=(oldCtl_ & ~kCtlUpdateMask) |
-                           (10u<<1u) | kRbPriv | kEnable;
+                           (10u<<1u) | kRbPriv | kEnable |
+                           ((req_.vmid<<24u)&kVmidMask);
         // Enabling and publishing an SDMA ring can be irreversible without
         // a GPU reset; once enabled no blind register rollback is attempted.
         if(!io_.write(io_.ctx,kRbCntl,ctl)) {
