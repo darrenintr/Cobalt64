@@ -11,7 +11,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 2u /* adds owned, opt-in DMA staging selectors */
+#define N33_ABI_VERSION 3u /* adds owned, opt-in DMA staging selectors */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -32,7 +32,7 @@ enum n33_selector {
   N33_SEL_CTX_CREATE=5, N33_SEL_SUBMIT=6, N33_SEL_WAIT=7,
   N33_SEL_PSP_STATUS=8, N33_SEL_SDMA_STATUS=9,
   N33_SEL_DMA_STAGE=10, N33_SEL_DMA_STATUS=11,
-  N33_SEL_DMA_RELEASE=12, N33_SEL_COUNT=13
+  N33_SEL_DMA_RELEASE=12, N33_SEL_HW_PREFLIGHT=13, N33_SEL_COUNT=14
 };
 // PSP status is deliberately read-only, never a readiness flag for GFX.
 enum n33_psp_state {
@@ -77,6 +77,30 @@ struct n33_dma_stage_status {
 };
 N33_STATIC_ASSERT(sizeof(struct n33_dma_stage_status)==64,
                   "N33 DMA staging ABI must be 64B");
+// Physical RX7600 state diagnostics. This never asserts 3D/Metal support.
+enum n33_hw_reason {
+  N33_HW_DISABLED=0, N33_HW_NO_PROVIDER=1, N33_HW_NO_ROM=2,
+  N33_HW_BAD_ROM=3, N33_HW_NO_BAR5=4, N33_HW_BAD_OFFSETS=5,
+  N33_HW_MAP_FAILED=6, N33_HW_MMIO_READ_FAILED=7,
+  N33_HW_PSP_NOT_RUNNING=8, N33_HW_SDMA_READ_FAILED=9,
+  N33_HW_SHARED_GPU_STATE=10, N33_HW_NO_OWNED_GPU_VM=11,
+  N33_HW_COMPUTE_COMPLETE=12
+};
+#define N33_HW_FLAG_ROM_VERIFIED (1u<<0)
+#define N33_HW_FLAG_BAR5_MAPPED (1u<<1)
+#define N33_HW_FLAG_PSP_ALIVE (1u<<2)
+#define N33_HW_FLAG_SDMA_READ (1u<<3)
+#define N33_HW_FLAG_HUBS_READ (1u<<4)
+#define N33_HW_FLAG_SDMA_BUSY (1u<<5)
+#define N33_HW_FLAG_HUBS_ACTIVE (1u<<6)
+struct n33_hw_preflight {
+  uint32_t abi_version,size,reason,flags;
+  uint32_t psp_state,sdma_state,psp_alive,sos_version;
+  uint32_t sdma_control,sdma_rptr,sdma_wptr,mmhub_context0;
+  uint32_t gfxhub_context0,bar5_kib,mmio_reads,reserved0;
+};
+N33_STATIC_ASSERT(sizeof(struct n33_hw_preflight)==64,
+                  "N33 hardware preflight ABI must be 64 bytes");
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;
