@@ -29,6 +29,11 @@ constexpr uint32_t kEnable=1u;
 constexpr uint32_t kRbSizeMask=0x3eu; // log2(dwords) << 1, Linux GC11
 constexpr uint32_t kRbPriv=1u<<23u;
 constexpr uint32_t kVmidMask=0x0fu<<24u;
+constexpr uint32_t kWptrPoll=0x100u;
+constexpr uint32_t kF32Poll=0x800u;
+constexpr uint32_t kRptrWb=0x1000u;
+constexpr uint32_t kCtlUpdateMask=kRbSizeMask|kEnable|kVmidMask|
+     kWptrPoll|kF32Poll|kRptrWb|kRbPriv;
 constexpr uint32_t kHwRingDwords=1024u; // 4KiB mapped ring, not 16 DW
 constexpr uint32_t kCommandsBytes=
     static_cast<uint32_t>(staging::kRingWords*4u);
@@ -140,6 +145,46 @@ public:
         if((ctl&kEnable) || db!=0u || rptr || rhi || wptr || whi) {
             result.status=Code::Busy;return result;
         }
+        // Validate the exact pinned source, poisoned destination, COPY/FENCE
+        // packet and clean fence. An arbitrary ring must not reach hardware.
+        const sdma6::CopyPacket expected=sdma6::makeCopy(
+            req.sourceGpuVa,req.targetGpuVa,
+            static_cast<uint32_t>(staging::kBytePage));
+        if(expected.status!=sdma6::CopyCode::Pass) {
+            result.status=Code::Invalid;return result;
+        }
+        for(size_t i=0;i<staging::kBytePage;++i) {
+            uint8_t a=0u,b=0u;
+            if(!io.readByte(io.ctx,staging::kSourcePage*staging::kBytePage+i,&a) ||
+               !io.readByte(io.ctx,staging::kTargetPage*staging::kBytePage+i,&b)) {
+                result.status=Code::ReadFailed;return result;
+            }
+            if(a!=staging::pattern(i) || b!=0xcdu) {
+                result.status=Code::Invalid;return result;
+            }
+        }
+        const uint32_t fencePacket[4u]={
+            5u|(3u<<16u),static_cast<uint32_t>(req.fenceGpuVa),
+            static_cast<uint32_t>(req.fenceGpuVa>>32u),req.cookie
+        };
+        for(size_t i=0;i<staging::kRingWords;++i) {
+            uint32_t word=0u;
+            for(unsigned j=0;j<4u;++j) {
+                uint8_t v=0u;
+                if(!io.readByte(io.ctx,staging::kRingPage*
+                         staging::kBytePage+i*4u+j,&v)) {
+                    result.status=Code::ReadFailed;return result;
+                }
+                word|=static_cast<uint32_t>(v)<<(8u*j);
+            }
+            const uint32_t expectedWord=i<sdma6::kCopyPacketDwords ?
+                expected.words[i] :
+                i<sdma6::kCopyPacketDwords+4u ?
+                fencePacket[i-sdma6::kCopyPacketDwords] : 0u;
+            if(word!=expectedWord) {
+                result.status=Code::Invalid;return result;
+            }
+        }
         uint8_t fenceByte=0u;
         for(size_t i=0;i<4u;++i) {
             if(!io.readByte(io.ctx,staging::kFencePage*
@@ -152,7 +197,7 @@ public:
         const uint64_t encoded=req.ringGpuVa>>8u;
         const uint32_t rbSizeLog2=10u; // 1024 DWORDs
         const uint32_t encodedCtl=
-            (ctl & ~(kRbSizeMask|kEnable|kVmidMask)) |
+            (ctl & ~kCtlUpdateMask) |
             ((rbSizeLog2<<1u)&kRbSizeMask) | kRbPriv;
         const uint32_t offsets[]={kRbBase,kRbBaseHi,kRptr,kRptrHi,
                                   kWptr,kWptrHi,kRbCntl};
@@ -210,7 +255,7 @@ public:
         if(!io_.beforeGpu(io_.ctx)) {
             o.status=Code::ReadFailed;return o;
         }
-        const uint32_t ctl=(oldCtl_ & ~(kRbSizeMask|kVmidMask|kEnable)) |
+        const uint32_t ctl=(oldCtl_ & ~kCtlUpdateMask) |
                            (10u<<1u) | kRbPriv | kEnable;
         // Enabling and publishing an SDMA ring can be irreversible without
         // a GPU reset; once enabled no blind register rollback is attempted.
