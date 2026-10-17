@@ -184,11 +184,51 @@ static void test_frame_watch(void) {
     assert(dcn321_wait_frame_progress(&d, 4, 3u, 1000u) == DCN321_ARG);
     assert(f.successful_writes == 0u);
 }
+static void test_timing_transaction(void) {
+    struct fake f;
+    struct dcn321_device d;
+    uint32_t saved[REG_COUNT];
+    const struct dcn321_mode m = mode_1080p();
+    setup(&f, &d);
+    d.armed = true;
+    f.regs[SEG + 0x1b2a] = 0x80000000u;
+    f.regs[SEG + 0x1b2b] = 0x00001234u;
+    f.regs[SEG + 0x1b41] = 0x8000u; /* preserve unrelated OTG bits */
+    memcpy(saved, f.regs, sizeof(saved));
+    f.fail_read_at = 4u; /* initial precondition read + edit preflight */
+    assert(dcn321_program_otg_timing(&d, 0, &m) == DCN321_IO);
+    assert(f.successful_writes == 0u);
+    assert(memcmp(saved, f.regs, sizeof(saved)) == 0);
+    f.fail_read_at = 0u;
+    f.read_calls = 0u;
+    f.fail_write_at = 8u;
+    assert(dcn321_program_otg_timing(&d, 0, &m) == DCN321_IO);
+    assert(memcmp(saved, f.regs, sizeof(saved)) == 0);
+    setup(&f, &d);
+    d.armed = true;
+    f.fail_write_at = 2u;
+    f.fail_write_again_at = 3u;
+    assert(dcn321_program_otg_timing(&d, 0, &m) == DCN321_ROLLBACK);
+    setup(&f, &d);
+    d.armed = true;
+    f.regs[SEG + 0x1b41] = 1u; /* active OTG */
+    assert(dcn321_program_otg_timing(&d, 0, &m) == DCN321_PRECONDITION);
+    assert(f.successful_writes == 0u);
+    f.regs[SEG + 0x1b41] = 0u;
+    f.regs[SEG + 0x1b2a] = 0x80000000u;
+    assert(dcn321_program_otg_timing(&d, 0, &m) == DCN321_OK);
+    assert(f.successful_writes == 12u);
+    assert(f.regs[SEG + 0x1b2a] == (0x80000000u | 2199u));
+    assert(f.regs[SEG + 0x1b2f] == 1124u);
+    assert(f.regs[SEG + 0x1b41] == 0u); /* never enable OTG */
+}
+
 int main(void) {
     test_linear_plane();
     test_guards();
     test_rollback();
     test_frame_watch();
+    test_timing_transaction();
     puts("DCN321 linear plane / MMIO failure / frame-progress tests passed (mock only)");
     return 0;
 }
