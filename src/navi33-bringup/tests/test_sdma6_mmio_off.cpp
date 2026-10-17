@@ -12,6 +12,7 @@ int main() {
     assert(q.submit().status==Code::NotBuilt);
     assert(q.waitAndVerify(1u).status==Code::NotBuilt);
     assert(q.stopAfterCompleted().status==Code::NotBuilt);
+    assert(q.abortBeforeSubmit().status==Code::NotBuilt);
     assert(q.mayUnmapGpuMemory());
     std::puts("Default Navi33 build cannot write SDMA MMIO registers");
 }
