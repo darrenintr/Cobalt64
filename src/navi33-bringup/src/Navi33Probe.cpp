@@ -23,6 +23,7 @@
 #include "Navi33Psp13Status.h"
 #include "Navi33Sdma6Status.h"
 #include "Navi33HwProbeLogic.h"
+#include "Navi33VramCensus.h"
 #include <libkern/c++/OSData.h>
 
 
@@ -402,6 +403,81 @@ n33_sdma_status Navi33Probe::sdmaStatus() {
         mapping->release();
     }
     return navi33::sdma6live::report(sample);
+}
+
+// Opt-in READ-ONLY Navi33 VRAM address window. The three MMHUB3
+// registers are resolved through checksum-validated IP Discovery, sampled
+// twice for stability, and restricted to assigned BAR5 bounds. It NEVER
+// maps/writes BAR0 or claims any VRAM is free for allocation.
+n33_vram_geometry Navi33Probe::vramGeometry() {
+    uint32_t enabled=0u,disabled=0u;
+    const bool on=PE_parse_boot_argn("navi33-vram-read",
+                                    &enabled,sizeof(enabled)) && enabled==1u;
+    const bool off=PE_parse_boot_argn("navi33-vram-off",
+                                     &disabled,sizeof(disabled)) && disabled!=0u;
+    if(!on || off)
+        return navi33::vram_census::report({},0u);
+    auto *pci=OSDynamicCast(IOPCIDevice,getProvider());
+    if(!pci) {
+        navi33::vram_census::Observation s{};
+        s.state=N33_VRAM_NO_INVENTORY;
+        return navi33::vram_census::report(s,0u);
+    }
+    const navi33::Identity id=navi33::inspectPci(
+        pci->configRead32(kIOPCIConfigVendorID),
+        pci->configRead32(kIOPCIConfigRevisionID));
+    if(!navi33::isSupported(id)) {
+        navi33::vram_census::Observation s{};
+        s.state=N33_VRAM_NO_INVENTORY;
+        return navi33::vram_census::report(s,0u);
+    }
+    auto *snapshot=OSDynamicCast(OSData,pci->getProperty("ATY,bin_image"));
+    if(!snapshot || snapshot->getLength()<64u ||
+       snapshot->getLength()>navi33::IPDiscovery::kMaxBlob) {
+        navi33::vram_census::Observation s{};
+        s.state=N33_VRAM_NO_INVENTORY;
+        return navi33::vram_census::report(s,0u);
+    }
+    navi33::IPDiscovery disc;
+    if(!disc.parse(static_cast<const uint8_t *>(snapshot->getBytesNoCopy()),
+                   snapshot->getLength()) ||
+       navi33::inventory(disc).code!=navi33::InventoryCode::Pass) {
+        navi33::vram_census::Observation s{};
+        s.state=N33_VRAM_NO_INVENTORY;
+        return navi33::vram_census::report(s,0u);
+    }
+    IODeviceMemory *bar5=pci->getDeviceMemoryWithRegister(
+        kIOPCIConfigBaseAddress5);
+    IODeviceMemory *bar0=pci->getDeviceMemoryWithRegister(
+        kIOPCIConfigBaseAddress0);
+    const uint64_t bar5Bytes=bar5 ? bar5->getLength() : 0u;
+    const uint64_t bar0Bytes=bar0 ? bar0->getLength() : 0u;
+    const auto plan=navi33::vram_census::makePlan(disc,bar5Bytes);
+    if(plan.state!=N33_VRAM_OBSERVED) {
+        navi33::vram_census::Observation s{};
+        s.state=plan.state;
+        return navi33::vram_census::report(s,bar0Bytes);
+    }
+    IOMemoryMap *mapped=bar5 ? bar5->map() : nullptr;
+    if(!mapped) {
+        navi33::vram_census::Observation s{};
+        s.state=N33_VRAM_READ_ERROR;
+        return navi33::vram_census::report(s,bar0Bytes);
+    }
+    navi33::vram_census::Observation sample{};
+    if(mapped->getLength()<bar5Bytes) {
+        sample.state=N33_VRAM_READ_ERROR;
+    } else {
+        sample=navi33::vram_census::observe(
+            plan,true,navi33ReadStatusDword,mapped);
+    }
+    mapped->release();
+    const n33_vram_geometry result=
+        navi33::vram_census::report(sample,bar0Bytes);
+    IOLog("Navi33Probe: read-only MMHUB3 VRAM geometry status %u, FB window %llu MiB; no VRAM or GPU writes\n",
+          result.state,
+          static_cast<unsigned long long>(result.fb_window_bytes>>20u));
+    return result;
 }
 
 // This is an ACTUAL physical RX7600 status read, not a mock test.
