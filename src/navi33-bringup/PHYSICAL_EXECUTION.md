@@ -41,6 +41,24 @@ physical Navi33 by Cobalt64.
    `make physical-io-check`, **never linked, loaded, or installed**.
    Linux GCC/Clang and sanitizer runs test the DMA lifetime policy.
 
+## Register addresses checked against a physical RX 7600
+
+`tests/fixtures/rx7600-linux-ipd.txt` is the IP Discovery table that
+Linux amdgpu parsed from a real RX 7600 (1002:7480 rev cf, 1 MiB BAR5),
+captured read-only from sysfs by `tools/capture-linux-ipd.sh`. The IP
+versions match what the Kext accepts (GC 11.0.2, SDMA 6.0.2, MP0/MP1
+13.0.7, DCN 3.2.1, MMHUB 3.0.2, NBIF 4.3.1).
+`tests/test_rx7600_silicon_bases.cpp` feeds those bases to every plan
+builder (SDMA0 status, Queue0 census, Queue0/Queue1 ring bank, GFXHUB
+and MMHUB VMID0/VMID1, FB location, PSP13, NBIO memsize, DCN321) and
+checks the exact BAR5 byte offsets Linux would use. On real silicon
+NBIF BASE_IDX 0 is 0, so BASE_IDX 2 for `RCC_CONFIG_MEMSIZE` matters.
+
+Every register index and bitfield used by `src/navi33-bringup` and
+`src/dcn321` was also compared with upstream `gc_11_0_0`,
+`mmhub_3_0_{0,2}`, `mp_13_0_2`, `nbio_4_3_0` and `dcn_3_2_1` headers;
+all match. That proves the addresses, not that writing them is safe.
+
 ## Actual hardware compute remains BLOCKED
 
 A Queue1 ring and a ROM/register read do not confer ownership.
