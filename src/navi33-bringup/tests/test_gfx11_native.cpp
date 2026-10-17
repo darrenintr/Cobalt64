@@ -18,7 +18,7 @@ int main(){
   c.reserved0=1;assert(!n33_is_reserved_clean(&c));c.reserved0=0;
   c.device_id=0x7550;assert(!n33_can_submit(&c));c.device_id=N33_PCI_DEVICE;
   c.gfx_ip_version=0x000c0001;assert(!n33_can_submit(&c));
-  uint32_t words[3]={0xdeadbeefu,0xcafebabeu,0xaabbccddu};
+  uint32_t words[8]={0xdeadbeefu,0xcafebabeu,0xaabbccddu};
   assert(write_nop(words,0)==Error::Capacity && words[0]==0xdeadbeefu);
   assert(write_nop(words,3)==Error::Ok && words[0]==0xffff1000u);
   Frame f{};
