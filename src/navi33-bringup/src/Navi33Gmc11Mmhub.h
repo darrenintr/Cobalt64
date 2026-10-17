@@ -224,6 +224,13 @@ public:
                 for(size_t j=1u;j<=i;++j)
                     if(!io.write(io.ctx,p.offsets[indices[j]],old[j]))
                         restored=false;
+                // A successful callback may still have failed to restore the
+                // MMIO value. Read back the exact preflight state.
+                for(size_t j=1u;j<=i;++j) {
+                    uint32_t verified=0u;
+                    if(!io.read(io.ctx,p.offsets[indices[j]],&verified) ||
+                       verified!=old[j]) restored=false;
+                }
                 r.writes=written;
                 r.code=restored?Code::WriteFailure:Code::RecoveryRequired;
                 if(!restored)state_=Code::RecoveryRequired;
