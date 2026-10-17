@@ -121,6 +121,19 @@ IOReturn Navi33NativeClient::externalMethod(
         IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
+    if (selector == N33_SEL_HW_PREFLIGHT) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_);
+            return kIOReturnNotReady;
+        }
+        const n33_hw_preflight report = owner_->hardwarePreflight();
+        bcopy(&report,args->structureOutput,sizeof(report));
+        args->structureOutputSize=sizeof(report);
+        IOLockUnlock(dmaLock_);
+        return kIOReturnSuccess;
+    }
     if (selector == N33_SEL_DMA_STAGE ||
         selector == N33_SEL_DMA_STATUS ||
         selector == N33_SEL_DMA_RELEASE) {
