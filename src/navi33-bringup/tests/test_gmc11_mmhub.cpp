@@ -133,7 +133,7 @@ static void successfulMockFlush() {
     auto a=vm.prepare(p,g,table(),callbacks(f));
     assert(a.code==Code::Prepared && a.writes==8u);
     assert(f.syncs==1u);
-    assert(f.words[p.offsets[1u]/4u]==0x400000u);
+    assert(f.words[p.offsets[1u]/4u]==(0x400000ull|kPdeValid));
     assert(f.words[p.offsets[3u]/4u]==(staging::kGuestGpuVa>>12u));
     assert(f.words[p.offsets[5u]/4u]==
            ((staging::kGuestGpuVa+staging::kBytes-1u)>>12u));
