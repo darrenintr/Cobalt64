@@ -23,6 +23,9 @@ for forbidden in (
 ):
     assert forbidden not in source, f"read-only source gained {forbidden}"
 assert "Navi33Probe::newUserClient" in source
+assert "Navi33Probe::hardwarePreflight" in source
+assert '"navi33-hw-probe"' in source and '"navi33-hw-off"' in source
+assert "navi33::hwprobe::planHubs" in source
 assert '"navi33-client"' in source and '"navi33-client-off"' in source
 assert 'N33_CAP_ROM_DISCOVERY' in source
 client=(root/"src/Navi33NativeClient.cpp").read_text()
@@ -30,6 +33,8 @@ assert "Navi33NativeClient::externalMethod" in client
 assert "Navi33NativeClient::clientClose" in client
 assert "N33_SEL_PSP_STATUS" in client
 assert "N33_SEL_SDMA_STATUS" in client
+assert "N33_SEL_HW_PREFLIGHT" in client
+assert "owner_->hardwarePreflight()" in client
 assert "N33_SEL_DMA_STAGE" in client
 assert "N33_SEL_DMA_STATUS" in client
 assert "N33_SEL_DMA_RELEASE" in client
