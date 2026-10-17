@@ -45,16 +45,16 @@ $(KEXT): $(BUILD)/Navi33GOPFB.o $(BUILD)/kmod_info.o Info.plist
 	@echo "Built (NOT INSTALLED): $(KEXT)"
 
 $(BUILD)/test-layout: tests/test_layout.cpp src/Navi33GopLayout.h src/Navi33BarGuard.h
-
-$(BUILD)/test-pattern: tests/test_pattern.cpp src/Navi33Pattern.h
 	@mkdir -p $(BUILD)
-	$(HOST_CXX) $(HOST_FLAGS) tests/test_pattern.cpp -o $@
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_layout.cpp -o $@
 
 $(BUILD)/test-edid: tests/test_edid.cpp src/Navi33EDID.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_edid.cpp -o $@
+
+$(BUILD)/test-pattern: tests/test_pattern.cpp src/Navi33Pattern.h
 	@mkdir -p $(BUILD)
-	$(HOST_CXX) $(HOST_FLAGS) tests/test_layout.cpp -o $@
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_pattern.cpp -o $@
 
 host-test: $(BUILD)/test-layout $(BUILD)/test-edid $(BUILD)/test-pattern
 	$(BUILD)/test-layout
