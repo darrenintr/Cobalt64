@@ -86,3 +86,20 @@ overrides the opt-in. Uses only validated GC11 BASE_IDX=0 DWORD offsets
 from upstream Linux gc_11_0_0_offset.h. No doorbell, firmware reset,
 VRAM writes, fences, or actual GPU jobs. Counter movement and queue
 configuration have **not** been tested on Navi33 silicon.
+
+## Acceptance gate: first actual RX7600 GPU-rendered Metal frame
+
+`src/navi33-bringup/tools/metal_frame_proof.m` is a native macOS test
+that must **not** silently pass on Apple's software framebuffer, the Navi48
+bridge, or another GPU. It opens root-gated N33N, demands real Navi33
+identification and the HW_VM+HW_GFX+METAL capability bits, enumerates a
+Metal device named for RX7600/Navi33, submits a Metal triangle, copies the
+GPU-rendered 64x64 texture back to host memory, verifies center/background
+pixels, and reports a frame hash/GPU timing. **Current Navi33 Kext
+intentionally fails the capability gate.**
+
+macOS CI checks only that the test program compiles. A green workflow
+cannot claim any rendering. A future dedicated hardware pass of this
+program, combined with a proven non-software Navi33 Metal device, is an
+acceptance requirement before advertising native acceleration. The
+compiled binary is NOT run by CI and not installed automatically.
