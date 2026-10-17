@@ -56,6 +56,13 @@ jobs:
             src/navi33-bringup/tools/n33query.c -framework IOKit -framework CoreFoundation \
             -o /tmp/n33query
           file /tmp/n33query
+      - name: Compile strict Metal triangle readback proof (do not execute)
+        run: |
+          clang -arch x86_64 -fobjc-arc -O2 -std=gnu11 -Wall -Wextra -Werror \
+            -mmacosx-version-min=12.0 src/navi33-bringup/tools/metal_frame_proof.m \
+            -framework Foundation -framework Metal -framework IOKit \
+            -o /tmp/n33-metal-frame-proof
+          file /tmp/n33-metal-frame-proof
       - name: Check output files
         run: |
           test -f src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe
