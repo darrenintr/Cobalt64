@@ -112,6 +112,9 @@ PCI 1002:7480 rev cf. BAR0 256 MiB (VRAM window), BAR2 2 MiB, BAR5 1 MiB
 BAR5 byte offset = (base + register dword) × 4. Example: PSP
 `C2PMSG_35` (0x63) is at 0x5818C.
 
+VRAM: 8 GiB at GPU MC address `0x80_0000_0000`. The VBIOS programs this
+in MMHUB `FB_LOCATION` before macOS starts. NBIO reports 8176 MiB.
+
 ## Findings log (append after every physical run)
 
 - **2026-10-17, kext 0.0.2:** HELLO worked, but every struct selector
@@ -129,14 +132,51 @@ BAR5 byte offset = (base + register dword) × 4. Example: PSP
 - **Kext 0.0.4** (adds `C2PMSG_35`, `SDMA0_STATUS_REG` and
   `UCODE_CHECKSUM` to the `Navi33,LastHwPreflight` ioreg string) was
   staged but never booted.
-- **Kext 0.0.5 (N33N ABI 8, MMIO peek, one-pass `run.sh`, boot autorun)**
-  is staged on the stick, waiting for its first run. Expected UUID:
-  `6AFC2D34-0228-3079-8F8B-AD71FADB9B5F`.
-  - Open questions it should answer: is `C2PMSG_35` = `0x80000000` (PSP
-    bootloader ready for firmware)? Are `SDMA0_ID`/`VERSION` zero (GC
-    dark)? What does `RLC_BOOTLOAD_STATUS` read?
-  - Unknown: whether macOS privacy lets the root LaunchDaemon read the
-    stick.
+- **2026-10-17, kext 0.0.5 (N33N ABI 8):** first `n33peek --all`
+  (`results-20261017-221114-manual.txt`). The loaded UUID
+  `6AFC2D34-0228-3079-8F8B-AD71FADB9B5F` matches the artifact. This was a
+  manual run, so whether the boot autorun can read the stick is still
+  unknown. The preflight is unchanged from 0.0.3 (reason 8, now 9 reads).
+  - **PSP bootloader ready:** `C2PMSG_35` = `0x80000000` exactly, which is
+    the value `psp_v13_0_wait_for_bootloader` waits for. `C2PMSG_33` is
+    also `0x80000000`. No sOS: `C2PMSG_81` = 0, `C2PMSG_58` (sOS
+    version) = 0, and the ring registers `C2PMSG_64/67/69-71` = 0.
+  - About half the PSP `C2PMSG_32..127` dwords read `0xffffffff`,
+    interleaved with real values, so the block is answering; those words
+    are probably filtered by the PSP (not verified). Non-zero words with
+    no known meaning: `C2PMSG_59..62` = `00330f1c 00000004 83f00f80
+    0d1102f4`, `C2PMSG_89..91` = `88f36431 139bed48 0d330088`,
+    `C2PMSG_115` and `C2PMSG_118` = `0x80000000`.
+  - **SMU firmware running:** the driver mailbox response `C2PMSG_90` = 1
+    (`SMU_RESP_OK`). The DCN clock-manager response `C2PMSG_52`
+    (`DAL_RESP_REG` 0x16274) = 1. Message and argument registers are 0.
+  - **GC held in reset, not mis-addressed:** `IMU_GFX_RESET_CTRL` (GC
+    seg1 0x40bc) = `0x10`, the first non-zero GC read. Only `GRBM_RESETB`
+    is released. `HARD/EA/UTCL2/SDMA_RESETB` are asserted; Linux waits for
+    `0x1f` once the IMU has started. Everything else reads 0: `SDMA0_ID`
+    and `VERSION`, GRBM, CP, RLC (including `RLC_BOOTLOAD_STATUS`), the
+    other IMU registers and all of GFXHUB.
+  - **Memory map set by the VBIOS:** `MMMC_VM_FB_LOCATION_BASE/TOP` =
+    `0x8000/0x81ff`, so VRAM is at GPU MC `0x80_0000_0000`–`0x81_FFFF_FFFF`.
+    The system aperture covers the same range and `FB_OFFSET` is 0.
+    `RCC_CONFIG_MEMSIZE` = `0x1ff0` (8176 MiB). All 16 MMHUB contexts read
+    `0x01fffe00` (none enabled) and `MMVM_L2_CNTL` = `0x00080602`.
+  - `run.sh` bugs, fixed in `usb/run.sh` (they need a CI build to reach
+    the stick):
+    - `n33vram` ran without `--read`, so it only printed usage.
+    - `log show` missed the kext's own IOLog lines. The `dmesg` used by
+      0.0.3 caught them.
+  - **`panic.txt` on the stick:**
+    - The panic: `"The global payload bytes pointer is NULL"
+      @apfs_vfsops.c:2893` in `apfs_vfsop_mountroot`, 3.3 s into a boot
+      with the same boot-args. No Navi33Probe frame.
+    - At boot the kext reads only PCI config space and maps no BAR.
+    - The same message and backtrace was reported on a Ryzen + OpenCore
+      machine without this kext (forum.amd-osx.com, Monterey 12.2).
+    - Which kext build that boot loaded is unknown. The 22:04:47 boot
+      was clean.
+    - Treat it as unrelated unless it recurs. If it does, boot once with
+      Navi33Probe disabled.
 
 ## Adding a register read
 
@@ -198,9 +238,11 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
 
 1. IP discovery and read-only probe (done).
 2. PSP: load sOS (stages 4–8). This is the **first GPU write**.
-   - Precondition: `C2PMSG_35` = `0x80000000`.
+   - Precondition: `C2PMSG_35` = `0x80000000`. Met on 2026-10-17 (kext
+     0.0.5), with no sOS loaded and the SMU already running.
    - Navi48 stages firmware in VRAM through BAR0, away from the GOP
-     console (`stagePSP` in `Navi48Bringup.cpp`).
+     console (`stagePSP` in `Navi48Bringup.cpp`). On the RX 7600 the
+     PSP sees that VRAM at MC `0x80_0000_0000` + offset.
 3. SMU, IMU, RLC: power the GC block up (stages 9–11).
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
    GPU work.

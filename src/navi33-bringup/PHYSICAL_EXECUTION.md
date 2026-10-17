@@ -88,6 +88,28 @@ semaphores, ACKs, DATA/INDEX pairs, SDMA scratch RAM, INT_STATUS, EDC
 counters). A new read-only check is a new `n33peek` invocation; only a
 new window needs a Kext.
 
+### First MMIO peek (2026-10-17, Navi33Probe 0.0.5)
+
+`n33peek --all` read every window with no writes. Each value below was
+decoded against upstream `psp_v13_0.c`, `smu_v13_0.c`, `imu_v11_0.c`,
+`mmhub_v3_0_2.c`, `nbio_v4_3.c` and the matching offset/sh_mask headers.
+
+- PSP13: `C2PMSG_35` = `0x80000000`, the bootloader-ready value Linux
+  waits for before loading sOS. `C2PMSG_81` and `C2PMSG_58` (sOS
+  version) are 0, so no sOS is loaded. Many mailbox dwords read
+  `0xffffffff` next to real values, which looks like PSP filtering rather
+  than a dead block.
+- SMU13: the driver response register `C2PMSG_90` and the DCN response
+  register `C2PMSG_52` both read 1 (`SMU_RESP_OK`), so the SMU firmware is
+  running.
+- GC: `IMU_GFX_RESET_CTRL` = `0x10`. GRBM is out of reset, but hard, EA,
+  UTCL2 and SDMA resets are still asserted; Linux waits for `0x1f`. All
+  other GC, SDMA, RLC and GFXHUB registers read 0. The GC seg1 base is
+  right, and GC is held in reset because no IMU firmware has run.
+- MMHUB: the VBIOS put VRAM at MC `0x80_0000_0000`–`0x81_FFFF_FFFF`
+  (`FB_LOCATION` `0x8000/0x81ff`), with the system aperture over the same
+  range. NBIO memsize reads 8176 MiB.
+
 ## Actual hardware compute remains BLOCKED
 
 A Queue1 ring and a ROM/register read do not confer ownership.

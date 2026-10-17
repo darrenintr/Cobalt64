@@ -22,11 +22,13 @@ run() { "$@"; echo "exit=$?"; }
     run ./n33compute --rom rx7600-ipd.bin
     step "n33compute --probe (preflight from ATY,bin_image)"; run ./n33compute --probe
     step "n33compute --queue (SDMA6 Queue0 census)"; run ./n33compute --queue
-    step "n33vram (framebuffer geometry)"; run ./n33vram
+    step "n33vram (framebuffer geometry)"; run ./n33vram --read
     step "n33peek --all (allowlisted BAR5 register windows)"
     run ./n33peek --rom rx7600-ipd.bin --all
     step ioreg; ioreg -l -w0 -r -c Navi33Probe
     step "kernel log, this boot"
+    # The Kext's own IOLog lines reach dmesg but not this log query.
+    dmesg | grep -i navi33 | tail -80
     log show --last boot --style compact \
         --predicate 'eventMessage CONTAINS "Navi33"' 2>&1 | tail -80
     step done
