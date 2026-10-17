@@ -16,6 +16,7 @@ struct Fake {
     unsigned reads=0u, failWriteAt=0u;
     bool failWriteAfterCommit=false;
     bool unstableSnapshot=false, lateOwnerRace=false;
+    bool lateDoorbellRace=false;
     bool triggerGpu=true;
     bool copyData=true;
     bool writeFence=true;
@@ -36,6 +37,8 @@ static bool readReg(void *p,uint32_t r,uint32_t *value) {
         *value=kEnable;
     if(f->lateOwnerRace && f->reads==17u && r==kRbBase)
         *value=0x100u;
+    if(f->lateDoorbellRace && f->reads==25u && r==kDoorbell)
+        *value=1u;
     return true;
 }
 static bool writeReg(void *p,uint32_t r,uint32_t value) {
@@ -131,6 +134,9 @@ static void success() {
     assert(!q.mayUnmapGpuMemory());
     assert(q.requiresIndependentResetBeforeUnmap());
     assert(!q.requiresRecovery()); // queued work retired, VM teardown unproven
+    const unsigned previouslyWritten=f.writes;
+    assert(q.configure(ready(),request(),io(&f)).status==Code::Busy);
+    assert(f.writes==previouslyWritten); // no rearm after attempted MMIO
 }
 static void refusalAndFaults() {
     {
@@ -165,6 +171,12 @@ static void refusalAndFaults() {
     }
     {
         Fake f{};f.lateOwnerRace=true;
+        Queue q{};
+        assert(q.configure(ready(),request(),io(&f)).status==Code::Unstable);
+        assert(f.writes==0u && q.mayUnmapGpuMemory());
+    }
+    {
+        Fake f{};f.lateDoorbellRace=true;
         Queue q{};
         assert(q.configure(ready(),request(),io(&f)).status==Code::Unstable);
         assert(f.writes==0u && q.mayUnmapGpuMemory());
@@ -221,6 +233,7 @@ static void refusalAndFaults() {
         assert(q.abortBeforeSubmit().status==Code::Completed);
         assert(!q.mayUnmapGpuMemory());
         assert(q.requiresIndependentResetBeforeUnmap());
+        assert(q.configure(ready(),request(),io(&f)).status==Code::Busy);
         assert((f.regs[kRbCntl]&kEnable)==0u);
         assert(f.regs[kRbBase]==0u && f.regs[kRbBaseHi]==0u);
         assert(q.submit().status==Code::Denied);
