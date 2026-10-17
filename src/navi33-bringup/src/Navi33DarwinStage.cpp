@@ -23,6 +23,14 @@ static n33_dma_stage_status state(n33_dma_stage_state code) {
 }
 
 void Session::release() {
+    if(!lifetime_.mayCompleteIommuMapping()) {
+        // The device may still fetch through this OS IOVA even if the
+        // caller terminated or a fence timed out. No PCI reset proof
+        // exists, so intentionally keep descriptor and mapper retained
+        // (even across object teardown) instead of DMA use-after-free.
+        IOLog("Navi33Stage: DMA backing quarantined; independent GPU reset required, refusing unpin\n");
+        return;
+    }
     // Reverse ownership order: first revoke live DMA mapping, then unpin.
     if(command_) {
         if(dmaPrepared_) (void)command_->complete();
@@ -42,6 +50,7 @@ void Session::release() {
     memoryPrepared_=false;
     if(mapper_) { mapper_->release(); mapper_=nullptr; }
     cached_=state(N33_DMA_NOT_PREPARED);
+    (void)lifetime_.unpin();
 }
 
 n33_dma_stage_status Session::failure(n33_dma_stage_state code) {
@@ -89,7 +98,16 @@ bool Session::synchronizeForHost() {
     return true;
 }
 
+bool Session::quarantineBeforePossibleGpuAccess() {
+    if(!pinnedAndMapped())return false;
+    return lifetime_.quarantineBeforeFirstMmioAttempt();
+}
+
 n33_dma_stage_status Session::prepare(IOPCIDevice *pci) {
+    // No remapping or retry while the GPU may still reference the old
+    // DMA allocation. A user process can never override this policy.
+    if(lifetime_.requiresExternalHardwareReset())
+        return state(N33_DMA_BUSY);
     if(cached_.state==N33_DMA_STAGED && memory_ && command_ &&
        dmaPrepared_ && descriptorBound_ && memoryPrepared_)
         return cached_; // one pinned map per root client
@@ -161,6 +179,7 @@ n33_dma_stage_status Session::prepare(IOPCIDevice *pci) {
     // Retain the *candidate* OS device-IOMMU address for future
     // hardware verification, not as a claim of GPU physical mapping.
     candidatePtIova_=report.candidatePageTableDmaIova;
+    if(!lifetime_.pin())return failure(N33_DMA_BUSY);
     cached_=state(N33_DMA_STAGED);
     hostSynced_=true; // no GPU operation has begun
     cached_.flags=N33_DMA_FLAG_IOMMU_MAPPED|N33_DMA_FLAG_CPU_IMAGE_READY|
