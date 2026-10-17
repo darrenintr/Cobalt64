@@ -111,14 +111,18 @@ inline RegisterAddress resolveDword(const IPDiscovery &discovery,
     return {AddressCode::Pass, (base + registerDword) * 4u};
 }
 
-// GFX/PSP/SMU/SDMA firmware-init/command-submission paths are intentionally
-// blocked in this build. This is not a hidden boot argument or an override.
-constexpr bool kFirmwareLoadingImplemented = false;
+// The one exception, approved by the user on 2026-10-18: the PSP13 sOS
+// bootloader load (C2PMSG_35/36 plus its 1 MiB fw_pri window), opt-in by
+// navi33-psp-load=1 and killed by navi33-psp-off (Navi33Psp13Loader.h).
+// GFX/SMU/SDMA/RLC/IMU firmware, command submission and every other
+// register write stay blocked. This is not a hidden boot argument.
+constexpr bool kPspBootloaderLoadImplemented = true;
+constexpr bool kFirmwareLoadingImplemented = false; // anything but the PSP
 constexpr bool kGpuCommandSubmissionImplemented = false;
-constexpr bool kRegisterWritesImplemented = false;
+constexpr bool kRegisterWritesImplemented = false; // beyond C2PMSG_35/36
 static_assert(!kFirmwareLoadingImplemented &&
               !kGpuCommandSubmissionImplemented &&
               !kRegisterWritesImplemented,
-              "This stage must never write a single-GPU's registers");
+              "Only the PSP13 bootloader stage may write this single GPU");
 
 } // namespace navi33

@@ -11,23 +11,32 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
   through RADV. Its staged bring-up ladder is the template for every
   other GPU (see "Road to compute").
 - `src/navi33-bringup`: RX 7600 (Navi 33, RDNA3, gfx1102) bring-up. A
-  **separate, read-only** kext (`Navi33Probe`) with its own user-client
-  ABI ("N33N"). No shared Navi48 sources. Never reuse RDNA4 constants
-  (GC12, PSP14, DCN4); Navi33 is GC 11.0.2, PSP 13.0.7, DCN 3.2.1.
+  **separate** kext (`Navi33Probe`), read-only except for one gated write
+  stage (the PSP sOS load), with its own user-client ABI ("N33N"). No
+  shared Navi48 sources. Never reuse RDNA4 constants (GC12, PSP14, DCN4);
+  Navi33 is GC 11.0.2, PSP 13.0.7, DCN 3.2.1.
 - `src/dcn321`, `src/dcn41`: display-engine helpers per generation.
 - Key Navi33 docs: `src/navi33-bringup/PHYSICAL_EXECUTION.md` (what is
   proven on hardware, what is still blocked), `ACCELERATION.md`,
   `DMA_QUEUE_BRINGUP.md`.
+- The PSP sOS load: protocol and plan in `src/Navi33Psp13Loader.h`
+  (host-tested), the only GPU writer in `src/Navi33DarwinPspLoad.cpp`,
+  the tool in `tools/n33psp.c`.
 
 ## Navi33 hard rules
 
-1. **The kext is read-only.** No GPU register writes, no firmware
-   loading, no command submission. `Navi33HardwarePlan.h` enforces this
-   with `static_assert`s; do not weaken them.
-2. **The RX 7600 is the only display GPU in the test Mac.** A write
-   stage (starting with the PSP sOS load) needs the user's explicit
-   approval to write to that card, plus a recovery path (for example SSH
-   into the Mac). Ask first; never assume.
+1. **The kext is read-only except the PSP sOS load.** That one stage
+   (approved 2026-10-18) may write only `C2PMSG_35`/`C2PMSG_36` and its
+   1 MiB `fw_pri` window in VRAM. It needs `navi33-psp-load=1`, is killed
+   by `navi33-psp-off`, and runs at most once per boot. No other register
+   write, firmware load or command submission. `Navi33HardwarePlan.h` and
+   `tests/test_manifest.py` enforce this; do not weaken them.
+2. **The RX 7600 is the only display GPU in the test Mac.** Every new
+   write stage (SMU, IMU, RLC, and so on) needs the user's explicit
+   approval to write to that card, plus a recovery path (SSH into the
+   Mac, and a full power-off to reset the PSP). Ask first; never assume.
+   The PSP sOS load was approved on 2026-10-18 with SSH as the recovery
+   path. That approval covers that stage only.
 3. **Every register offset comes from upstream Linux amdgpu headers**
    for the exact IP version, never from memory. See "Adding a register
    read".
@@ -46,7 +55,10 @@ The Mac boots macOS 26.7.1 through OpenCore from a USB stick labelled
   `config.plist` entry is by path, so replacing the kext needs no config
   edit.
 - `navi33/` on the stick holds the tools, `rx7600-ipd.bin`, the scripts
-  from `src/navi33-bringup/usb/`, and the results files.
+  from `src/navi33-bringup/usb/`, and the results files. It also holds
+  `psp_13_0_7_sos.bin`, which CI does not ship: it is decompressed from
+  this Linux machine's `/lib/firmware/amdgpu/psp_13_0_7_sos.bin.zst`, and
+  the kext accepts only the file whose SHA-256 it pins.
 
 **Build: GitHub Actions only.** The kext cannot be built on Linux.
 1. Push to a `feature/navi33-*` branch; `.github/workflows/navi33-host.yml`
@@ -63,8 +75,9 @@ The Mac boots macOS 26.7.1 through OpenCore from a USB stick labelled
 
 **Run and results.**
 - `run.sh` runs every diagnostic in one pass: `n33query`,
-  `n33compute --rom/--probe/--queue`, `n33vram`, `n33peek --all`, ioreg
-  and this boot's kernel log.
+  `n33compute --rom/--probe/--queue`, `n33vram`, `n33peek --all`,
+  `n33psp --plan` (read-only), ioreg and this boot's kernel log. It never
+  runs the PSP load; neither does the boot autorun.
 - It writes `navi33/results-YYYYMMDD-HHMMSS-{manual|boot}.txt` (results
   before kext 0.0.5 have no suffix).
 - Optional boot autorun: `sudo sh /Volumes/OPENCORE/navi33/install-autorun.sh`
@@ -80,8 +93,11 @@ The Mac boots macOS 26.7.1 through OpenCore from a USB stick labelled
 **Boot-args on the Mac** (in the OpenCore config): `navi33-probe=1
 navi33-client=1 navi33-hw-probe=1`, plus kill switches `navi33-dma-off=1
 navi33-dma-stage-off=1 navi33-fb-off=1 navi33-psp-off=1 navi33-sdma-off=1`.
-- Only `n33compute --rom` and `n33peek` (both gated by `navi33-hw-probe=1`)
-  return hardware data.
+- Only `n33compute --rom`, `n33peek` and `n33psp --plan` (all gated by
+  `navi33-hw-probe=1`) return hardware data.
+- The PSP load (`n33psp --load ... --i-have-ssh`, run by hand over SSH)
+  also needs `navi33-psp-load=1` **and** `navi33-psp-off=1` removed.
+  Restore the kill switch after the attempt.
 - `--probe` reports "no ROM": the Mac has no `ATY,bin_image` property.
   That is why `rx7600-ipd.bin` (built by `tools/ipd-from-capture.py`) is
   passed explicitly.
@@ -114,6 +130,22 @@ BAR5 byte offset = (base + register dword) × 4. Example: PSP
 
 VRAM: 8 GiB at GPU MC address `0x80_0000_0000`. The VBIOS programs this
 in MMHUB `FB_LOCATION` before macOS starts. NBIO reports 8176 MiB.
+
+PSP firmware (`psp_13_0_7_sos.bin`, linux-firmware 20260915 git
+1522c78a, 248496 bytes, SHA-256 `94db505f…a26fa8`, sOS `0x00330024`).
+These facts were checked against the real file, and the old offline
+parser got two of them wrong:
+- It is a v2.0 container. `header_size_bytes` is 36 (the fixed header
+  only); the descriptors follow it, and the ucode array starts at 256.
+- Descriptor offsets are relative to `ucode_array_offset`, as in upstream
+  `parse_sos_bin_descriptor`.
+- It holds SYS_DRV 141200 B, sOS 99184 B, TOC 2304 B, KDB 4880 B and
+  SPL 672 B. There is no SOC/INTF/DBG/RAS/IPKEYMGR/SPDM driver.
+- The header `crc32` (`0xe28dd196`) is not a CRC-32 of the payload
+  (`0xcbad41a4`). Linux never checks it.
+- Upstream `psp_v13_0_bootloader_load_spl()` sends the **KDB** bytes with
+  `PSP_BL__LOAD_TOS_SPL_TABLE`; PSP 14 sends the SPL. Every Linux RX 7600
+  boot does this, so the Navi33 chain copies it on purpose.
 
 ## Findings log (append after every physical run)
 
@@ -238,19 +270,36 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
 
 1. IP discovery and read-only probe (done).
 2. PSP: load sOS (stages 4–8). This is the **first GPU write**.
+   Implemented in kext 0.0.6 (N33N ABI 9); not yet run on hardware.
    - Precondition: `C2PMSG_35` = `0x80000000`. Met on 2026-10-17 (kext
      0.0.5), with no sOS loaded and the SMU already running.
-   - Navi48 stages firmware in VRAM through BAR0, away from the GOP
-     console (`stagePSP` in `Navi48Bringup.cpp`). On the RX 7600 the
-     PSP sees that VRAM at MC `0x80_0000_0000` + offset.
+   - Sequence (upstream `psp_v13_0.c`): KDB, SPL (KDB bytes), SYS_DRV,
+     then sOS. Each part goes into a zeroed 1 MiB `fw_pri` window with
+     `C2PMSG_36` = MC >> 20 and the command in `C2PMSG_35`, then the
+     bootloader is polled until it reads exactly `0x80000000` again. The
+     sOS is done when `C2PMSG_81` goes non-zero, and `C2PMSG_58` then
+     holds its version. Expect 8 register writes in total.
+   - `fw_pri` is at VRAM offset 240 MiB (MC `0x80_0F00_0000`,
+     `C2PMSG_36` = `0x800f0`). The plan refuses unless:
+     - the GOP console is inside BAR0;
+     - an active HUBP scanout surface sits at the console's BAR0 offset,
+       which proves BAR0 offset == VRAM offset without a write;
+     - the window keeps 16 MiB clear of every surface.
+     Only that 1 MiB sub-range of BAR0 is ever mapped, and every write is
+     read back before the command goes out.
+   - Left out on purpose: DRAM long training (Linux runs it only when the
+     VBIOS asks), TOC/TMR, the KM ring.
+   - Recovery if the PSP wedges: a full power-off (a warm restart may
+     leave the PSP state in place).
 3. SMU, IMU, RLC: power the GC block up (stages 9–11).
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
    GPU work.
 5. PM4 fence and compute dispatch (stages 16–17).
 
-**Gate before step 2:** the user's explicit approval for GPU writes on
-the only display GPU, and a recovery path. Each write stage must be
-opt-in by its own boot-arg, like Navi48.
+**Gate before each write stage:** the user's explicit approval for GPU
+writes on the only display GPU, and a recovery path. Given for step 2
+on 2026-10-18. Each write stage must be opt-in by its own boot-arg, like
+Navi48 (step 2: `navi33-psp-load=1`).
 
 ## Conventions
 

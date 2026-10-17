@@ -110,6 +110,54 @@ decoded against upstream `psp_v13_0.c`, `smu_v13_0.c`, `imu_v11_0.c`,
   (`FB_LOCATION` `0x8000/0x81ff`), with the system aperture over the same
   range. NBIO memsize reads 8176 MiB.
 
+### PSP13 sOS load stage (Navi33Probe 0.0.6, N33N ABI 9; not yet run)
+
+The first GPU write, approved by the user on 2026-10-18 with SSH as the
+recovery path. `N33_SEL_PSP_LOAD` has two modes:
+
+- **PLAN** (`n33psp --plan`, also in `run.sh`). It reads, checks and
+  reports, and writes nothing. Gate: `navi33-hw-probe=1`.
+- **RUN** (`n33psp --load ... --i-have-ssh`, by hand only). It runs the
+  same plan, then the bootloader chain. Gates: `navi33-psp-load=1`, no
+  `navi33-psp-off`, and no earlier attempt this boot.
+
+The plan refuses unless all of these hold:
+
+1. The firmware is byte-for-byte the pinned `psp_13_0_7_sos.bin`
+   (SHA-256), and it holds exactly KDB, SPL, SYS_DRV, TOC and sOS.
+2. `C2PMSG_81` = 0 (no sOS) and `C2PMSG_35` = `0x80000000` exactly.
+3. MMHUB `FB_LOCATION` is posted. If DCN's copy is set, it agrees.
+4. The GOP console (`getConsoleInfo`) lies inside BAR0, and an active
+   HUBP primary surface sits at MC base + the console's BAR0 offset.
+   This proves BAR0 offset == VRAM offset without writing anything.
+5. `fw_pri` at VRAM offset 240 MiB keeps 16 MiB clear of the console
+   and of every active surface (each counted as at least 32 MiB). It
+   must also lie inside VRAM.
+
+RUN maps only the 1 MiB `fw_pri` sub-range of BAR0, uncached. It then
+follows `psp_v13_0.c` step by step:
+
+- For each of KDB, SPL (upstream sends the KDB bytes here) and SYS_DRV:
+  1. Wait for `C2PMSG_35` == `0x80000000`.
+  2. Zero the 1 MiB window, copy the part in, and read all of it back.
+  3. Write `C2PMSG_36` = `0x800f0`, then the command to `C2PMSG_35`.
+  4. Wait for `0x80000000` again.
+- sOS: the same staging, then a 20 ms wait, then poll `C2PMSG_81`
+  until it is non-zero, then read `C2PMSG_58`.
+
+The writer refuses any register but `C2PMSG_35`/`36`. A read-back
+mismatch stops the load before that part's command is sent.
+
+Expected on success: state 20 (sOS ALIVE), 8 register writes, and a
+non-zero `C2PMSG_81`. `C2PMSG_58` is probably `0x00330024`, the
+container's sOS version, but that is not verified.
+
+If the bootloader does not answer, or the display or SSH stop
+responding, power the Mac off fully. The PSP can keep its state across
+a warm restart: Linux's `soc21_need_reset_on_init()` checks `C2PMSG_81`
+for exactly that reason. Only volatile GPU memory and registers are
+written; the VBIOS flash is never touched.
+
 ## Actual hardware compute remains BLOCKED
 
 A Queue1 ring and a ROM/register read do not confer ownership.

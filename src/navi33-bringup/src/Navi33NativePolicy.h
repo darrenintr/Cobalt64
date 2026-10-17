@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Host-testable, no-I/O validation of the N33N selector shapes.
 // BO/VM/CTX/SUBMIT/WAIT are unsupported. Owned DMA staging is opt-in.
+// PSP_LOAD's write is gated in the Kext by boot-args, not by its shape.
 #pragma once
 #include "Navi33NativeABI.h"
 #include <stdint.h>
@@ -28,7 +29,8 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         selector != N33_SEL_HW_ROM_PREFLIGHT &&
         selector != N33_SEL_VRAM_GEOMETRY &&
         selector != N33_SEL_QUEUE_CENSUS &&
-        selector != N33_SEL_MMIO_PEEK)
+        selector != N33_SEL_MMIO_PEEK &&
+        selector != N33_SEL_PSP_LOAD)
         return Shape::Unsupported;
     if (selector == N33_SEL_HELLO)
         return scalarIn == 2u && scalarOut == 3u && !structIn &&
@@ -45,6 +47,14 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         return scalarIn==0u && scalarOut==0u &&
                structIn>=sizeof(n33_peek_request)+64u &&
                structIn<=4096u && structOut==sizeof(n33_peek_result) &&
+               !haveScalarsIn && !haveScalarsOut && haveStructOut
+                   ? Shape::Valid : Shape::BadArgument;
+    // Request header, IP Discovery, then the sOS container (out of line).
+    if (selector == N33_SEL_PSP_LOAD)
+        return scalarIn==0u && scalarOut==0u &&
+               structIn>=sizeof(n33_psp_load_request)+64u+1u &&
+               structIn<=N33_PSP_LOAD_MAX_INPUT &&
+               structOut==sizeof(n33_psp_load_result) &&
                !haveScalarsIn && !haveScalarsOut && haveStructOut
                    ? Shape::Valid : Shape::BadArgument;
     if (selector == N33_SEL_DMA_RELEASE)

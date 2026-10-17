@@ -1,9 +1,12 @@
-// Navi33Probe - explicitly opted-in, PCI-configuration-only inventory.
-// No BAR mapping, MMIO, framebuffer takeover, PSP/SMU commands or GPU writes.
+// Navi33Probe - explicitly opted-in, PCI-configuration-only inventory at
+// boot. BAR5 is read only on root-client request. The one GPU write is the
+// PSP13 sOS load in Navi33DarwinPspLoad.cpp, gated by navi33-psp-load=1.
 #include "Navi33Probe.hpp"
+#include "Navi33DarwinPspLoad.h"
 #include "Navi33NativeClient.hpp"
 #include "Navi33NativePolicy.h"
 #include <IOKit/IOLib.h>
+#include <IOKit/IOPlatformExpert.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <pexpert/pexpert.h>
 #include "Navi33Identity.h"
@@ -91,7 +94,8 @@ bool Navi33Probe::start(IOService *provider) {
     if (!super::start(provider))
         return false;
     stageOwnerLock_=IOLockAlloc();
-    if(!stageOwnerLock_) {
+    pspLock_=IOLockAlloc();
+    if(!stageOwnerLock_ || !pspLock_) {
         super::stop(provider);
         return false;
     }
@@ -109,8 +113,13 @@ bool Navi33Probe::start(IOService *provider) {
         (static_cast<uint32_t>(id.baseClass) << 16) |
         (static_cast<uint32_t>(id.subClass) << 8) | id.progIf), 32);
     setProperty("Navi33,SubsystemPair", static_cast<uint64_t>(pci->configRead32(0x2Cu)), 32);
-    setProperty("Navi33,GpuWritesEnabled", static_cast<uint64_t>(0), 32);
-    setProperty("Navi33,FirmwareLoadingImplemented", static_cast<uint64_t>(0), 8);
+    // 1 only when this boot may run the PSP13 sOS load; nothing else writes.
+    uint32_t pspLoadOn=0u, pspOff=0u;
+    const bool pspWrites=PE_parse_boot_argn("navi33-psp-load", &pspLoadOn,
+                                            sizeof(pspLoadOn)) && pspLoadOn==1u &&
+        !(PE_parse_boot_argn("navi33-psp-off", &pspOff, sizeof(pspOff)) && pspOff!=0u);
+    setProperty("Navi33,GpuWritesEnabled", static_cast<uint64_t>(pspWrites), 32);
+    setProperty("Navi33,FirmwareLoadingImplemented", "PSP13 sOS bootloader only");
     setProperty("Navi33,GpuQueuesImplemented", static_cast<uint64_t>(0), 8);
     setProperty("Navi33,DcnModeSettingImplemented", static_cast<uint64_t>(0), 8);
     // Software page-table and ring models compile into this Kext for shared
@@ -618,6 +627,58 @@ n33_peek_result Navi33Probe::peekRegisters(uint32_t window,uint32_t first,
     return result;
 }
 
+// PLAN shares the hardware-preflight gate and only reads. RUN additionally
+// needs navi33-psp-load=1 with no navi33-psp-off, and runs once per boot:
+// a half-loaded PSP keeps its state until the card loses power.
+n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
+    size_t romLength,const uint8_t *fwBytes,size_t fwLength) {
+    n33_psp_load_result result{};
+    result.abi_version=N33_ABI_VERSION;result.size=sizeof(result);
+    uint32_t enabled=0u,off=0u,load=0u,pspOff=0u;
+    const bool allowed=PE_parse_boot_argn("navi33-hw-probe",
+                                         &enabled,sizeof(enabled)) && enabled==1u;
+    const bool stopped=PE_parse_boot_argn("navi33-hw-off",
+                                         &off,sizeof(off)) && off!=0u;
+    if(!allowed || stopped || !pspLock_) {
+        result.state=N33_PSPL_DISABLED;return result;
+    }
+    auto *pci=OSDynamicCast(IOPCIDevice,getProvider());
+    if(!pci || !navi33::isSupported(navi33::inspectPci(
+           pci->configRead32(kIOPCIConfigVendorID),
+           pci->configRead32(kIOPCIConfigRevisionID)))) {
+        result.state=N33_PSPL_NO_PROVIDER;return result;
+    }
+    navi33::darwin_psp::Request req{};
+    req.mode=mode;req.rom=romBytes;req.romBytes=romLength;
+    req.fw=fwBytes;req.fwBytes=fwLength;
+    req.writeGate=PE_parse_boot_argn("navi33-psp-load",&load,sizeof(load)) &&
+        load==1u && !(PE_parse_boot_argn("navi33-psp-off",&pspOff,
+                                         sizeof(pspOff)) && pspOff!=0u);
+    // The GOP console is the region fw_pri must stay clear of. v_baseAddr
+    // can carry flag bits below the page (RDNA4FB saw 0x840000001).
+    PE_Video video{};
+    IOPlatformExpert *platform=getPlatform();
+    if(platform && platform->getConsoleInfo(&video)==kIOReturnSuccess) {
+        req.consolePhys=static_cast<uint64_t>(video.v_baseAddr)&~0xfffull;
+        req.consoleBytes=static_cast<uint64_t>(video.v_rowBytes)*video.v_height;
+    }
+    IOLockLock(pspLock_);
+    req.attempted=&pspLoadAttempted_;
+    result=navi33::darwin_psp::execute(pci,req);
+    IOLockUnlock(pspLock_);
+    char raw[224];
+    snprintf(raw,sizeof(raw),
+             "mode %u state %u step %u steps %u writes %u flags 0x%x "
+             "C2PMSG_35 %08x->%08x C2PMSG_81 %08x->%08x sOS %08x fw_pri MC %llx",
+             mode,result.state,result.step,result.steps_done,
+             result.register_writes,result.flags,result.c2pmsg35_before,
+             result.c2pmsg35_last,result.c2pmsg81_before,result.c2pmsg81_after,
+             result.sos_version_after,result.fw_pri_mc);
+    setProperty(mode==N33_PSP_LOAD_RUN ? "Navi33,LastPspLoad" :
+                                         "Navi33,LastPspPlan",raw);
+    return result;
+}
+
 // Live read-only MMHUB/GFXHUB FB registers; this does not claim VRAM,
 // change PCI configuration, program GART/VMID, or write the graphics card.
 n33_vram_geometry_status Navi33Probe::vramGeometryStatus() {
@@ -732,6 +793,10 @@ void Navi33Probe::free() {
     if(stageOwnerLock_) {
         IOLockFree(stageOwnerLock_);
         stageOwnerLock_=nullptr;
+    }
+    if(pspLock_) {
+        IOLockFree(pspLock_);
+        pspLock_=nullptr;
     }
     super::free();
 }

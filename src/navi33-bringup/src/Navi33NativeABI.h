@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Separate RX 7600 user/kernel ABI: never reinterpret Navi48 N48N requests.
- * Only diagnostic queries and explicitly gated OS-IOMMU staging exist.
+ * Diagnostic queries, explicitly gated OS-IOMMU staging, and one write:
+ * the boot-arg gated PSP13 sOS bootloader load (N33_SEL_PSP_LOAD).
  * Genuine GPU execution and GPU-VM programming remain disabled.
  */
 #ifndef COBALT_NAVI33_NATIVE_ABI_H
@@ -11,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 8u /* adds allowlisted read-only BAR5 MMIO_PEEK */
+#define N33_ABI_VERSION 9u /* adds PSP_LOAD (plan read-only; load gated) */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -34,8 +35,8 @@ enum n33_selector {
   N33_SEL_DMA_STAGE=10, N33_SEL_DMA_STATUS=11,
   N33_SEL_DMA_RELEASE=12, N33_SEL_HW_PREFLIGHT=13, N33_SEL_HW_ROM_PREFLIGHT=14,
   N33_SEL_VRAM_GEOMETRY=15, N33_SEL_QUEUE_CENSUS=16,
-  N33_SEL_MMIO_PEEK=17,
-  N33_SEL_COUNT=18
+  N33_SEL_MMIO_PEEK=17, N33_SEL_PSP_LOAD=18,
+  N33_SEL_COUNT=19
 };
 // PSP status is deliberately read-only, never a readiness flag for GFX.
 enum n33_psp_state {
@@ -183,6 +184,57 @@ struct n33_peek_result {
 };
 N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
                   "N33 MMIO peek result must be 304 bytes");
+/* PSP13 sOS load (Linux psp_v13_0 bootloader chain). PLAN reads and checks
+ * everything and writes nothing; LOAD also needs navi33-psp-load=1 with no
+ * navi33-psp-off, and runs at most once per boot. The request is followed
+ * by rom_bytes of IP Discovery, then fw_bytes of psp_13_0_7_sos.bin. */
+#define N33_PSP_LOAD_PLAN 1u
+#define N33_PSP_LOAD_RUN 2u
+#define N33_PSP_LOAD_MAX_INPUT (2u*1024u*1024u)
+enum n33_psp_load_state {
+  N33_PSPL_DISABLED=0, N33_PSPL_BAD_REQUEST=1, N33_PSPL_NO_PROVIDER=2,
+  N33_PSPL_BAD_ROM=3, N33_PSPL_BAD_FIRMWARE=4, N33_PSPL_NO_BARS=5,
+  N33_PSPL_MAP_FAILED=6, N33_PSPL_READ_FAILED=7,
+  N33_PSPL_SOS_ALREADY_ALIVE=8, N33_PSPL_BOOTLOADER_BUSY=9,
+  N33_PSPL_BAD_FB_LOCATION=10, N33_PSPL_NO_CONSOLE=11,
+  N33_PSPL_APERTURE_MISMATCH=12, N33_PSPL_NO_WINDOW=13,
+  N33_PSPL_PLAN_OK=14, N33_PSPL_WRITE_DISABLED=15,
+  N33_PSPL_ALREADY_ATTEMPTED=16, N33_PSPL_STAGE_VERIFY_FAILED=17,
+  N33_PSPL_BOOTLOADER_TIMEOUT=18, N33_PSPL_SOS_TIMEOUT=19,
+  N33_PSPL_SOS_ALIVE=20
+};
+/* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
+enum n33_psp_load_step {
+  N33_PSPL_STEP_NONE=0, N33_PSPL_STEP_KDB=1, N33_PSPL_STEP_SPL=2,
+  N33_PSPL_STEP_SYS_DRV=3, N33_PSPL_STEP_SOS=4
+};
+#define N33_PSPL_FLAG_FW_PINNED (1u<<0)
+#define N33_PSPL_FLAG_CONSOLE_FOUND (1u<<1)
+#define N33_PSPL_FLAG_APERTURE_MATCH (1u<<2)
+#define N33_PSPL_FLAG_DCN_FB_MATCH (1u<<3)
+#define N33_PSPL_FLAG_WRITE_GATE_OPEN (1u<<4)
+#define N33_PSPL_FLAG_WROTE_VRAM (1u<<5)
+#define N33_PSPL_FLAG_WROTE_REGISTERS (1u<<6)
+struct n33_psp_load_request {
+  uint32_t abi_version, size, mode, rom_bytes;
+  uint32_t fw_bytes, reserved0;
+  uint64_t reserved1;
+};
+N33_STATIC_ASSERT(sizeof(struct n33_psp_load_request)==32,
+                  "N33 PSP load request must be 32 bytes");
+struct n33_psp_load_result {
+  uint32_t abi_version, size, state, step;
+  uint32_t flags, register_writes, c2pmsg35_before, c2pmsg81_before;
+  uint32_t c2pmsg35_last, c2pmsg81_after, sos_version_after, steps_done;
+  uint32_t mm_fb_base, mm_fb_top, dcn_fb_base, active_pipes;
+  uint64_t surface_mc[4];
+  uint64_t console_phys, console_bytes, bar0_phys, bar0_bytes;
+  uint64_t console_vram_offset, fw_pri_vram_offset, fw_pri_mc, reserved0;
+  uint32_t fw_sos_version, fw_kdb_bytes, fw_spl_bytes, fw_sys_bytes;
+  uint32_t fw_sos_bytes, elapsed_ms, reserved1, reserved2;
+};
+N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==192,
+                  "N33 PSP load result must be 192 bytes");
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;

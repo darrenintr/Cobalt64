@@ -29,7 +29,7 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
 .PHONY: all clean host-test physical-io-check
 all: $(KEXT)
 
-$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h src/Navi33LiveMmio.h src/Navi33HwProbeLogic.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33Nbio43Capacity.h src/Navi33VramSurvey.h src/Navi33Psp13Status.h src/Navi33Psp13Firmware.h src/Navi33Sdma6Status.h src/Navi33Sdma6QueueCensus.h src/Navi33MmioPeek.h src/Navi33PeekWindows.h src/Navi33Probe.hpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h src/Navi33DarwinStage.h src/Navi33StageOwner.h
+$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h src/Navi33LiveMmio.h src/Navi33HwProbeLogic.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33Nbio43Capacity.h src/Navi33VramSurvey.h src/Navi33Psp13Status.h src/Navi33Psp13Firmware.h src/Navi33Sdma6Status.h src/Navi33Sdma6QueueCensus.h src/Navi33MmioPeek.h src/Navi33PeekWindows.h src/Navi33Probe.hpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h src/Navi33DarwinStage.h src/Navi33StageOwner.h src/Navi33DarwinPspLoad.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -58,19 +58,26 @@ $(BUILD)/Navi33DarwinDma.o: src/Navi33DarwinDma.cpp src/Navi33DarwinDma.h src/Na
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD)/Navi33DarwinPspLoad.o: src/Navi33DarwinPspLoad.cpp src/Navi33DarwinPspLoad.h src/Navi33Psp13Loader.h src/Navi33Psp13Firmware.h src/Navi33FirmwareGuard.h src/Navi33Sha256.h src/Navi33Dcn321.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33HardwarePlan.h src/Navi33Discovery.h src/Navi33NativeABI.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD)/kmod_info.o: src/kmod_info.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/kmod_info.o Info.plist
+$(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/kmod_info.o Info.plist
 	@mkdir -p $(KEXT)/Contents/MacOS
-	$(CXX) $(LDFLAGS) $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/kmod_info.o -o $(EXEC)
+	$(CXX) $(LDFLAGS) $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/kmod_info.o -o $(EXEC)
 	cp Info.plist $(KEXT)/Contents/Info.plist
 	xattr -cr $(KEXT)
 	codesign --force --sign - $(KEXT)
 	@echo "Built $(KEXT); NOT installed"
 
 HOST_FLAGS ?= -std=c++17 -Wall -Wextra -Werror -pedantic
+# Optional: PSP_FW=/path/to/psp_13_0_7_sos.bin also checks the real file
+# against the Kext's SHA-256 pin (the file is not in this repository).
+PSP_FW ?=
 
 $(BUILD)/test-identity: tests/test_identity.cpp src/Navi33Identity.h
 	@mkdir -p $(BUILD)
@@ -131,6 +138,14 @@ $(BUILD)/test-psp13-status: tests/test_psp13_status.cpp src/Navi33Psp13Status.h 
 $(BUILD)/test-psp13-firmware: tests/test_psp13_firmware.cpp src/Navi33Psp13Firmware.h src/Navi33FirmwareGuard.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_psp13_firmware.cpp -o $@
+
+$(BUILD)/test-sha256: tests/test_sha256.cpp src/Navi33Sha256.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_sha256.cpp -o $@
+
+$(BUILD)/test-psp13-loader: tests/test_psp13_loader.cpp src/Navi33Psp13Loader.h src/Navi33Psp13Firmware.h src/Navi33FirmwareGuard.h src/Navi33Sha256.h src/Navi33Dcn321.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33HardwarePlan.h src/Navi33NativeABI.h tests/rx7600_ipd_fixture.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_psp13_loader.cpp -o $@
 
 $(BUILD)/test-sdma6-status: tests/test_sdma6_status.cpp src/Navi33Sdma6Status.h src/Navi33NativeABI.h src/Navi33HardwarePlan.h
 	@mkdir -p $(BUILD)
@@ -232,7 +247,7 @@ $(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/N
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
 
-host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
 	$(BUILD)/test-hardware-plan
@@ -246,6 +261,8 @@ host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware
 	$(BUILD)/test-native-client
 	$(BUILD)/test-psp13-status
 	$(BUILD)/test-psp13-firmware
+	$(BUILD)/test-sha256
+	$(BUILD)/test-psp13-loader $(PSP_FW)
 	$(BUILD)/test-sdma6-status
 	$(BUILD)/test-sdma6-queue-census
 	$(BUILD)/test-sdma6-staging

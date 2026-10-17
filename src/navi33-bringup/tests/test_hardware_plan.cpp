@@ -100,9 +100,10 @@ static Fixture make(bool wide=false, bool duplicateGc=false, bool zeroDcnBase2=f
 }
 
 int main() {
-    static_assert(!kFirmwareLoadingImplemented, "no firmware is loaded in this stage");
-    static_assert(!kRegisterWritesImplemented, "no GPU register writes in this stage");
+    static_assert(!kFirmwareLoadingImplemented, "only the PSP13 bootloader loads firmware");
+    static_assert(!kRegisterWritesImplemented, "no GPU register writes beyond C2PMSG_35/36");
     static_assert(!kGpuCommandSubmissionImplemented, "no GPU queues in this stage");
+    static_assert(kPspBootloaderLoadImplemented, "the gated PSP13 sOS load exists");
 
     IPDiscovery disc{};
     // No snapshot: fail closed.

@@ -53,7 +53,12 @@ assert "N33_SEL_HW_ROM_PREFLIGHT" in client
 assert "args->scalarInput != nullptr" not in client
 assert "args->scalarOutput != nullptr" not in client
 assert "args->scalarInputCount != 0u, args->scalarOutputCount != 0u" in client
-assert "structureInputDescriptor->readBytes(" in client
+# Out-of-line input is wired for the copy and unwired after it.
+assert "copyDescriptor(args->structureInputDescriptor," in client
+copy=client[client.index("static bool copyDescriptor"):]
+copy=copy[:copy.index("\n}\n")]
+assert copy.index("md->prepare(kIODirectionOut)") < copy.index("md->readBytes(0,dst,len)") \
+    < copy.index("md->complete(kIODirectionOut)")
 assert "IOFree(copied,romLen)" in client
 assert "Navi33Probe::hardwarePreflight" in source
 assert "N33_SEL_DMA_STAGE" in client
@@ -258,4 +263,49 @@ assert "Navi33DarwinRootReadback.o" in bridge_workflow
 # Do not allow low-level BAR/IOVA callbacks to advertise hw acceleration.
 assert "N33_CAP_HW_SDMA" not in queue_bridge
 assert "N33_CAP_METAL" not in root_bridge
+# PSP13 sOS load: the ONLY GPU writer (approved 2026-10-18). It is linked,
+# gated by navi33-psp-load / navi33-psp-off, one attempt per boot, and may
+# write only C2PMSG_35/36 and the 1 MiB fw_pri sub-range of BAR0.
+assert "N33_SEL_PSP_LOAD" in client and "owner_->pspLoad(" in client
+assert "Navi33Probe::pspLoad" in source
+load_fn=source[source.index("Navi33Probe::pspLoad"):]
+load_fn=load_fn[:load_fn.index("\n}\n")]
+assert 'PE_parse_boot_argn("navi33-hw-probe"' in load_fn
+assert 'PE_parse_boot_argn("navi33-psp-load"' in load_fn
+assert 'PE_parse_boot_argn("navi33-psp-off"' in load_fn
+assert "req.attempted=&pspLoadAttempted_;" in load_fn
+assert "IOLockLock(pspLock_)" in load_fn
+assert "navi33::darwin_psp::execute(pci,req)" in load_fn
+writer=(root/"src/Navi33DarwinPspLoad.cpp").read_text()
+assert "$(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
+wfn=writer[writer.index("bool write32("):]
+wfn=wfn[:wfn.index("\n}\n")]
+assert "off!=io->allowed[0] && off!=io->allowed[1]" in wfn
+assert "io.allowed[0]=regs.c2p35;io.allowed[1]=regs.c2p36;" in writer
+assert "IODeviceMemory::withSubRange(bar0,plan.fwPriOffset," in writer
+assert "bar0->map(" not in writer, "the whole of BAR0 must never be mapped"
+order=[writer.index(s) for s in ("if(plan.state!=N33_PSPL_PLAN_OK || req.mode==N33_PSP_LOAD_PLAN)",
+                                 "if(!req.writeGate)", "if(*req.attempted)",
+                                 "withSubRange(", "*req.attempted=true;",
+                                 "pl::run(plan,regs,fw,hw)")]
+assert order==sorted(order), "PSP load gates are out of order"
+for forbidden in ("->configWrite", "->setMemoryEnable", "->setBusMasterEnable",
+                  "mapDeviceMemory", "IOConnectCallMethod(", "setPowerState(",
+                  "WREG32("):
+    assert forbidden not in writer, f"PSP writer gained {forbidden}"
+loader=(root/"src/Navi33Psp13Loader.h").read_text()
+assert "{N33_PSPL_STEP_SPL,&fw.kdb,kLoadSpl}" in loader  # upstream quirk kept
+assert "kWritableRegisters[2]={kC2pmsg36,kC2pmsg35}" in loader
+for filename in ("Navi33Psp13Loader.h", "Navi33Sha256.h"):
+    code=(root/"src"/filename).read_text()
+    for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
+                      "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
+        assert forbidden not in code, f"{filename} gained hardware I/O: {forbidden}"
+tool=(root/"tools/n33psp.c").read_text()
+assert "N33_SEL_PSP_LOAD" in tool and "--i-have-ssh" in tool
+# Never write the GPU from anything that runs unattended.
+for unattended in ("usb/run.sh", "usb/navi33-autorun.sh", "tools/n33autorun.c"):
+    code=(root/unattended).read_text()
+    assert "--load" not in code, f"{unattended} must never run the PSP load"
+    assert "N33_PSP_LOAD_RUN" not in code
 print("Navi33 device IOMMU staging and GPU submission boundaries: static checks passed")

@@ -83,6 +83,12 @@ jobs:
             -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33peek.c \
             -framework IOKit -framework CoreFoundation -o /tmp/n33peek
           file /tmp/n33peek
+      - name: Compile PSP13 sOS load CLI (do not execute)
+        run: |
+          clang -arch x86_64 -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33psp.c \
+            -framework IOKit -framework CoreFoundation -o /tmp/n33psp
+          file /tmp/n33psp
       - name: Compile boot autorun launcher (do not execute)
         run: |
           clang -arch x86_64 -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
@@ -125,13 +131,16 @@ jobs:
           mkdir -p "$usb/EFI/OC/Kexts" "$usb/navi33"
           cp -R src/navi33-bringup/build/Navi33Probe.kext "$usb/EFI/OC/Kexts/"
           cp /tmp/n33query /tmp/n33compute /tmp/n33vram /tmp/n33peek \
-             /tmp/n33autorun src/navi33-bringup/usb/* "$usb/navi33/"
+             /tmp/n33psp /tmp/n33autorun src/navi33-bringup/usb/* "$usb/navi33/"
           python3 src/navi33-bringup/tools/ipd-from-capture.py \
             src/navi33-bringup/tests/fixtures/rx7600-linux-ipd.txt \
             "$usb/navi33/rx7600-ipd.bin"
           for f in "$usb"/navi33/*.sh; do sh -n "$f"; done
           plutil -lint "$usb/navi33/com.cobalt64.navi33-autorun.plist"
           "$usb/navi33/n33peek" --list | grep -q RLC_BOOTLOAD_STATUS
+          # No arguments: prints usage and exits before opening IOKit.
+          { "$usb/navi33/n33psp" || true; } 2>&1 | grep -q -- '--plan writes nothing'
+          nm "src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe" | grep -q 'darwin_psp.*execute'
           find "$usb" -type f | sort
       - name: Preserve OPENCORE stick layout as a CI artifact
         uses: actions/upload-artifact@v4

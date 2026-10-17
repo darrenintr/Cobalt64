@@ -10,6 +10,16 @@
 
 OSDefineMetaClassAndStructors(Navi33NativeClient, IOUserClient)
 
+// IOKit hands over an unwired user-task descriptor; readBytes() walks
+// physical segments, so wire it for the copy.
+static bool copyDescriptor(IOMemoryDescriptor *md,void *dst,size_t len) {
+    if(!md || !dst || md->getLength()!=len ||
+       md->prepare(kIODirectionOut)!=kIOReturnSuccess) return false;
+    const bool ok=md->readBytes(0,dst,len)==len;
+    md->complete(kIODirectionOut);
+    return ok;
+}
+
 void Navi33NativeClient::releaseStageLocked() {
     // No live Navi33 code may currently submit GPU jobs. If a future
     // independently owned physical backend marks this Session as possibly
@@ -88,17 +98,18 @@ IOReturn Navi33NativeClient::externalMethod(
     (void)dispatch; (void)target; (void)reference;
     if (!active_ || !owner_) return kIOReturnNotReady;
     if (!args) return kIOReturnBadArgument;
-    // IOKit may use an out-of-line input descriptor for real 128KiB+
-    // VBIOS buffers. All other selectors continue to refuse descriptors.
-    const bool romDescriptor=selector==N33_SEL_HW_ROM_PREFLIGHT &&
+    // IOKit uses an out-of-line input descriptor above 4 KiB: real VBIOS
+    // buffers and the PSP firmware. All other selectors refuse descriptors.
+    const bool inputDescriptor=(selector==N33_SEL_HW_ROM_PREFLIGHT ||
+                              selector==N33_SEL_PSP_LOAD) &&
                              args->structureInputDescriptor!=nullptr;
-    const uint64_t inputBytes=romDescriptor ?
+    const uint64_t inputBytes=inputDescriptor ?
         static_cast<uint64_t>(args->structureInputDescriptor->getLength()) :
         static_cast<uint64_t>(args->structureInputSize);
     if(inputBytes>UINT32_MAX || args->structureOutputSize>UINT32_MAX)
         return kIOReturnBadArgument;
     const bool illegalDescriptor=args->structureOutputDescriptor!=nullptr ||
-        (args->structureInputDescriptor!=nullptr && !romDescriptor);
+        (args->structureInputDescriptor!=nullptr && !inputDescriptor);
     // is_io_connect_method always passes non-null MIG scalar arrays, even
     // for zero counts, so scalar presence must come from the counts.
     const navi33::native_policy::Shape result = navi33::native_policy::validate(
@@ -200,14 +211,14 @@ IOReturn Navi33NativeClient::externalMethod(
                 return kIOReturnBadArgument;
             }
             romLen=static_cast<size_t>(inputBytes);
-            if(romDescriptor) {
+            if(inputDescriptor) {
                 copied=IOMalloc(romLen);
                 if(!copied) {
                     IOLockUnlock(dmaLock_);
                     return kIOReturnNoMemory;
                 }
-                if(args->structureInputDescriptor->readBytes(
-                       0,copied,romLen)!=romLen) {
+                if(!copyDescriptor(args->structureInputDescriptor,
+                                   copied,romLen)) {
                     IOFree(copied,romLen);
                     IOLockUnlock(dmaLock_);
                     return kIOReturnBadArgument;
@@ -248,6 +259,44 @@ IOReturn Navi33NativeClient::externalMethod(
         bcopy(&result,args->structureOutput,sizeof(result));
         args->structureOutputSize=sizeof(result);
         IOLockUnlock(dmaLock_);
+        return kIOReturnSuccess;
+    }
+    if (selector == N33_SEL_PSP_LOAD) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        const size_t len=static_cast<size_t>(inputBytes);
+        void *copied=IOMalloc(len);
+        if (!copied) return kIOReturnNoMemory;
+        if (inputDescriptor ? !copyDescriptor(args->structureInputDescriptor,
+                                            copied,len)
+                          : !args->structureInput) {
+            IOFree(copied,len);
+            return kIOReturnBadArgument;
+        }
+        if (!inputDescriptor) bcopy(args->structureInput,copied,len);
+        n33_psp_load_request req{};
+        bcopy(copied,&req,sizeof(req));
+        const uint64_t payload=static_cast<uint64_t>(req.rom_bytes)+req.fw_bytes;
+        if (req.abi_version!=N33_ABI_VERSION || req.size!=sizeof(req) ||
+            req.reserved0 || req.reserved1 ||
+            (req.mode!=N33_PSP_LOAD_PLAN && req.mode!=N33_PSP_LOAD_RUN) ||
+            req.rom_bytes<64u || !req.fw_bytes ||
+            payload!=inputBytes-sizeof(req)) {
+            IOFree(copied,len);
+            return kIOReturnBadArgument;
+        }
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_);
+            IOFree(copied,len);
+            return kIOReturnNotReady;
+        }
+        const uint8_t *rom=static_cast<const uint8_t *>(copied)+sizeof(req);
+        const n33_psp_load_result result=owner_->pspLoad(
+            req.mode,rom,req.rom_bytes,rom+req.rom_bytes,req.fw_bytes);
+        bcopy(&result,args->structureOutput,sizeof(result));
+        args->structureOutputSize=sizeof(result);
+        IOLockUnlock(dmaLock_);
+        IOFree(copied,len);
         return kIOReturnSuccess;
     }
     if (selector == N33_SEL_DMA_STAGE ||

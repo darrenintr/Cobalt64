@@ -3,7 +3,8 @@
 #   Manual:  sh /Volumes/OPENCORE/navi33/run.sh       (asks for sudo)
 #   At boot: the com.cobalt64.navi33-autorun LaunchDaemon (install-autorun.sh)
 # Results are written next to this script so they can be read from Linux.
-# Nothing here writes to the GPU: every tool is a read-only N33N client.
+# Nothing here writes to the GPU: every call is a read-only N33N request.
+# n33psp runs in plan mode only; the PSP load is started by hand over SSH.
 [ "$(id -u)" = 0 ] || exec sudo /bin/sh "$0" "$@"
 cd "$(dirname "$0")" || exit 1
 trigger=${1:-manual}
@@ -25,6 +26,12 @@ run() { "$@"; echo "exit=$?"; }
     step "n33vram (framebuffer geometry)"; run ./n33vram --read
     step "n33peek --all (allowlisted BAR5 register windows)"
     run ./n33peek --rom rx7600-ipd.bin --all
+    step "n33psp --plan (PSP13 sOS load plan, reads only)"
+    if [ -f psp_13_0_7_sos.bin ]; then
+        run ./n33psp --plan --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin
+    else
+        echo "psp_13_0_7_sos.bin is not on the stick; plan skipped"
+    fi
     step ioreg; ioreg -l -w0 -r -c Navi33Probe
     step "kernel log, this boot"
     # The Kext's own IOLog lines reach dmesg but not this log query.
