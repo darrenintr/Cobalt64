@@ -137,6 +137,18 @@ IOReturn Navi33NativeClient::externalMethod(
         IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
+    if (selector == N33_SEL_QUEUE_CENSUS) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_); return kIOReturnNotReady;
+        }
+        const n33_queue_census_status status=owner_->queueCensus();
+        bcopy(&status,args->structureOutput,sizeof(status));
+        args->structureOutputSize=sizeof(status);
+        IOLockUnlock(dmaLock_);
+        return kIOReturnSuccess;
+    }
     if (selector == N33_SEL_PSP_STATUS) {
         if (!dmaLock_) return kIOReturnNotReady;
         IOLockLock(dmaLock_);
