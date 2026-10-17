@@ -48,6 +48,10 @@ IOReturn Navi33NativeClient::clientClose() {
     return kIOReturnSuccess;
 }
 
+IOReturn Navi33NativeClient::clientDied() {
+    return clientClose(); // reclaim pinned IOMMU mappings on process crash
+}
+
 void Navi33NativeClient::free() {
     dmaStage_.release(); // idempotent last-resort revoke
     if (dmaLock_) { IOLockFree(dmaLock_); dmaLock_ = nullptr; }
@@ -82,21 +86,39 @@ IOReturn Navi33NativeClient::externalMethod(
         return kIOReturnSuccess;
     }
     if (selector == N33_SEL_QUERY_CAPS) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_); return kIOReturnNotReady;
+        }
         const n33_capabilities caps = owner_->nativeCapabilities();
         bcopy(&caps, args->structureOutput, sizeof(caps));
         args->structureOutputSize = sizeof(caps);
+        IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
     if (selector == N33_SEL_PSP_STATUS) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_); return kIOReturnNotReady;
+        }
         const n33_psp_status status = owner_->pspStatus();
         bcopy(&status, args->structureOutput, sizeof(status));
         args->structureOutputSize = sizeof(status);
+        IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
     if (selector == N33_SEL_SDMA_STATUS) {
+        if (!dmaLock_) return kIOReturnNotReady;
+        IOLockLock(dmaLock_);
+        if (!active_ || !owner_) {
+            IOLockUnlock(dmaLock_); return kIOReturnNotReady;
+        }
         const n33_sdma_status status = owner_->sdmaStatus();
         bcopy(&status, args->structureOutput, sizeof(status));
         args->structureOutputSize = sizeof(status);
+        IOLockUnlock(dmaLock_);
         return kIOReturnSuccess;
     }
     if (selector == N33_SEL_DMA_STAGE ||
