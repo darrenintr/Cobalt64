@@ -85,6 +85,11 @@ bool Navi33Probe::start(IOService *provider) {
         return false;
     if (!super::start(provider))
         return false;
+    stageOwnerLock_=IOLockAlloc();
+    if(!stageOwnerLock_) {
+        super::stop(provider);
+        return false;
+    }
     nativeFlags_ = N33_CAP_PCI_INVENTORY;
 
     setProperty("Navi33,Stage", "PCI inventory and supplied-ROM IP discovery only");
@@ -484,8 +489,36 @@ n33_hw_preflight Navi33Probe::hardwarePreflight(
     return result;
 }
 
+uint64_t Navi33Probe::claimStageOwner(const void *client) {
+    if(!stageOwnerLock_ || !client)return 0u;
+    IOLockLock(stageOwnerLock_);
+    const auto token=stageOwner_.claim(client);
+    IOLockUnlock(stageOwnerLock_);
+    return token.epoch;
+}
+
+void Navi33Probe::releaseStageOwner(const void *client,uint64_t epoch) {
+    if(!stageOwnerLock_ || !client || !epoch)return;
+    IOLockLock(stageOwnerLock_);
+    (void)stageOwner_.release(client,{epoch});
+    IOLockUnlock(stageOwnerLock_);
+}
+
 void Navi33Probe::stop(IOService *provider) {
+    if(stageOwnerLock_) {
+        IOLockLock(stageOwnerLock_);
+        stageOwner_.shutdown();
+        IOLockUnlock(stageOwnerLock_);
+    }
     super::stop(provider);
+}
+
+void Navi33Probe::free() {
+    if(stageOwnerLock_) {
+        IOLockFree(stageOwnerLock_);
+        stageOwnerLock_=nullptr;
+    }
+    super::free();
 }
 
 // Diagnostic N33N path is explicitly gated and root-only, independent of the
