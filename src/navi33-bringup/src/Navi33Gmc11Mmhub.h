@@ -268,7 +268,9 @@ public:
         return {Code::Disabled,0u,0u,0u};
 #else
         Result r{};
-        if(state_!=Code::Disabled) {r.code=Code::Busy;return r;}
+        if(state_!=Code::Disabled || touchedHardware_) {
+            r.code=Code::Busy;return r;
+        }
         if(!eligible(g)) {r.code=Code::Denied;return r;}
         if(!validPlan(p)) {r.code=Code::InvalidPlan;return r;}
         if(!validTable(table)) {r.code=Code::InvalidTable;return r;}
@@ -311,29 +313,20 @@ public:
             static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32u),
             kRangeLoAll,kRangeHiAll
         };
-        // Leave context 0 disabled until the full shadow image has been
-        // installed and read back.
+        // No VMID0/1 context is enabled until registers are verified.
+        // MMIO may reach silicon even if the callback reports failure.
+        // Quarantine GPU-visible backing BEFORE the very first write;
+        // speculative rollback is not a hardware retirement fence.
+        touchedHardware_=true;
+        state_=Code::RecoveryRequired;
         unsigned written=0u;
         for(size_t i=1u;i<9u;++i) {
+            ++written; // count attempted writes including ambiguous failures
             if(!io.write(io.ctx,p.offsets[indices[i]],next[i])) {
-                // Compensate even the failed write (may have partially landed).
-                bool restored=true;
-                for(size_t j=1u;j<=i;++j)
-                    if(!io.write(io.ctx,p.offsets[indices[j]],old[j]))
-                        restored=false;
-                // A successful callback may still have failed to restore the
-                // MMIO value. Read back the exact preflight state.
-                for(size_t j=1u;j<=i;++j) {
-                    uint32_t verified=0u;
-                    if(!io.read(io.ctx,p.offsets[indices[j]],&verified) ||
-                       verified!=old[j]) restored=false;
-                }
                 r.writes=written;
-                r.code=restored?Code::WriteFailure:Code::RecoveryRequired;
-                if(!restored)state_=Code::RecoveryRequired;
+                r.code=Code::RecoveryRequired;
                 return r;
             }
-            ++written;
         }
         for(size_t i=1u;i<9u;++i) {
             uint32_t v=0u;
@@ -466,6 +459,7 @@ public:
             }
         }
         state_=Code::Disabled;r.code=Code::Aborted;return r;
+        // touchedHardware_ intentionally remains sticky after abort.
 #endif
     }
 
@@ -477,12 +471,19 @@ public:
     }
     // No MMHUB teardown has yet been validated on silicon. A mapped table
     // must remain pinned until a separate reset/recovery path is verified.
-    bool mayReleaseMappedMemory() const {return state_==Code::Disabled;}
+    bool mayReleaseMappedMemory() const {
+        return state_==Code::Disabled && !touchedHardware_;
+    }
+    bool requiresIndependentResetBeforeUnmap() const {
+        return touchedHardware_;
+    }
     bool requiresRecovery() const {
-        return state_==Code::RecoveryRequired || state_==Code::Flushed;
+        return touchedHardware_ || state_==Code::RecoveryRequired ||
+               state_==Code::Flushed;
     }
 private:
     Code state_=Code::Disabled;
+    bool touchedHardware_=false;
     Plan plan_{};
     IO io_{};
     [[maybe_unused]] uint32_t saved_[9u]{};
