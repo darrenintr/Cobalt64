@@ -37,7 +37,7 @@ $(BUILD)/Navi33NativeClient.o: src/Navi33NativeClient.cpp src/Navi33NativeClient
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD)/Navi33DarwinStage.o: src/Navi33DarwinStage.cpp src/Navi33DarwinStage.h src/Navi33Sdma6Staging.h src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h
+$(BUILD)/Navi33DarwinStage.o: src/Navi33DarwinStage.cpp src/Navi33DarwinStage.h src/Navi33DmaLifetime.h src/Navi33Sdma6Staging.h src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -176,6 +176,10 @@ $(BUILD)/test-sdma6-proof-run: tests/test_sdma6_proof_run.cpp src/Navi33Sdma6Pro
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_proof_run.cpp -o $@
 
+$(BUILD)/test-dma-lifetime: tests/test_dma_lifetime.cpp src/Navi33DmaLifetime.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_dma_lifetime.cpp -o $@
+
 $(BUILD)/test-stage-owner: tests/test_stage_owner.cpp src/Navi33StageOwner.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_stage_owner.cpp -o $@
@@ -220,7 +224,7 @@ $(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/N
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
 
-host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-sdma6-proof-run $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-sdma6-proof-run $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
 	$(BUILD)/test-hardware-plan
@@ -245,6 +249,7 @@ host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware
 	$(BUILD)/test-gmc11-mmhub-off
 	$(BUILD)/test-hw-probe-logic
 	$(BUILD)/test-sdma6-proof-run
+	$(BUILD)/test-dma-lifetime
 	$(BUILD)/test-stage-owner
 	$(BUILD)/test-gmc11-root-vram
 	$(BUILD)/test-sdma6-queue-owner
