@@ -215,3 +215,58 @@ table, TLB flush, firmware queue ownership and recovery path are
 still needed before the backend may receive a real MMIO callback.
 Never simply pass an OS DMA IOVA into `ringGpuVa` or turn on the
 compile gate on your only display GPU.
+
+## Stage G8 — GMC11 MMHUB3 real VMID0 + TLB invalidate backend
+
+`Navi33Gmc11Mmhub.h` implements a separate, **write-capable** GMC11
+VMID0/GART MMIO transaction for Navi33. It is compiled only when
+`COBALT_NAVI33_ENABLE_UNSAFE_GMC11_MMIO` is defined in an isolated
+test backend. It is **not included, linked or called** by the
+`Navi33Probe.kext` production build.
+
+The register plan uses a validated Navi33 IP Discovery ROM to locate
+MMHUB instance 0. Two Linux-verified MMHUB layouts are selected *only
+when the real IP revision matches*: 3.0.0 (`mmhub_3_0_0_offset.h`)
+and 3.0.2 (`mmhub_3_0_2_offset.h`). Unsupported versions and
+out-of-range/duplicate BAR5 offsets fail closed.
+
+The experimental transaction does the following:
+
+1. Require independent ownership of the **entire MMHUB** and absence
+   of active display users/other GPU jobs, verified firmware/PSP/HDP
+   and pre-initialized MMHUB cache, trusted GPU-physical page-table
+   memory and an independently recoverable GPU.
+2. Pre-read Context0, page-table base/start/end, invalidate request/
+   acknowledgement and protected invalidation range. Reject active
+   Context0, outstanding requests and stale VMID0 ACK.
+3. Validate all 16 GMC11 system-memory PTEs, including a read-only
+   source page and writable destination/ring/fence; synchronize the
+   pinned table for GPU access. Write base/start/end and the
+   engine-17 invalidation range **while Context0 is still disabled**.
+   Read back values and compensate/re-verify failures.
+4. Activate Context0 at depth zero, flush HDP, acquire MMHUB
+   invalidate semaphore, issue Linux-style request
+   `0x00f80001` for VMID0, poll bounded ACK, release semaphore,
+   then perform the required MMHUB private cache invalidation.
+5. On partial activation, ACK timeout or ambiguous MMIO: report
+   `RecoveryRequired`, NEVER authorize DMA unmapping. There is a
+   rollback method only **before** activation, when Context0
+   remains disabled; no unsafe post-submission blind rollback.
+
+The existing macOS `Navi33DarwinStage` now retains the page-table
+backing **OS IOMMU address** privately. This is intentionally named a
+*device IOVA candidate*, **not** a proven GPU MC-physical page-table
+address. The missing verified IOVA→GPU-MC translation and ownership
+prevents any real activation on the current single-GPU macOS host.
+
+Tested in Linux/GCC/Clang/ASan/UBSan using a fake BAR5 MMIO model,
+including missing/incorrect ROM MMHUB revisions, corrupt page-table
+entries, busy contexts, partial writes, rollback failure, semaphore
+timeout, invalidate ACK timeout, and the production-default
+write-disabled build. macOS CI compiles the existing Kext but does
+not instantiate MMHUB MMIO code or access a physical GPU.
+
+**Not yet a real RX7600 workload:** native GPU context memory mappings
+are unverified, there is no safe MMHUB ownership on a GOP-backed
+single-GPU display, and the SDMA6 write backend remains isolated.
+Do not enable either unsafe compile flag on the primary video card.
