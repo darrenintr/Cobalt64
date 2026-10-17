@@ -22,6 +22,18 @@ for forbidden in (
     "IOConnectCallMethod(", "LoadAccelerator",
 ):
     assert forbidden not in source, f"read-only source gained {forbidden}"
+assert "Navi33Probe::newUserClient" in source
+assert '"navi33-client"' in source and '"navi33-client-off"' in source
+assert 'N33_CAP_ROM_DISCOVERY' in source
+client=(root/"src/Navi33NativeClient.cpp").read_text()
+assert "Navi33NativeClient::externalMethod" in client
+assert "Navi33NativeClient::clientClose" in client
+assert "clientHasPrivilege" in client
+assert "navi33::native_policy::validate" in client
+assert "kIOReturnUnsupported" in client
+for forbidden in ("WREG32(", "->configWrite", "->setMemoryEnable",
+                  "->setBusMasterEnable", "mapDeviceMemory", "IOConnectCallMethod("):
+    assert forbidden not in client, f"N33N client gained forbidden GPU access: {forbidden}"
 assert "pci->configRead32" in source
 assert "getDeviceMemoryWithRegister" in source
 assert '"ATY,bin_image"' in source

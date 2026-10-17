@@ -32,3 +32,23 @@ portable code can build on Linux and macOS but does not touch a GPU.
 
 The order matters. A Metal bundle without a GPU-backed Vulkan device is not
 hardware acceleration. Host CI is only syntax/contract verification.
+
+## Stage G2: macOS read-only N33N user client (this PR)
+
+A compiled IOUserClient now responds to `IOServiceOpen("Navi33Probe", N33N)`
+and two selectors: HELLO (version/selector count) and QUERY_CAPS (64-byte
+struct). It is *disabled* without `navi33-probe=1 navi33-client=1`,
+`navi33-client-off=1` takes priority, and administrator privileges are
+required. BO_CREATE, BO_FREE, VM_MAP, CTX_CREATE, SUBMIT and WAIT all return
+`kIOReturnUnsupported`; the driver does NOT expose any memory mapping,
+packet parser, framebuffer takeover or GPU write to clients.
+
+The returned capability flags are computed from actual probed PCI identity
+and, if available, validated IP Discovery ROM metadata. HW_VM, HW_GFX,
+HW_SDMA, DCN and METAL stay *off*, and VRAM/GTT sizes are reported as 0
+until independently measured. An `n33query` userland diagnostic can be
+compiled on macOS, but CI does not run it on hardware.
+
+This is a real kernel/userspace communication path, **not** hardware
+acceleration or firmware bring-up. Before opening it on the only GPU,
+verify a recoverable macOS/EFI boot and ensure no unintended Kext conflict.

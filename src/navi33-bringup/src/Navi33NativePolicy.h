@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT
+// Host-testable, no-I/O validation of the N33N selector shapes.
+// Read-only diagnostic service. NEVER accept BO/VM/CTX/SUBMIT/WAIT.
+#pragma once
+#include "Navi33NativeABI.h"
+#include <stdint.h>
+namespace navi33 { namespace native_policy {
+enum class Access : uint8_t { Deny, Allow };
+enum class Shape : uint8_t { Valid, BadArgument, Unsupported };
+inline Access openAllowed(uint32_t type, bool probe, bool enabled,
+                          bool off, bool admin) {
+    return (type == N33_UC_TYPE && probe && enabled && !off && admin)
+        ? Access::Allow : Access::Deny;
+}
+inline Shape validate(uint32_t selector, uint32_t scalarIn,
+                      uint32_t scalarOut, uint32_t structIn,
+                      uint32_t structOut, bool haveScalarsIn,
+                      bool haveScalarsOut, bool haveStructOut,
+                      bool haveDescriptors) {
+    if (haveDescriptors) return Shape::BadArgument;
+    // Explicitly refuse the future submit/memory selectors, even if the
+    // requester attempts to pass a shape resembling a supported method.
+    if (selector != N33_SEL_HELLO && selector != N33_SEL_QUERY_CAPS)
+        return Shape::Unsupported;
+    if (selector == N33_SEL_HELLO)
+        return scalarIn == 2u && scalarOut == 3u && !structIn &&
+               !structOut && haveScalarsIn && haveScalarsOut
+                   ? Shape::Valid : Shape::BadArgument;
+    return scalarIn == 0u && scalarOut == 0u && structIn == 0u &&
+           structOut == sizeof(n33_capabilities) && haveStructOut
+               ? Shape::Valid : Shape::BadArgument;
+}
+} } // namespace navi33::native_policy

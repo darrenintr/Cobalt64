@@ -50,6 +50,12 @@ jobs:
         run: git clone --depth 1 --recurse-submodules https://github.com/somestupidgirl/RDNA4FB.git /tmp/RDNA4FB
       - name: Build stand-alone Navi33Probe.kext (no firmware or driver loading)
         run: make -C src/navi33-bringup MKSDK=/tmp/RDNA4FB/MacKernelSDK all
+      - name: Compile N33N read-only macOS user-space diagnostic (do not run)
+        run: |
+          clang -arch x86_64 -std=c11 -Wall -Wextra -Werror -pedantic -mmacosx-version-min=12.0 \
+            src/navi33-bringup/tools/n33query.c -framework IOKit -framework CoreFoundation \
+            -o /tmp/n33query
+          file /tmp/n33query
       - name: Check output files
         run: |
           test -f src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe

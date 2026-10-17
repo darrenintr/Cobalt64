@@ -274,3 +274,12 @@ a CPU-owned shadow page-table array: it is NOT assigned to the GPU.
 Base: Almosst-DEV/Cobalt64 (MIT). Linux amdgpu/Mesa are implementation
 references, not proofs that this port works. No firmware or Apple binaries
 are copied into this directory.
+
+## Stage G2: opt-in N33N macOS diagnostic client (uninstalled)
+
+The separate `Navi33NativeClient` Kext class exposes only HELLO and
+QUERY_CAPS (64 bytes) and is gated by `navi33-probe=1` plus
+`navi33-client=1`; `navi33-client-off=1` overrides. Root is required.
+No GPU engine is started and all mutation/submit selectors refuse requests.
+The read-only `tools/n33query.c` example compiles on macOS but is never
+executed in CI. This is not a RADV/Metal GPU execution path.

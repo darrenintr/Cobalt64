@@ -1,6 +1,8 @@
 // Navi33Probe - explicitly opted-in, PCI-configuration-only inventory.
 // No BAR mapping, MMIO, framebuffer takeover, PSP/SMU commands or GPU writes.
-#include <IOKit/IOService.h>
+#include "Navi33Probe.hpp"
+#include "Navi33NativeClient.hpp"
+#include "Navi33NativePolicy.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <pexpert/pexpert.h>
@@ -20,15 +22,7 @@
 #include "Navi33LiveMmio.h"
 #include <libkern/c++/OSData.h>
 
-class Navi33Probe : public IOService {
-    OSDeclareDefaultStructors(Navi33Probe)
-    using super = IOService;
 
-public:
-    IOService *probe(IOService *provider, SInt32 *score) override;
-    bool start(IOService *provider) override;
-    void stop(IOService *provider) override;
-};
 
 
 // Live READ-ONLY BAR5 probe, opt-in separately from navi33-probe.
@@ -88,6 +82,7 @@ bool Navi33Probe::start(IOService *provider) {
         return false;
     if (!super::start(provider))
         return false;
+    nativeFlags_ = N33_CAP_PCI_INVENTORY;
 
     setProperty("Navi33,Stage", "PCI inventory and supplied-ROM IP discovery only");
     setProperty("Navi33,NativeABIVersion", static_cast<uint64_t>(N33_ABI_VERSION), 32);
@@ -172,6 +167,10 @@ bool Navi33Probe::start(IOService *provider) {
             setProperty("Navi33,IPBases64", static_cast<uint64_t>(disc.is64BitBase()), 8);
             const navi33::InventoryReport generation = navi33::inventory(disc);
             const bool candidate = generation.code == navi33::InventoryCode::Pass;
+            if (candidate) {
+                nativeFlags_ |= N33_CAP_ROM_DISCOVERY;
+                setProperty("Navi33,NativeCapabilities", static_cast<uint64_t>(nativeFlags_), 32);
+            }
             setProperty("Navi33,VersionsMatch", static_cast<uint64_t>(candidate), 8);
             setProperty("Navi33,HardwarePlanStatus",
                         static_cast<uint64_t>(generation.code), 8);
@@ -274,4 +273,41 @@ bool Navi33Probe::start(IOService *provider) {
 
 void Navi33Probe::stop(IOService *provider) {
     super::stop(provider);
+}
+
+// Diagnostic N33N path is explicitly gated and root-only, independent of the
+// display/MMIO boot arguments. Disabled by default; never arms a GPU.
+IOReturn Navi33Probe::newUserClient(task_t owningTask, void *securityID,
+                                    UInt32 type, OSDictionary *properties,
+                                    IOUserClient **handler) {
+    if (!handler) return kIOReturnBadArgument;
+    *handler = nullptr;
+    uint32_t enabled = 0u, off = 0u, probeEnabled = 0u;
+    const bool probeOn = PE_parse_boot_argn("navi33-probe",
+                         &probeEnabled, sizeof(probeEnabled)) && probeEnabled == 1u;
+    const bool clientOn = PE_parse_boot_argn("navi33-client",
+                         &enabled, sizeof(enabled)) && enabled == 1u;
+    const bool kill = PE_parse_boot_argn("navi33-client-off",
+                         &off, sizeof(off)) && off != 0u;
+    if (navi33::native_policy::openAllowed(type, probeOn, clientOn, kill, true)
+            != navi33::native_policy::Access::Allow)
+        return kIOReturnUnsupported;
+
+    auto *client = OSTypeAlloc(Navi33NativeClient);
+    if (!client) return kIOReturnNoMemory;
+    if (!client->initWithTask(owningTask, securityID, type, properties)) {
+        client->release();
+        return kIOReturnNotPrivileged;
+    }
+    if (!client->attach(this)) {
+        client->release();
+        return kIOReturnInternalError;
+    }
+    if (!client->start(this)) {
+        client->detach(this);
+        client->release();
+        return kIOReturnInternalError;
+    }
+    *handler = client;
+    return kIOReturnSuccess;
 }
