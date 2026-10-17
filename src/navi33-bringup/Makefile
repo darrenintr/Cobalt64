@@ -87,11 +87,19 @@ $(BUILD)/test-dma-scatter: tests/test_dma_scatter.cpp src/Navi33DmaScatter.h src
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_dma_scatter.cpp -o $@
 
+$(BUILD)/test-gfx11-native: tests/test_gfx11_native.cpp src/Navi33NativeABI.h src/Navi33Gfx11Command.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_gfx11_native.cpp -o $@
+
+$(BUILD)/native-caps: tools/native_caps.cpp src/Navi33NativeABI.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tools/native_caps.cpp -o $@
+
 $(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/Navi33Dcn321.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
 
-host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
 	$(BUILD)/test-hardware-plan
@@ -100,6 +108,8 @@ host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware
 	$(BUILD)/test-gmc11-gart
 	$(BUILD)/test-sdma6-ring
 	$(BUILD)/test-dma-scatter
+	$(BUILD)/test-gfx11-native
+	$(BUILD)/native-caps
 	python3 tests/test_manifest.py
 
 clean:
