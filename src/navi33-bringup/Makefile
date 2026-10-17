@@ -1,0 +1,57 @@
+# Separate Navi 33 Stage-0 probe: no shared Navi48 sources, no firmware.
+# On macOS with Xcode CLT: make MKSDK=/path/to/MacKernelSDK
+# On any POSIX C++17 host: make host-test
+
+PRODUCT := Navi33Probe
+ARCH := x86_64
+DEPLOY := 11.0
+MKSDK ?= ../../RDNA4FB/MacKernelSDK
+SDK ?= $(shell xcrun --sdk macosx --show-sdk-path)
+
+CXX := clang++
+CC := clang
+HOST_CXX ?= c++
+BUILD := build
+KEXT := $(BUILD)/$(PRODUCT).kext
+EXEC := $(KEXT)/Contents/MacOS/$(PRODUCT)
+
+COMMON := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) -isysroot $(SDK) \
+    -I$(MKSDK)/Headers -Isrc -mmacosx-version-min=$(DEPLOY) \
+    -DKERNEL -DKERNEL_PRIVATE -DDRIVER_PRIVATE -DAPPLE -DNeXT \
+    -D_FORTIFY_SOURCE=0 -nostdinc -fno-builtin -fno-common \
+    -fno-stack-protector -mkernel -fapple-kext -Wall -Os -g
+CXXFLAGS := $(COMMON) -std=c++17 -fno-exceptions -fno-rtti -fcheck-new -fno-c++-static-destructors
+CFLAGS := $(COMMON)
+LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
+    -isysroot $(SDK) -nostdlib -Xlinker -kext \
+    -L$(MKSDK)/Library/x86_64 -lkmodc++ -lkmod -Wl,-no_deduplicate
+
+.PHONY: all clean host-test
+all: $(KEXT)
+
+$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD)/kmod_info.o: src/kmod_info.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/kmod_info.o Info.plist
+	@mkdir -p $(KEXT)/Contents/MacOS
+	$(CXX) $(LDFLAGS) $(BUILD)/Navi33Probe.o $(BUILD)/kmod_info.o -o $(EXEC)
+	cp Info.plist $(KEXT)/Contents/Info.plist
+	xattr -cr $(KEXT)
+	codesign --force --sign - $(KEXT)
+	@echo "Built $(KEXT); NOT installed"
+
+$(BUILD)/test-identity: tests/test_identity.cpp src/Navi33Identity.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) -std=c++17 -Wall -Wextra -Werror -pedantic tests/test_identity.cpp -o $@
+
+host-test: $(BUILD)/test-identity
+	$(BUILD)/test-identity
+	python3 tests/test_manifest.py
+
+clean:
+	rm -rf $(BUILD)
