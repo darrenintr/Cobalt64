@@ -31,6 +31,18 @@ assert 'N33_CAP_ROM_DISCOVERY' in source
 client=(root/"src/Navi33NativeClient.cpp").read_text()
 assert "Navi33NativeClient::externalMethod" in client
 assert "Navi33NativeClient::clientClose" in client
+# A DMA client MUST return the provider-scoped pinned-memory lease BEFORE
+# losing the provider pointer; otherwise the next root process stays BUSY.
+for method, ending in (("Navi33NativeClient::stop", "IOReturn Navi33NativeClient::clientClose"),
+                       ("Navi33NativeClient::clientClose", "IOReturn Navi33NativeClient::clientDied")):
+    segment=client[client.index(method):client.index(ending)]
+    assert segment.index("releaseStageLocked();") < segment.index("owner_ = nullptr;"), method
+assert 'Navi33Probe::vramGeometryStatus' in source
+assert 'navi33::nbio4::fromDiscovery' in source
+assert 'navi33::nbio4::inspect' in source
+assert 'navi33::vram_survey::combine' in source
+assert 'N33_SEL_VRAM_GEOMETRY' in client
+
 assert "N33_SEL_PSP_STATUS" in client
 assert "N33_SEL_SDMA_STATUS" in client
 assert "N33_SEL_HW_PREFLIGHT" in client
@@ -143,4 +155,12 @@ for forbidden in ("->configWrite", "->setMemoryEnable",
     assert forbidden not in stager, f"DMA stager gained GPU I/O: {forbidden}"
 assert "kGpuRingSubmissionEnabled=false" in (root/"src/Navi33Sdma6Staging.h").read_text()
 assert "kGartHardwareEnabled=false" in (root/"src/Navi33Sdma6Staging.h").read_text()
+# These helper headers may only compute/read a supplied MMIO snapshot;
+# NEVER introduce register writes, VBIOS flashing, PCI takeover or DMA.
+for filename in ("Navi33Nbio43Capacity.h","Navi33VramSurvey.h"):
+    code=(root/"src"/filename).read_text()
+    for forbidden in ("->configWrite", "WREG32(", "->setBusMasterEnable",
+                      "mapDeviceMemory", "->setMemoryEnable", "setPowerState(",
+                      "IOConnectCallMethod("):
+        assert forbidden not in code, f"{filename} gained GPU IO: {forbidden}"
 print("Navi33 device IOMMU staging and GPU submission boundaries: static checks passed")
