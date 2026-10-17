@@ -177,8 +177,11 @@ inline Report run(const Isolation &e,
     if(mp.code!=mmhub11::Code::Prepared) {
         r.verdict=mm.requiresRecovery()?Verdict::RecoveryRequired:
                   Verdict::MmhubPrepareFailed;
-        r.stagingMayBeReleased=mm.mayReleaseMappedMemory();
-        r.physicalResetBeforeRelease=!r.stagingMayBeReleased;
+        // The provider-level allocation lease is already quarantined:
+        // even a transport callback that reports failure might have sent
+        // a register write to silicon. NO unpin until independent reset.
+        r.stagingMayBeReleased=false;
+        r.physicalResetBeforeRelease=true;
         return r;
     }
     const mmhub11::Result gp=gfx.prepare(gfxPlan,vmGate,table,gfxIo);
@@ -190,8 +193,9 @@ inline Report run(const Isolation &e,
                          gfx.mayReleaseMappedMemory();
         r.verdict=clean?Verdict::GfxhubPrepareFailed:
                         Verdict::RecoveryRequired;
-        r.stagingMayBeReleased=clean;
-        r.physicalResetBeforeRelease=!clean;
+        (void)clean; // still cannot reclaim quarantined hardware memory
+        r.stagingMayBeReleased=false;
+        r.physicalResetBeforeRelease=true;
         return r;
     }
 
