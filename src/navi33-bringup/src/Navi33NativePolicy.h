@@ -26,7 +26,8 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         selector != N33_SEL_DMA_RELEASE &&
         selector != N33_SEL_HW_PREFLIGHT &&
         selector != N33_SEL_HW_ROM_PREFLIGHT &&
-        selector != N33_SEL_VRAM_GEOMETRY)
+        selector != N33_SEL_VRAM_GEOMETRY &&
+        selector != N33_SEL_QUEUE_CENSUS)
         return Shape::Unsupported;
     if (selector == N33_SEL_HELLO)
         return scalarIn == 2u && scalarOut == 3u && !structIn &&
@@ -48,6 +49,7 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         selector == N33_SEL_SDMA_STATUS ? sizeof(n33_sdma_status) :
         selector == N33_SEL_HW_PREFLIGHT ? sizeof(n33_hw_preflight) :
         selector == N33_SEL_VRAM_GEOMETRY ? sizeof(n33_vram_geometry_status) :
+        selector == N33_SEL_QUEUE_CENSUS ? sizeof(n33_queue_census_status) :
         sizeof(n33_dma_stage_status);
     return scalarIn == 0u && scalarOut == 0u && structIn == 0u &&
            structOut == expected && haveStructOut &&
