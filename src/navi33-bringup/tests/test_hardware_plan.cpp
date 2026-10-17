@@ -3,6 +3,7 @@
 #include "../src/Navi33Dcn321.h"
 #include "../src/Navi33Psp13Status.h"
 #include "../src/Navi33Sdma6Status.h"
+#include "../src/Navi33Sdma6BarAdapter.h"
 #include <cassert>
 #include <cstdio>
 #include <vector>
@@ -131,6 +132,16 @@ int main() {
         assert(sdma.state==N33_SDMA_OBSERVED);
         assert(sdma.offsets[0]==(0x100ull+0x25ull)*4ull);
         assert(sdma.offsets[4]==(0x100ull+0x85ull)*4ull);
+        const auto qmap=sdma6_bar::buildPlan(disc,65536u);
+        assert(qmap.code==AddressCode::Pass);
+        uint64_t rbBaseBytes=0u;
+        assert(sdma6_bar::translate(qmap,sdma6_mmio::kRbBase,&rbBaseBytes));
+        assert(rbBaseBytes==(0x100ull+0x81ull)*4ull);
+        assert(qmap.byteOffset[0]==(0x100ull+0x80ull)*4ull);
+        assert(qmap.byteOffset[5]==(0x100ull+0x85ull)*4ull);
+        assert(!sdma6_bar::translate(qmap,UINT32_MAX,&rbBaseBytes));
+        assert(sdma6_bar::buildPlan(disc,256u).code==
+               AddressCode::OutsideBar5);
         assert(dcn321::combineSurfaceAddress(0xabcd1234u,0x00000002u)==
                0x00000002abcd1234ull);
         assert(resolveDword(disc,Engine::DCN321,2,UINT32_MAX,65536).code==
