@@ -1,9 +1,13 @@
 # Navi 33 / RX 7600 bring-up (experimental)
 
-This is a **separate RDNA3 bring-up path** in the Cobalt64 fork. Stage 0
-implements a real opt-in IOKit service for AMD PCI vendor 1002, device 7480
-(Radeon RX 7600). It does **not** implement 2D display, GPU compute,
-Vulkan, Metal, or firmware loading.
+This is a **separate RDNA3 bring-up path** in the Cobalt64 fork.
+
+- `Navi33Probe.kext`: opt-in read-only PCI and supplied-ROM IP inventory for
+  Radeon RX 7600 (1002:7480). No display or GPU compute.
+- `display/Navi33GOPFB.kext`: a separately gated, software-only framebuffer
+  adopter intended to bridge UEFI GOP output to macOS WindowServer.
+  **Untested on Navi33 hardware; screen output is NOT established.**
+- Neither component submits GFX11 commands or implements RADV/Metal.
 
 ## Stage 0 behavior and safety boundary
 
@@ -74,6 +78,33 @@ The output is an **uninstalled** build/Navi33Probe.kext. The code has not
 been boot-tested on an RX 7600, and building it alone does not prove that the
 kext will load on a particular Tahoe build. Do not add it to your only
 bootable EFI until the build is reviewed and a recovery route is ready.
+
+
+## Stage 2: GOP framebuffer handoff prototype (independent Kext)
+
+Source, license and build instructions: [display/README.md](display/README.md).
+
+CPU-only host tests:
+
+~~~sh
+make -C src/navi33-bringup/display host-test
+~~~
+
+Build the independent framebuffer Kext with the macOS SDK (without installing):
+
+~~~sh
+make -C src/navi33-bringup/display MKSDK=/path/to/MacKernelSDK all
+~~~
+
+It is **not** an OpenCore-injectable Kext because IOGraphicsFamily is a
+System KC dependency. The macOS installer/Recovery display path is a
+separate bootstrapping problem. The Kext cannot rescue a system that loses
+UEFI GOP framebuffer access *before* the macOS Aux KC is loaded.
+
+Boot argument \`navi33-fb=1\` opts in; \`navi33-fb-off=1\` disables it.
+Until real Navi33 hardware tests and an installation/recovery strategy have
+been demonstrated, the framebuffer remains experimental and should not
+be installed on a single-GPU production machine.
 
 ## Next milestones (not implemented yet)
 
