@@ -367,6 +367,6 @@ private:
     Code state_=Code::Denied;
     Request req_{};
     IO io_{};
-    uint32_t oldCtl_=0u;
+    [[maybe_unused]] uint32_t oldCtl_=0u;
 };
 } } // namespace navi33::sdma6_mmio
