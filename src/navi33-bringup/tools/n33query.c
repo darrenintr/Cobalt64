@@ -37,16 +37,29 @@ int main(void) {
     size_t size = sizeof(caps);
     ret = IOConnectCallStructMethod(conn, N33_SEL_QUERY_CAPS, NULL, 0,
                                     &caps, &size);
-    IOServiceClose(conn);
     if (ret != KERN_SUCCESS || size != sizeof(caps) ||
         !n33_is_reserved_clean(&caps) || caps.abi_version != N33_ABI_VERSION) {
         fprintf(stderr, "N33N QUERY_CAPS failed or malformed: 0x%x\n", ret);
+        IOServiceClose(conn);
         return 5;
     }
     printf("N33N: %04x:%04x gfx%u; flags=0x%08x; VRAM=%llu; GTT=%llu\n",
         caps.vendor_id, caps.device_id, caps.family, caps.capabilities,
         (unsigned long long)caps.vram_bytes,
         (unsigned long long)caps.gtt_bytes);
+    struct n33_psp_status psp = {0};
+    size_t psp_size=sizeof(psp);
+    const kern_return_t psprc = IOConnectCallStructMethod(
+        conn, N33_SEL_PSP_STATUS, NULL, 0u, &psp, &psp_size);
+    if (psprc == KERN_SUCCESS && psp_size == sizeof(psp) &&
+        psp.abi_version == N33_ABI_VERSION &&
+        psp.size == sizeof(psp)) {
+        printf("PSP13 mailbox state=%u (6=running; 0=disabled), sOS version=0x%08x, MMIO reads=%u\n",
+               psp.state, psp.sos_version, psp.read_count);
+    } else {
+        fprintf(stderr,"N33N PSP status unavailable: 0x%x\n",psprc);
+    }
+    IOServiceClose(conn);
     printf("GFX11 hardware command submission: %s; Metal: %s\n",
         n33_can_submit(&caps) ? "reported READY (still verify on GPU)" : "DISABLED",
         (caps.capabilities & N33_CAP_METAL) ? "reported enabled" : "DISABLED");
