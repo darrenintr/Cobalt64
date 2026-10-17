@@ -22,14 +22,14 @@ struct Fake {
     bool corruptRoot=false;
     unsigned writes=0u;
     bool failCopy=false,failAck=false,failQueue=false;
-    Fake() {
+    explicit Fake(bool vmid1=false) {
         const dma::Segment seg[]={{0x800000ull,staging::kBytes}};
         assert(staging::prepare(seg,1u,mem.data(),mem.size()).code==staging::Code::Pass);
         IPEntry a{};a.hwId=ipid::MMHUB;a.major=3;a.revision=2;a.numBases=1;
         a.bases[0]=0x100u;
-        mm=h::planFromEntry(a,true,131072u);
+        mm=h::planFromEntry(a,true,131072u,vmid1?1u:0u);
         a.hwId=ipid::GC;a.major=11;a.revision=2;a.bases[0]=0x100u;
-        gfx=h::planGfxFromEntry(a,true,131072u);
+        gfx=h::planGfxFromEntry(a,true,131072u,vmid1?1u:0u);
         assert(h::validPlan(mm)&&h::validPlan(gfx));
         geometry.mcStart=0u;
         geometry.mcWindowBytes=8ull*1024ull*1024ull*1024ull;
@@ -63,7 +63,8 @@ static bool hubWrite(void *v,uint64_t offset,uint32_t value) {
     ++f.writes;f.regs[offset/4u]=value;
     if(!f.failAck) for(const auto &plan:{f.mm,f.gfx})
         if(offset==plan.offsets[static_cast<size_t>(h::Register::InvalidateReq)])
-            f.regs[plan.offsets[static_cast<size_t>(h::Register::InvalidateAck)]/4u]=1u;
+            f.regs[plan.offsets[static_cast<size_t>(h::Register::InvalidateAck)]/4u]=
+                1u<<plan.vmid;
     return true;
 }
 static bool yes(void*) {return true;}
@@ -78,12 +79,13 @@ static bool sdmaWrite(void *v,uint32_t reg,uint32_t word) {
     auto &f=*static_cast<Fake*>(v);
     if(reg>=256u)return false;
     ++f.writes;f.regs[reg]=word;
-    if(reg==s::kWptr && word==s::kCommandsBytes && !f.failQueue) {
+    const uint32_t delta=f.mm.vmid?s::kQueue1DwordDelta:0u;
+    if(reg==s::kWptr+delta && word==s::kCommandsBytes && !f.failQueue) {
         if(!f.failCopy) for(size_t i=0;i<staging::kBytePage;++i)
             f.mem[staging::kBytePage+i]=f.mem[i];
         staging::write32(f.mem.data()+3u*staging::kBytePage,
                          staging::kFenceCookie);
-        f.regs[s::kRptr]=word;
+        f.regs[s::kRptr+delta]=word;
     }
     return true;
 }
@@ -105,13 +107,14 @@ static h::Table table() {
     }
     return t;
 }
-static s::Request request() {
+static s::Request request(uint8_t vmid=0u) {
     s::Request r{};
     r.sourceGpuVa=staging::kGuestGpuVa;
     r.targetGpuVa=r.sourceGpuVa+4096u;
     r.ringGpuVa=r.sourceGpuVa+8192u;
     r.fenceGpuVa=r.sourceGpuVa+12288u;
-    r.cookie=staging::kFenceCookie;return r;
+    r.cookie=staging::kFenceCookie;
+    r.vmid=vmid;r.queueIndex=vmid;return r;
 }
 static p::Isolation isolation() {
     p::Isolation g{};
@@ -120,6 +123,7 @@ static p::Isolation isolation() {
     g.pspAndSdmaFirmwareVerified=true;g.mmhubCacheAndHdpInitialized=true;
     g.ownedPhysicalGpuPageTablePinned=true;g.dmaIommuMappingHeld=true;
     g.deviceCacheMaintenanceAvailable=true;g.exclusiveSdma0Queue=true;
+    g.exclusiveSdma0Queue1=true;
     g.independentPowerCycleAndRecovery=true;return g;
 }
 static bool readVramRoot(void *v,uint64_t addr,uint64_t *out) {
@@ -133,7 +137,7 @@ static p::Report run(Fake &f,p::Isolation e=isolation()) {
     for(size_t i=0;i<staging::kPages;++i)
         f.rootPtes[i]=t.entries[i]; // model a separately pinned VRAM BO
     if(f.corruptRoot)f.rootPtes[100u]=0xdeadbeefull;
-    return p::run(e,f.mm,f.gfx,t,request(),f.geometry,
+    return p::run(e,f.mm,f.gfx,t,request(f.mm.vmid),f.geometry,
                   f.rootArena,f.rootToken,readVramRoot,&f,f.lease,&f,
                   hubIO(f),hubIO(f),sdmaIO(f),4u,4u);
 }
@@ -161,6 +165,26 @@ int main() {
         const unsigned written=f.writes;
         assert(run(f).verdict==p::Verdict::Refused);
         assert(f.writes==written); // second job cannot reprogram Queue0
+    }
+    {
+        Fake f(true);auto e=isolation();
+        e.exclusiveSdma0Queue1=false;
+        const auto r=run(f,e);
+        assert(r.verdict==p::Verdict::Refused && f.writes==0u);
+        assert(f.lease.phase()==queue_owner::Phase::Available);
+    }
+    {
+        Fake f(true);
+        const auto r=run(f);
+        assert(r.verdict==p::Verdict::CopiedButVmStillActive);
+        assert(r.ringWasSubmitted && r.fourKiBCopyVerified);
+        assert(r.observedFence==staging::kFenceCookie);
+        assert(!r.stagingMayBeReleased && r.physicalResetBeforeRelease);
+        assert(f.regs[s::kRbCntl]==0u && f.regs[s::kRbBase]==0u);
+        assert(f.regs[s::kRptr]==0u && f.regs[s::kWptr]==0u);
+        assert(f.regs[s::kRbCntl+s::kQueue1DwordDelta]==0u);
+        assert(f.lease.phase()==queue_owner::Phase::GpuMayHaveFetched);
+        assert(f.rootArena.isQuarantined());
     }
     {
         Fake f;assert(f.rootArena.release(&f,f.rootToken));
