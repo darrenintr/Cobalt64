@@ -18,18 +18,47 @@ static int rd(struct dcn321_device *d,const uint32_t r[4],unsigned p,uint32_t *v
     int rc=address(d,r,p,&a);
     return rc ? rc : (d->io.read(d->io.cookie,a,v) ? DCN321_IO : DCN321_OK);
 }
-static int wr(struct dcn321_device *d,const uint32_t r[4],unsigned p,uint32_t v) {
-    uint32_t a;
-    int rc=address(d,r,p,&a);
-    if (rc) return rc;
+/* Writes are transactional only within this list of registers.  In a real
+ * driver the caller must independently serialize and own the entire display
+ * pipe, link, clocks, MC mappings, and firmware state. */
+struct dcn321_edit {
+    const uint32_t *registers;
+    uint32_t mask, value;
+    uint32_t mmio_dword, previous, replacement;
+};
+static int apply_edits(struct dcn321_device *d, unsigned p,
+                       struct dcn321_edit *edits, size_t count) {
+    size_t i;
+    int rc, restore_failed = 0;
+    if (!ready(d) || p >= DCN321_PIPE_COUNT || !edits || !count ||
+        count > 16u) return DCN321_ARG;
     if (!d->armed) return DCN321_DISABLED;
-    return d->io.write(d->io.cookie,a,v) ? DCN321_IO : DCN321_OK;
-}
-static int field(struct dcn321_device *d,const uint32_t r[4],unsigned p,uint32_t mask,uint32_t value) {
-    uint32_t prev;
-    int rc=rd(d,r,p,&prev);
-    if (rc) return rc;
-    return wr(d,r,p,(prev & ~mask)|(value & mask));
+    /* Full snapshot and address validation BEFORE changing any register. */
+    for (i = 0; i < count; ++i) {
+        if (!edits[i].registers || !edits[i].mask) return DCN321_ARG;
+        rc = address(d, edits[i].registers, p, &edits[i].mmio_dword);
+        if (rc) return rc;
+        if (d->io.read(d->io.cookie, edits[i].mmio_dword,
+                       &edits[i].previous))
+            return DCN321_IO;
+        edits[i].replacement = (edits[i].previous & ~edits[i].mask) |
+                               (edits[i].value & edits[i].mask);
+    }
+    for (i = 0; i < count; ++i) {
+        if (d->io.write(d->io.cookie, edits[i].mmio_dword,
+                        edits[i].replacement)) {
+            size_t j;
+            /* Include failed register (write could have partially landed);
+             * restore in original sequence to respect high->low latching. */
+            for (j = 0; j <= i; ++j) {
+                if (d->io.write(d->io.cookie, edits[j].mmio_dword,
+                                edits[j].previous))
+                    restore_failed = 1;
+            }
+            return restore_failed ? DCN321_ROLLBACK : DCN321_IO;
+        }
+    }
+    return DCN321_OK;
 }
 int dcn321_init(struct dcn321_device *d,const struct dcn321_io *io,uint32_t pci,
                 uint32_t seg2,uint32_t bar,uint64_t lo,uint64_t hi) {
@@ -57,38 +86,65 @@ int dcn321_read_frame(struct dcn321_device *d,unsigned p,uint32_t *count) {
     if (!rc) *count&=DCN321_F_OTG_OTG_STATUS_FRAME_COUNT_OTG_FRAME_COUNT_MASK;
     return rc;
 }
-#define WRITE(reg,val) do { rc=wr(d,dcn321_r_otg_##reg,p,(val));if(rc)return rc; }while(0)
-#define FIELD(reg,mask,val) do { rc=field(d,dcn321_r_otg_##reg,p,(mask),(val));if(rc)return rc; }while(0)
-int dcn321_program_otg_timing(struct dcn321_device *d,unsigned p,const struct dcn321_mode *m) {
-    uint32_t ht,vt,hs,he,vs,ve,ctl;
-    int rc=dcn321_validate_mode(m);
+int dcn321_program_otg_timing(struct dcn321_device *d, unsigned p,
+                               const struct dcn321_mode *m) {
+    struct dcn321_edit edits[12];
+    uint32_t ht, vt, hs, he, vs, ve, ctl;
+    int rc = dcn321_validate_mode(m);
     if (rc) return rc;
-    if (!ready(d) || p>=4) return DCN321_ARG;
+    if (!ready(d) || p >= DCN321_PIPE_COUNT) return DCN321_ARG;
     if (!d->armed) return DCN321_DISABLED;
-    /* Never reprogram a running pipe: that can blank a single-GPU machine. */
-    rc=rd(d,dcn321_r_otg_otg_control,p,&ctl);
+    /* Never touch the timing of an active display. */
+    rc = rd(d, dcn321_r_otg_otg_control, p, &ctl);
     if (rc) return rc;
-    if (ctl & DCN321_F_OTG_OTG_CONTROL_OTG_MASTER_EN_MASK) return DCN321_PRECONDITION;
-    ht=(uint32_t)m->width+m->h_front+m->h_sync+m->h_back;
-    vt=(uint32_t)m->height+m->v_front+m->v_sync+m->v_back;
-    hs=ht-m->h_front; he=hs-m->width;
-    vs=vt-m->v_front; ve=vs-m->height;
-    WRITE(otg_h_total,ht-1u);
-    WRITE(otg_h_sync_a,(uint32_t)m->h_sync<<16);
-    WRITE(otg_h_blank_start_end,(he<<16)|hs);
-    FIELD(otg_h_sync_a_cntl,DCN321_F_OTG_OTG_H_SYNC_A_CNTL_OTG_H_SYNC_A_POL_MASK,m->h_positive?0u:1u);
-    WRITE(otg_v_total,vt-1u);
-    WRITE(otg_v_total_min,vt-1u);
-    WRITE(otg_v_total_max,vt-1u);
-    WRITE(otg_v_sync_a,(uint32_t)m->v_sync<<16);
-    WRITE(otg_v_blank_start_end,(ve<<16)|vs);
-    FIELD(otg_v_sync_a_cntl,DCN321_F_OTG_OTG_V_SYNC_A_CNTL_OTG_V_SYNC_A_POL_MASK,m->v_positive?0u:1u);
-    FIELD(otg_h_timing_cntl,DCN321_F_OTG_OTG_H_TIMING_CNTL_OTG_H_TIMING_DIV_MODE_MASK,0u);
-    FIELD(otg_control,DCN321_F_OTG_OTG_CONTROL_OTG_START_POINT_CNTL_MASK,m->displayport?0x1000u:0u);
-    return DCN321_OK;
+    if (ctl & DCN321_F_OTG_OTG_CONTROL_OTG_MASTER_EN_MASK)
+        return DCN321_PRECONDITION;
+    ht = (uint32_t)m->width + m->h_front + m->h_sync + m->h_back;
+    vt = (uint32_t)m->height + m->v_front + m->v_sync + m->v_back;
+    hs = ht - m->h_front; he = hs - m->width;
+    vs = vt - m->v_front; ve = vs - m->height;
+#define SET(index, name, bits, data) do { \
+        edits[index].registers = dcn321_r_otg_##name; \
+        edits[index].mask = (bits); edits[index].value = (data); \
+    } while (0)
+    SET(0, otg_h_total,
+        DCN321_F_OTG_OTG_H_TOTAL_OTG_H_TOTAL_MASK, ht - 1u);
+    SET(1, otg_h_sync_a,
+        DCN321_F_OTG_OTG_H_SYNC_A_OTG_H_SYNC_A_START_MASK |
+        DCN321_F_OTG_OTG_H_SYNC_A_OTG_H_SYNC_A_END_MASK,
+        (uint32_t)m->h_sync << 16u);
+    SET(2, otg_h_blank_start_end,
+        DCN321_F_OTG_OTG_H_BLANK_START_END_OTG_H_BLANK_START_MASK |
+        DCN321_F_OTG_OTG_H_BLANK_START_END_OTG_H_BLANK_END_MASK,
+        (he << 16u) | hs);
+    SET(3, otg_h_sync_a_cntl,
+        DCN321_F_OTG_OTG_H_SYNC_A_CNTL_OTG_H_SYNC_A_POL_MASK,
+        m->h_positive ? 0u : 1u);
+    SET(4, otg_v_total,
+        DCN321_F_OTG_OTG_V_TOTAL_OTG_V_TOTAL_MASK, vt - 1u);
+    SET(5, otg_v_total_min,
+        DCN321_F_OTG_OTG_V_TOTAL_MIN_OTG_V_TOTAL_MIN_MASK, vt - 1u);
+    SET(6, otg_v_total_max,
+        DCN321_F_OTG_OTG_V_TOTAL_MAX_OTG_V_TOTAL_MAX_MASK, vt - 1u);
+    SET(7, otg_v_sync_a,
+        DCN321_F_OTG_OTG_V_SYNC_A_OTG_V_SYNC_A_START_MASK |
+        DCN321_F_OTG_OTG_V_SYNC_A_OTG_V_SYNC_A_END_MASK,
+        (uint32_t)m->v_sync << 16u);
+    SET(8, otg_v_blank_start_end,
+        DCN321_F_OTG_OTG_V_BLANK_START_END_OTG_V_BLANK_START_MASK |
+        DCN321_F_OTG_OTG_V_BLANK_START_END_OTG_V_BLANK_END_MASK,
+        (ve << 16u) | vs);
+    SET(9, otg_v_sync_a_cntl,
+        DCN321_F_OTG_OTG_V_SYNC_A_CNTL_OTG_V_SYNC_A_POL_MASK,
+        m->v_positive ? 0u : 1u);
+    SET(10, otg_h_timing_cntl,
+        DCN321_F_OTG_OTG_H_TIMING_CNTL_OTG_H_TIMING_DIV_MODE_MASK, 0u);
+    SET(11, otg_control,
+        DCN321_F_OTG_OTG_CONTROL_OTG_START_POINT_CNTL_MASK,
+        m->displayport ? 0x1000u : 0u);
+#undef SET
+    return apply_edits(d, p, edits, 12u);
 }
-#undef WRITE
-#undef FIELD
 int dcn321_flip_primary(struct dcn321_device *d,unsigned p,const struct dcn321_scanout *s) {
     uint64_t size;
     uint32_t a,ctl;
@@ -180,12 +236,6 @@ int dcn321_wait_frame_progress(struct dcn321_device *d, unsigned p,
     return DCN321_TIMEOUT;
 }
 
-struct dcn321_edit {
-    const uint32_t *registers;
-    uint32_t mask, value;
-    uint32_t mmio_dword, previous, replacement;
-};
-
 /* Stage only a linear, non-DCC, full-viewport 32bpp plane on a completely
  * disabled OTG.  Does not set any pixel clocks, DML watermarks, MPC/OPP,
  * DPP, VM translation, link encoder or OTG_MASTER_EN.  Caller owns the VRAM
@@ -197,8 +247,7 @@ int dcn321_prepare_linear_plane(struct dcn321_device *d, unsigned p,
     struct dcn321_edit edits[10];
     uint32_t ctl, clock, lock, flip;
     uint64_t length;
-    size_t i;
-    int rc, restore_failed = 0;
+    int rc;
     uint32_t crossbar;
     const uint32_t xbar_mask =
         DCN321_F_HUBPRET_HUBPRET_CONTROL_CROSSBAR_SRC_CB_B_MASK |
@@ -277,32 +326,5 @@ int dcn321_prepare_linear_plane(struct dcn321_device *d, unsigned p,
          (uint32_t)s->address);
 #undef STEP
 
-    /* Snapshot the entire transaction BEFORE its first write.  Prevent a
-     * bad BAR boundary or preflight read error from partially modifying HW. */
-    for (i = 0; i < 10u; ++i) {
-        rc = address(d, edits[i].registers, p, &edits[i].mmio_dword);
-        if (rc) return rc;
-        if (d->io.read(d->io.cookie, edits[i].mmio_dword,
-                       &edits[i].previous))
-            return DCN321_IO;
-        edits[i].replacement =
-            (edits[i].previous & ~edits[i].mask) |
-            (edits[i].value & edits[i].mask);
-    }
-    for (i = 0; i < 10u; ++i) {
-        if (d->io.write(d->io.cookie, edits[i].mmio_dword,
-                        edits[i].replacement)) {
-            size_t j;
-            /* Restore in forward order to preserve high-then-low latch
-             * semantics for the surface MC address.  The failed write may
-             * have reached HW, so include its register in compensation. */
-            for (j = 0; j <= i; ++j) {
-                if (d->io.write(d->io.cookie, edits[j].mmio_dword,
-                                edits[j].previous))
-                    restore_failed = 1;
-            }
-            return restore_failed ? DCN321_ROLLBACK : DCN321_IO;
-        }
-    }
-    return DCN321_OK;
+    return apply_edits(d, p, edits, 10u);
 }
