@@ -24,6 +24,7 @@
 #include "Navi33Sdma6Status.h"
 #include "Navi33HwProbeLogic.h"
 #include "Navi33Gmc11VramLive.h"
+#include "Navi33VramSurvey.h"
 #include <libkern/c++/OSData.h>
 
 
@@ -537,26 +538,42 @@ n33_vram_geometry_status Navi33Probe::vramGeometryStatus() {
         sample.state=N33_VRAM_NO_BAR5;
         return navi33::vram_live::report(sample,bar0Bytes,bar5Bytes,0xffffffffu);
     }
-    const auto plan=navi33::vram_live::fromDiscovery(disc,bar5Bytes);
-    if(plan.code!=navi33::vram_live::PlanCode::Pass) {
+    const auto fbPlan=navi33::vram_live::fromDiscovery(disc,bar5Bytes);
+    const auto memPlan=navi33::nbio4::fromDiscovery(disc,bar5Bytes);
+    navi33::nbio4::Sample memory{};
+    memory.code=memPlan.code;
+    memory.version=memPlan.nbioRevision;
+    if(fbPlan.code!=navi33::vram_live::PlanCode::Pass)
         sample.state=N33_VRAM_BAD_OFFSETS;
-        return navi33::vram_live::report(sample,bar0Bytes,bar5Bytes,0xffffffffu);
-    }
+
+    // One opt-in BAR5 mapping permits independent, bounded FB and NBIO
+    // snapshots. It is never used to write registers or VRAM.
     IOMemoryMap *mapped=bar5->map();
     if(!mapped) {
-        sample.state=N33_VRAM_MAP_FAILED;
-    } else {
-        if(static_cast<uint64_t>(mapped->getLength())<bar5Bytes)
+        if(fbPlan.code==navi33::vram_live::PlanCode::Pass)
             sample.state=N33_VRAM_MAP_FAILED;
-        else
-            sample=navi33::vram_live::inspect(
-                plan,navi33ReadStatusDword,mapped);
+        if(memPlan.code==navi33::nbio4::Code::Pass)
+            memory.code=navi33::nbio4::Code::ReadFailed;
+    } else {
+        if(static_cast<uint64_t>(mapped->getLength())<bar5Bytes) {
+            if(fbPlan.code==navi33::vram_live::PlanCode::Pass)
+                sample.state=N33_VRAM_MAP_FAILED;
+            if(memPlan.code==navi33::nbio4::Code::Pass)
+                memory.code=navi33::nbio4::Code::ReadFailed;
+        } else {
+            if(fbPlan.code==navi33::vram_live::PlanCode::Pass)
+                sample=navi33::vram_live::inspect(
+                    fbPlan,navi33ReadStatusDword,mapped);
+            memory=navi33::nbio4::inspect(
+                memPlan,navi33ReadStatusDword,mapped);
+        }
         mapped->release();
     }
-    const auto output=navi33::vram_live::report(
-        sample,bar0Bytes,bar5Bytes,plan.mmRevision);
-    IOLog("Navi33Probe: read-only paired FB geometry state %u; %u BAR5 reads; NO VRAM/GPU writes\n",
-          output.state,output.read_count);
+    const auto output=navi33::vram_survey::combine(
+        navi33::vram_live::report(
+            sample,bar0Bytes,bar5Bytes,fbPlan.mmRevision),memory);
+    IOLog("Navi33Probe: read-only FB state %u; NBIO mem state %u, capacity %u MiB; no GPU writes\n",
+          output.state,output.nbio_state,output.nbio_memsize_mib);
     return output;
 }
 
