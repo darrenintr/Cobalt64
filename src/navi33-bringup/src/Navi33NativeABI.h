@@ -29,8 +29,20 @@ enum n33_selector {
   N33_SEL_HELLO=0, N33_SEL_QUERY_CAPS=1,
   N33_SEL_BO_CREATE=2, N33_SEL_BO_FREE=3, N33_SEL_VM_MAP=4,
   N33_SEL_CTX_CREATE=5, N33_SEL_SUBMIT=6, N33_SEL_WAIT=7,
-  N33_SEL_COUNT=8
+  N33_SEL_PSP_STATUS=8, N33_SEL_COUNT=9
 };
+// PSP status is deliberately read-only, never a readiness flag for GFX.
+enum n33_psp_state {
+  N33_PSP_DISABLED=0, N33_PSP_NO_INVENTORY=1, N33_PSP_BAD_MMIO_PLAN=2,
+  N33_PSP_READ_ERROR=3, N33_PSP_INVALID_READ=4, N33_PSP_STOPPED=5,
+  N33_PSP_RUNNING=6, N33_PSP_UNSTABLE=7
+};
+struct n33_psp_status {
+  uint32_t abi_version, size, state, flags;
+  uint32_t sign_of_life, sos_version, read_count, reserved0;
+  uint64_t reserved1, reserved2, reserved3, reserved4;
+};
+N33_STATIC_ASSERT(sizeof(struct n33_psp_status)==64,"N33 PSP ABI must be 64B");
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;
