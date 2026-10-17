@@ -7,6 +7,7 @@
 #include <IOKit/IOPlatformExpert.h>
 #include <pexpert/pexpert.h>
 #include "Navi33GopLayout.h"
+#include "Navi33EDID.h"
 
 class Navi33GOPFB final : public IOFramebuffer {
     OSDeclareDefaultStructors(Navi33GOPFB)
@@ -32,9 +33,14 @@ public:
                                   IOPixelInformation *info) override;
     IOReturn getCurrentDisplayMode(IODisplayModeID *mode, IOIndex *depth) override;
     IOReturn setDisplayMode(IODisplayModeID mode, IOIndex depth) override;
+    IOReturn setStartupDisplayMode(IODisplayModeID mode, IOIndex depth) override;
 
     IOReturn getAttribute(IOSelect attribute, uintptr_t *value) override;
     IOReturn setAttribute(IOSelect attribute, uintptr_t value) override;
+    bool hasDDCConnect(IOIndex connectIndex) override;
+    IOReturn getDDCBlock(IOIndex connectIndex, UInt32 blockNumber,
+                         IOSelect blockType, IOOptionBits options,
+                         UInt8 *data, IOByteCount *length) override;
     IOItemCount getConnectionCount() override;
     IOReturn getAttributeForConnection(IOIndex index, IOSelect attribute,
                                         uintptr_t *value) override;
@@ -42,10 +48,13 @@ public:
                                         uintptr_t value) override;
 private:
     bool captureConsole();
+    bool readInjectedEDID();
     void initializePowerManagement();
     static constexpr IODisplayModeID kFirmwareMode = static_cast<IODisplayModeID>(1);
     IOPCIDevice *pci_ { nullptr }; // borrowed provider, no retain needed while attached
     navi33fb::Layout console_ {};
     uint32_t colorMap_ { 0 };
+    uint8_t edid_[256]{};
+    size_t edidBytes_{0u};
     bool pmInitialized_ { false };
 };

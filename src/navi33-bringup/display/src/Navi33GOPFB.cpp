@@ -3,6 +3,8 @@
 // Works only if the UEFI GOP display engine remains programmed and live.
 #include "Navi33GOPFB.hpp"
 #include "Navi33BarGuard.h"
+#include "Navi33EDID.h"
+#include <libkern/c++/OSData.h>
 #include "../../src/Navi33Identity.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
@@ -80,6 +82,7 @@ bool Navi33GOPFB::captureConsole() {
     setProperty("Navi33FB,Height", static_cast<uint64_t>(d.height), 32);
     setProperty("Navi33FB,RowBytes", static_cast<uint64_t>(d.rowBytes), 32);
     setProperty("Navi33FB,Depth", static_cast<uint64_t>(d.depth), 32);
+    setProperty("Navi33FB,FirmwareDepth", static_cast<uint64_t>(d.firmwareDepth), 32);
     N33FB_LOG("firmware scanout physical base 0x%llx, %ux%u, pitch %u",
               static_cast<unsigned long long>(d.physicalBase),
               d.width, d.height, d.rowBytes);
@@ -111,6 +114,12 @@ bool Navi33GOPFB::start(IOService *provider) {
     uint32_t cmap = 0;
     if (PE_parse_boot_argn("navi33-fb-cmap", &cmap, sizeof(cmap)) && cmap <= 5u)
         colorMap_ = cmap;
+
+    // Load optional OpenCore-injected EDID before IOGraphics attaches an
+    // IODisplay. No DP AUX/I2C transactions or MMIO read occurs.
+    readInjectedEDID();
+    pci_->setProperty("model", "AMD Radeon RX 7600 (GOP fallback)");
+    pci_->setProperty("device_type", "display");
 
     // The superclass publishes the IOFramebuffer for IOGraphics.
     if (!super::start(provider)) return false;
@@ -222,6 +231,11 @@ IOReturn Navi33GOPFB::getPixelInformation(IODisplayModeID mode, IOIndex depth,
     return kIOReturnSuccess;
 }
 
+IOReturn Navi33GOPFB::setStartupDisplayMode(IODisplayModeID mode, IOIndex depth) {
+    // Never reprogram DCN 3.2.1 or ask the firmware for a different mode.
+    return setDisplayMode(mode, depth);
+}
+
 IOReturn Navi33GOPFB::getCurrentDisplayMode(IODisplayModeID *mode, IOIndex *depth) {
     if (mode) *mode = kFirmwareMode;
     if (depth) *depth = 0;
@@ -255,6 +269,9 @@ IOReturn Navi33GOPFB::getAttributeForConnection(IOIndex index, IOSelect attr,
         if (value) *value = 1; return kIOReturnSuccess;
     case kConnectionFlags:
         if (value) *value = 0; return kIOReturnSuccess;
+    case kConnectionSupportsHLDDCSense:
+        // OSDisplay can query the injected EDID through our DDC methods.
+        return edidBytes_ != 0u ? kIOReturnSuccess : kIOReturnUnsupported;
     default: return super::getAttributeForConnection(index, attr, value);
     }
 }
@@ -264,4 +281,51 @@ IOReturn Navi33GOPFB::setAttributeForConnection(IOIndex index, IOSelect attr,
     if (attr == kConnectionPower)
         return kIOReturnSuccess; // no physical display power operations
     return super::setAttributeForConnection(index, attr, value);
+}
+
+
+// ---------------------------------------------------------------------------
+// Optional passive DDC/EDID service (no GPU or physical monitor I/O)
+// ---------------------------------------------------------------------------
+bool Navi33GOPFB::readInjectedEDID() {
+    edidBytes_=0u;
+    if(!pci_)return false;
+    // Dedicated property name avoids binding to undocumented Apple defaults.
+    const OSData *blob=OSDynamicCast(OSData,pci_->getProperty("Navi33,EDID"));
+    if(!blob){
+        setProperty("Navi33FB,EDIDStatus","Not injected (generic display fallback)");
+        return false;
+    }
+    const size_t length=blob->getLength();
+    if(!navi33fb::edid::inspect(
+          static_cast<const uint8_t*>(blob->getBytesNoCopy()),length).valid()){
+        setProperty("Navi33FB,EDIDStatus","Injected EDID refused (checksum/size/header)");
+        N33FB_LOG("EDID injection invalid: length %zu; continuing without EDID",length);
+        return false;
+    }
+    memcpy(edid_,blob->getBytesNoCopy(),length);
+    edidBytes_=length;
+    setProperty("Navi33FB,EDIDStatus","Valid OpenCore-injected EDID");
+    setProperty("Navi33FB,EDIDBytes",static_cast<uint64_t>(edidBytes_),32);
+    N33FB_LOG("EDID injection accepted: %zu bytes; no DDC hardware touched",length);
+    return true;
+}
+
+bool Navi33GOPFB::hasDDCConnect(IOIndex index) {
+    return index==0 && edidBytes_>=128u;
+}
+
+IOReturn Navi33GOPFB::getDDCBlock(IOIndex index, UInt32 block,
+                                    IOSelect kind, IOOptionBits options,
+                                    UInt8 *data, IOByteCount *length) {
+    (void)options;
+    if(index!=0 || kind!=kIODDCBlockTypeEDID || !data || !length)
+        return kIOReturnUnsupported;
+    if(block<1u || block>edidBytes_/128u)
+        return kIOReturnNotFound;
+    const size_t offset=(static_cast<size_t>(block)-1u)*128u;
+    const IOByteCount n=*length<128u?*length:128u;
+    memcpy(data,edid_+offset,n);
+    *length=n;
+    return kIOReturnSuccess;
 }

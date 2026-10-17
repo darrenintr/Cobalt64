@@ -21,7 +21,13 @@ int main() {
     assert(!valid(inspectGop(0,0,1920,1080,7680,32)));
     assert(inspectGop(0x10000000,0,0,1080,7680,32).error==LayoutError::InvalidDimension);
     assert(inspectGop(0x10000000,0,9000,1080,36000,32).error==LayoutError::InvalidDimension);
-    assert(inspectGop(0x10000000,0,1920,1080,7680,24).error==LayoutError::UnsupportedDepth);
+    // RDNA4FB accepts 24/30 GOP depths only when the *stride* is 4B/px.
+    const auto d24=inspectGop(0x10000000,0,1920,1080,7680,24);
+    const auto d30=inspectGop(0x10000000,0,1920,1080,7680,30);
+    assert(valid(d24)&&d24.depth==32&&d24.firmwareDepth==24);
+    assert(valid(d30)&&d30.depth==32&&d30.firmwareDepth==30);
+    assert(inspectGop(0x10000000,0,1920,1080,5760,24).error==LayoutError::InvalidPitch);
+    assert(inspectGop(0x10000000,0,1920,1080,7680,16).error==LayoutError::UnsupportedDepth);
     assert(inspectGop(0x10000000,0,1920,1080,7600,32).error==LayoutError::InvalidPitch);
     assert(inspectGop(0x10000000,0,1920,1080,7681,32).error==LayoutError::InvalidPitch);
     assert(inspectGop(0x10000000,65536,1920,1080,7680,32).error==LayoutError::InvalidLength);

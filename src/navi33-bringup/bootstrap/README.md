@@ -1,13 +1,16 @@
 # Navi33 boot bootstrap: recovery before experimentation
 
-**Stage 3 development tools, NOT working GPU graphics or an installer patch.**
+**Boot profile and recovery tools, NOT a verified GPU driver.** For
+Tahoe 26 the highest-priority initial candidate is the existing macOS
+firmware framebuffer with WhateverGreen disabled, not a third-party Kext
+injected into an installer before IOGraphics is available.
 
 The RX 7600 is the only GPU on a Ryzen 5 3600 test machine. It has no macOS
 accelerated driver, and a blank-screen installer cannot be assumed usable.
 The tools here let us audit a future **recoverable** test without touching
 the current EFI or macOS installation.
 
-## 1. Generate three OpenCore configurations (offline; safe)
+## 1. Generate five OpenCore configurations (offline; safe)
 
 ~~~sh
 python3 src/navi33-bringup/bootstrap/boot_profiles.py \
@@ -23,9 +26,15 @@ Outputs:
 - `vesa-baseline.plist`: adds `-radvesa` and `navi33-fb-off=1`. It is a
   diagnostic for the WhateverGreen software-display path, **not** evidence
   that RX 7600 will show the installer or WindowServer.
-- `fb-trial.plist`: adds `-radvesa navi33-fb=1`. It can only do anything
-  after the separate `Navi33GOPFB.kext` has been added to the **target
-  macOS** Auxiliary Kernel Collection (AuxKC).
+- `fb-trial.plist`: adds `-radvesa navi33-fb=1`. This can only work
+  after Navi33GOPFB has been added to the **target macOS AuxKC**.
+- `tahoe-firmware.plist`: **first-choice software display experiment**
+  for Tahoe 26. Disables only WhateverGreen in the generated `Kernel/Add`;
+  strips `-radvesa`, sets `navi33-fb-off=1` and leaves the original macOS
+  firmware fallback to drive the display. It does not require our Kext.
+- `tahoe-fb-trial.plist`: same Tahoe/WEG-disabled fallback but enables
+  Navi33GOPFB with `navi33-fb=1`, **only if** already approved and
+  present in this target installation's AuxKC.
 
 All profiles also set `navi33-dma-off=1`, including the trial profile.
 They do **not** automatically invoke the `navi33-dma-preflight=1` IOMMU
@@ -37,7 +46,7 @@ Profiles preserve SMBIOS, AMD kernel patches, DeviceProperties, and existing
 SIP settings. They also ensure OpenCore NVRAM/Delete includes `boot-args`,
 so old persisted boot flags do not silently supersede profile flags.
 
-**Important:** These three files are not three entries in the OpenCore picker.
+**Important:** These five files are not independent entries in the OpenCore picker.
 OpenCore reads one `EFI/OC/config.plist` at a time. To use alternatives,
 prepare genuinely independent bootable EFI environments (or a way to restore
 the previous configuration) first. Do not copy multiple named plists into
@@ -47,6 +56,33 @@ The `-radvesa` boot arg comes from [WhateverGreen](https://github.com/
 acidanthera/WhateverGreen); its effect requires an active compatible
 WhateverGreen Kext. It disables AMD acceleration; it does not magically
 create an RX 7600 graphics driver.
+
+
+### Prepare three independent EFI directory copies without touching your EFI
+
+On Windows, Linux or macOS, copy your working EFI folder elsewhere first,
+then run:
+
+~~~sh
+python3 src/navi33-bringup/bootstrap/build_test_efis.py \
+  --source-efi /path/to/your/copied/EFI \
+  --output-dir /path/to/new/navi33-test-efis
+~~~
+
+Input must contain BOOT/BOOTx64.efi, OC/OpenCore.efi and OC/config.plist.
+The script produces \`recovery/EFI\`, \`tahoe-firmware/EFI\` and
+\`tahoe-fb-trial/EFI\` beneath the new output directory; it never edits
+the original EFI or writes a USB partition. Each is **a separate boot
+environment**, not a separate entry in a single OpenCore picker.
+After inspecting the generated files, copy only one EFI folder to the
+root of an independent FAT32 boot USB. Keep an unmodified recovery USB.
+
+The first experiment should use \`tahoe-firmware\`: no custom framebuffer
+Kext or AuxKC installation is required, and only the alternate config's
+WhateverGreen entry is disabled. It relies on UEFI GOP surviving into
+macOS's built-in framebuffer; whether RX 7600 actually outputs pixels is
+still unknown until a physical boot with a connected monitor.
+
 
 ## 2. Check compiled Kext prior to any AuxKC operation
 

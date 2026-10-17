@@ -32,7 +32,8 @@ class BootProfileTests(unittest.TestCase):
         original = config()
         frozen = copy.deepcopy(original)
         self.assertTrue(has_whatevergreen(original))
-        for name in ("recovery", "vesa-baseline", "fb-trial"):
+        for name in ("recovery", "vesa-baseline", "fb-trial",
+                     "tahoe-firmware", "tahoe-fb-trial"):
             with self.subTest(name=name):
                 result = make_profile(original, name)
                 tokens = result["NVRAM"]["Add"][APPLE_BOOT_GUID]["boot-args"].split()
@@ -43,21 +44,46 @@ class BootProfileTests(unittest.TestCase):
                 self.assertNotIn("navi33-dma-preflight=1", tokens)
                 self.assertEqual(tokens.count("navi33-dma-off=1"), 1)
                 self.assertEqual(result["ACPI"], frozen["ACPI"])
-                self.assertEqual(result["Kernel"], frozen["Kernel"])
+                if name.startswith("tahoe-"):
+                    self.assertFalse(result["Kernel"]["Add"][0]["Enabled"])
+                    self.assertEqual(result["Kernel"]["Patch"], frozen["Kernel"]["Patch"])
+                else:
+                    self.assertEqual(result["Kernel"], frozen["Kernel"])
                 self.assertEqual(result["DeviceProperties"], frozen["DeviceProperties"])
                 self.assertEqual(result["NVRAM"]["Add"][APPLE_BOOT_GUID]["csr-active-config"],
                                  frozen["NVRAM"]["Add"][APPLE_BOOT_GUID]["csr-active-config"])
                 self.assertEqual(result["NVRAM"]["Delete"][APPLE_BOOT_GUID],
                                  ["SystemAudioVolume", "boot-args"])
-                if name == "fb-trial":
+                if name in ("fb-trial", "tahoe-fb-trial"):
                     self.assertIn("navi33-fb=1", tokens)
                     self.assertNotIn("navi33-fb-off=1", tokens)
                 else:
                     self.assertNotIn("navi33-fb=1", tokens)
                     self.assertIn("navi33-fb-off=1", tokens)
-                if name != "recovery":
+                if name in ("fb-trial","vesa-baseline"):
                     self.assertEqual(tokens.count("-radvesa"), 1)
+                elif name.startswith("tahoe-"):
+                    self.assertNotIn("-radvesa",tokens)
         self.assertEqual(original, frozen)
+
+    def test_tahoe_firmware_removes_weg_only_and_preserves_config(self):
+        original=config("-v -radvesa debug=0x100 navi33-dma-preflight=1")
+        original["Kernel"]["Add"].extend([
+            {"Enabled": True, "BundlePath": "Lilu.kext"},
+            {"Enabled": True, "BundlePath": "VirtualSMC.kext"}
+        ])
+        source=copy.deepcopy(original)
+        for name in ("tahoe-firmware","tahoe-fb-trial"):
+            product=make_profile(original,name)
+            args=product["NVRAM"]["Add"][APPLE_BOOT_GUID]["boot-args"].split()
+            self.assertNotIn("-radvesa",args)
+            self.assertIn("navi33-dma-off=1",args)
+            self.assertFalse(product["Kernel"]["Add"][0]["Enabled"])
+            self.assertTrue(product["Kernel"]["Add"][1]["Enabled"])
+            self.assertTrue(product["Kernel"]["Add"][2]["Enabled"])
+            self.assertEqual(product["DeviceProperties"],original["DeviceProperties"])
+            self.assertEqual(product["Kernel"]["Patch"],original["Kernel"]["Patch"])
+        self.assertEqual(original,source)
 
     def test_rescue_preserves_original_radvesa(self):
         original = config("-v -radvesa navi33-fb-off=0 navi33-fb=1")
@@ -89,8 +115,9 @@ class BootProfileTests(unittest.TestCase):
             dest = root / "profiles"
             report = generate(src, dest)
             self.assertEqual(src.read_bytes(), data)
-            self.assertEqual(len(report["profiles"]), 3)
-            for name in ("recovery", "vesa-baseline", "fb-trial"):
+            self.assertEqual(len(report["profiles"]), 5)
+            for name in ("recovery", "vesa-baseline", "fb-trial",
+                         "tahoe-firmware", "tahoe-fb-trial"):
                 output = dest / (name + ".plist")
                 self.assertTrue(output.is_file())
                 parsed = plistlib.loads(output.read_bytes())

@@ -13,7 +13,11 @@ possible on a Ryzen desktop with **no backup iGPU**.
 Borrowing the architecture of
 [RDNA4FB](https://github.com/somestupidgirl/RDNA4FB) (BSD-3-Clause; license
 included), the Kext reads `IOPlatformExpert::getConsoleInfo` and validates
-the firmware scanout physical address, stride, dimensions and depth. It offers
+the firmware scanout physical address, stride, dimensions and depth. It
+accepts firmware-reported 24/30/32-bit depths only when the buffer still
+has a safe 4-byte/pixel stride. A 30-bit framebuffer is advertised as
+32-bit, so colours may be wrong until the DCN format can be identified.
+It offers
 the **same existing pixel range** to IOGraphics as one fixed software 32bpp
 mode. Its `isConsoleDevice()` reports true. No hardware mode setting occurs.
 
@@ -42,9 +46,15 @@ resume path exists. This is not full macOS power-management support.
 - `navi33-fb=1`: explicit opt-in (default is entirely inert).
 - `navi33-fb-off=1`: kill switch, takes precedence even if enabled.
 - `navi33-fb-cmap=0..5`: advertised channel order correction, default 0.
+- Optional OpenCore GPU DeviceProperties `Navi33,EDID` (raw 128/256-byte
+  monitor EDID, checked header, extension count and checksums). Exposes
+  this through IOGraphics DDC without touching DP AUX or I2C registers.
+  The driver can run with *no EDID*; it reports a generic display.
 
-No separate EDID, hotplug, native modeset, VBL, display sleep or hardware
-cursor support yet. Refresh metadata advertises 60Hz as a placeholder; it
+No **automatic hardware EDID reading**, hotplug, native modeset, VBL,
+display sleep or hardware cursor support yet. The Kext now supports
+`setStartupDisplayMode` without programming DCN. For 30bpp GOP formats,
+colours may be inaccurate. Refresh metadata advertises 60Hz as a placeholder; it
 does not measure the actual GOP mode.
 
 This is a framebuffer **component of the larger GFX11 + RADV + Metal port**,
@@ -53,7 +63,9 @@ not a substitute for GPU acceleration.
 ## Offline OpenCore / AuxKC preparation
 
 See [../bootstrap/README.md](../bootstrap/README.md) for generated recovery,
-software-fallback and framebuffer-trial configurations, plus executable
+software-fallback and framebuffer-trial configurations, including two
+**Tahoe 26 profiles** that disable WhateverGreen only in an alternate
+config.plist, plus executable
 preflight checks for Kext bundles. Profiles are **not automatically
 selectable in the OpenCore picker**, and preflight does not install a Kext.
 
@@ -77,7 +89,14 @@ Because this Kext depends on `IOGraphicsFamily` in the macOS System KC, it
 **cannot simply be injected through OpenCore's Kernel/Add**. Installing into
 the macOS Auxiliary Kernel Collection requires an already accessible macOS
 environment with an appropriate `kmutil` workflow. Bootstrapping a
-completely blank, black-screen installer remains unresolved.
+completely blank, black-screen installer remains unresolved. For Tahoe,
+the **first-choice fallback profile** is `tahoe-firmware`, which disables
+WhateverGreen but uses macOS's built-in firmware/IOBootNDRV path: no
+custom Kext required at installer time. This avoids a documented Tahoe
+AMD connector-patching issue in WhateverGreen, but it is not guaranteed
+to rescue a lost GOP or start WindowServer. The `tahoe-fb-trial`
+profile requires an already installed and approved Kext in the actual
+target installation's AuxKC.
 
 Do NOT try this experimental Kext on the only macOS installation or change
 `csr-active-config` without a verified recovery path. When there is a

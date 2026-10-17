@@ -15,6 +15,7 @@ struct Layout {
     LayoutError error;
     uint64_t physicalBase, length;
     uint32_t width, height, rowBytes, depth;
+    uint32_t firmwareDepth; // 24/30 bit data in 32-bit GOP container
 };
 
 constexpr uint32_t kMaxDimension = 8192u;
@@ -31,13 +32,16 @@ constexpr Layout inspectGop(uint64_t rawBase, uint64_t length,
         !base ? LayoutError::NullFramebuffer :
         !width || !height || width > kMaxDimension || height > kMaxDimension
             ? LayoutError::InvalidDimension :
-        depth != 32u ? LayoutError::UnsupportedDepth :
+        (depth != 32u && depth != 30u && depth != 24u) ? LayoutError::UnsupportedDepth :
         rowBytes < minPitch || (rowBytes & 3u) != 0u ? LayoutError::InvalidPitch :
         effective < minLength || effective > kMaxAperture
             ? LayoutError::InvalidLength :
         base > UINT64_MAX - effective ? LayoutError::Overflow :
         LayoutError::Ok;
-    return {status, base, effective, width, height, rowBytes, depth};
+    // Only accept 24/30bpp if the framebuffer still occupies 4 bytes/pixel.
+    // At this bring-up stage, it is advertised as 32-bit; 30bpp colours may
+    // require a dedicated pixel-conversion or DCN format path in the future.
+    return {status, base, effective, width, height, rowBytes, 32u, depth};
 }
 
 constexpr bool valid(const Layout &layout) {

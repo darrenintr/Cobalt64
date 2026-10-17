@@ -33,9 +33,13 @@ jobs:
         run: python3 -m compileall -q src/navi33-bringup/tests src/navi33-bringup/display/tests src/navi33-bringup/bootstrap
 
   macos-kext-compile:
-    name: macOS x86_64 Kext compile (no install)
-    runs-on: macos-15
-    timeout-minutes: 15
+    name: macOS Kext compile (no install) - ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15-intel, macos-26-intel]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Fetch MacKernelSDK at RDNA4FB submodule revision
@@ -62,7 +66,7 @@ jobs:
       - name: Preserve compiled Kexts as CI artifacts (NOT boot-tested)
         uses: actions/upload-artifact@v4
         with:
-          name: navi33-prototype-kexts-macos-x86_64
+          name: navi33-prototype-kexts-${{ matrix.runner }}
           path: |
             src/navi33-bringup/build/Navi33Probe.kext
             src/navi33-bringup/display/build/Navi33GOPFB.kext
