@@ -22,6 +22,7 @@
 #include "Navi33LiveMmio.h"
 #include "Navi33Psp13Status.h"
 #include "Navi33Sdma6Status.h"
+#include "Navi33HwProbeLogic.h"
 #include <libkern/c++/OSData.h>
 
 
@@ -396,6 +397,77 @@ n33_sdma_status Navi33Probe::sdmaStatus() {
         mapping->release();
     }
     return navi33::sdma6live::report(sample);
+}
+
+// This is an ACTUAL physical RX7600 status read, not a mock test.
+// It never changes PCI command state, VRAM, SDMA rings, page tables,
+// MMHUB contexts, or doorbells. Results never advertise HW_VM/GFX/Metal.
+n33_hw_preflight Navi33Probe::hardwarePreflight() {
+    uint32_t enabled=0u,off=0u;
+    const bool allowed=PE_parse_boot_argn("navi33-hw-probe",
+                                         &enabled,sizeof(enabled)) && enabled==1u;
+    const bool stopped=PE_parse_boot_argn("navi33-hw-off",
+                                         &off,sizeof(off)) && off!=0u;
+    if(!allowed || stopped)
+        return navi33::hwprobe::blank(N33_HW_DISABLED);
+
+    auto *pci=OSDynamicCast(IOPCIDevice,getProvider());
+    if(!pci)return navi33::hwprobe::blank(N33_HW_NO_PROVIDER);
+    const navi33::Identity id=navi33::inspectPci(
+        pci->configRead32(kIOPCIConfigVendorID),
+        pci->configRead32(kIOPCIConfigRevisionID));
+    if(!navi33::isSupported(id))
+        return navi33::hwprobe::blank(N33_HW_NO_PROVIDER);
+
+    auto *rom=OSDynamicCast(OSData,pci->getProperty("ATY,bin_image"));
+    if(!rom || rom->getLength()<32u ||
+       rom->getLength()>navi33::IPDiscovery::kMaxBlob)
+        return navi33::hwprobe::blank(N33_HW_NO_ROM);
+    navi33::IPDiscovery disc;
+    if(!disc.parse(static_cast<const uint8_t *>(rom->getBytesNoCopy()),
+                   rom->getLength()) ||
+       navi33::inventory(disc).code!=navi33::InventoryCode::Pass)
+        return navi33::hwprobe::blank(N33_HW_BAD_ROM);
+
+    IODeviceMemory *bar=pci->getDeviceMemoryWithRegister(
+        kIOPCIConfigBaseAddress5);
+    if(!bar || bar->getLength()<4u)
+        return navi33::hwprobe::blank(N33_HW_NO_BAR5);
+    const uint64_t bytes=static_cast<uint64_t>(bar->getLength());
+    const navi33::psp13::Plan pspPlan=navi33::psp13::buildPlan(disc,bytes);
+    const navi33::sdma6live::Plan sdmaPlan=
+        navi33::sdma6live::buildPlan(disc,bytes);
+    const navi33::hwprobe::HubOffsets hubs=
+        navi33::hwprobe::planHubs(disc,bytes);
+    if(pspPlan.state!=N33_PSP_STOPPED ||
+       sdmaPlan.state!=N33_SDMA_OBSERVED || !hubs.valid)
+        return navi33::hwprobe::blank(N33_HW_BAD_OFFSETS);
+
+    IOMemoryMap *mapped=bar->map();
+    if(!mapped)return navi33::hwprobe::blank(N33_HW_MAP_FAILED);
+    if(static_cast<uint64_t>(mapped->getLength())<bytes) {
+        mapped->release();
+        return navi33::hwprobe::blank(N33_HW_MAP_FAILED);
+    }
+    const navi33::psp13::Sample psp=navi33::psp13::readOnce(
+        pspPlan,true,navi33ReadStatusDword,mapped);
+    const navi33::sdma6live::Sample sdma=navi33::sdma6live::readOnce(
+        sdmaPlan,true,navi33ReadStatusDword,mapped);
+    uint32_t mmContext=UINT32_MAX,gfxContext=UINT32_MAX;
+    const bool mmOk=navi33ReadStatusDword(mapped,hubs.mmhub,&mmContext);
+    const bool gfxOk=navi33ReadStatusDword(mapped,hubs.gfxhub,&gfxContext);
+    mapped->release();
+    if(!mmOk || !gfxOk)
+        return navi33::hwprobe::blank(N33_HW_MMIO_READ_FAILED);
+
+    const n33_hw_preflight result=navi33::hwprobe::classify(
+        navi33::psp13::report(psp),navi33::sdma6live::report(sdma),
+        mmContext,gfxContext,bytes);
+    // These two facts are not optional: a status read doesn't demonstrate
+    // exclusive queue ownership or any working compute command path.
+    IOLog("Navi33Probe: RX7600 physical HW preflight reason %u, reads %u, PSP %u, SDMA %u; no GPU copy submitted\n",
+          result.reason,result.mmio_reads,result.psp_state,result.sdma_state);
+    return result;
 }
 
 void Navi33Probe::stop(IOService *provider) {
