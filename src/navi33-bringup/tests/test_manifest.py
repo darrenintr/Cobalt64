@@ -79,6 +79,11 @@ for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
         assert forbidden not in code, f"{filename} gained hardware I/O: {forbidden}"
+adapter_code=(root/"src/Navi33Sdma6BarAdapter.h").read_text()
+assert "sdma6_mmio::kRbCntl" in adapter_code
+assert "#ifndef COBALT_NAVI33_ENABLE_UNSAFE_MMIO" in adapter_code
+assert "#include \"Navi33Sdma6BarAdapter.h\"" not in source
+assert "#include \"Navi33Sdma6BarAdapter.h\"" not in client
 queue_code=(root/"src/Navi33Sdma6MmioQueue.h").read_text()
 assert "#ifdef COBALT_NAVI33_ENABLE_UNSAFE_MMIO" in queue_code
 assert "kDeviceSubmissionImplemented=false" in (root/"src/Navi33Sdma6HardwareGate.h").read_text()
