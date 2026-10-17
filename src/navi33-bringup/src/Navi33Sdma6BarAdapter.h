@@ -52,6 +52,27 @@ inline Plan buildPlan(const IPDiscovery &disc,uint64_t assignedBar5Length,
     p.code=AddressCode::Pass;
     return p;
 }
+// A caller must not fabricate arbitrary BAR5 offsets after discovery.
+// Recheck the complete same-base GC register bank before any callback.
+inline bool validPlan(const Plan &p) {
+    if(p.code!=AddressCode::Pass || p.queueIndex>1u ||
+       p.bar5Length<4u)return false;
+    const uint32_t delta=p.queueIndex*sdma6_mmio::kQueue1DwordDelta;
+    const uint64_t firstReg=static_cast<uint64_t>(kRegs[0u]+delta);
+    if((p.byteOffset[0u]&3u) || p.byteOffset[0u]/4u<=firstReg)
+        return false;
+    const uint64_t gcBase=p.byteOffset[0u]/4u-firstReg;
+    const uint64_t lastDword=(p.bar5Length-4u)/4u;
+    for(size_t i=0u;i<kCount;++i) {
+        const uint64_t reg=static_cast<uint64_t>(kRegs[i]+delta);
+        if(gcBase>lastDword || reg>lastDword-gcBase ||
+           p.byteOffset[i]!=(gcBase+reg)*4u)
+            return false;
+        for(size_t j=0u;j<i;++j)
+            if(p.byteOffset[i]==p.byteOffset[j])return false;
+    }
+    return true;
+}
 using ReadMmio=bool (*)(void*,uint64_t,uint32_t*);
 using WriteMmio=bool (*)(void*,uint64_t,uint32_t);
 struct Adapter {
@@ -62,8 +83,7 @@ struct Adapter {
     bool exclusiveOwned=false;
 };
 inline bool translate(const Plan &p,uint32_t reg,uint64_t *byteOffset) {
-    if(!byteOffset || p.code!=AddressCode::Pass ||
-       p.queueIndex>1u)return false;
+    if(!byteOffset || !validPlan(p))return false;
     const uint32_t delta=p.queueIndex*sdma6_mmio::kQueue1DwordDelta;
     for(size_t i=0;i<kCount;++i)
         if(kRegs[i]+delta==reg) {
