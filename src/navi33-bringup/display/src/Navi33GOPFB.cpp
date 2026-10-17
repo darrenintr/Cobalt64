@@ -93,7 +93,6 @@ bool Navi33GOPFB::start(IOService *provider) {
 
     // The superclass publishes the IOFramebuffer for IOGraphics.
     if (!super::start(provider)) return false;
-    ready_ = true;
     setProperty("Navi33FB,GpuCommandSubmission", static_cast<uint64_t>(0), 32);
     setProperty("Navi33FB,HardwareWrites", static_cast<uint64_t>(0), 32);
     N33FB_LOG("started (software pixels via GOP; no registers/modeset)");
@@ -101,7 +100,6 @@ bool Navi33GOPFB::start(IOService *provider) {
 }
 
 void Navi33GOPFB::stop(IOService *provider) {
-    ready_ = false;
     super::stop(provider);
 }
 
@@ -114,14 +112,16 @@ IOReturn Navi33GOPFB::enableController() {
 bool Navi33GOPFB::isConsoleDevice() { return true; }
 
 IODeviceMemory *Navi33GOPFB::getApertureRange(IOPixelAperture aperture) {
-    if (aperture != kIOFBSystemAperture || !ready_ || !navi33fb::valid(console_))
+    // IOGraphics may ask for the aperture during super::start(): do not
+    // gate it on a post-start flag when GOP geometry is already validated.
+    if (aperture != kIOFBSystemAperture || !navi33fb::valid(console_))
         return nullptr;
     // This is the existing GOP pixel buffer, not an MMIO register mapping.
     return IODeviceMemory::withRange(console_.physicalBase, console_.length);
 }
 
 IODeviceMemory *Navi33GOPFB::getVRAMRange() {
-    if (!ready_ || !navi33fb::valid(console_)) return nullptr;
+    if (!navi33fb::valid(console_)) return nullptr;
     return IODeviceMemory::withRange(console_.physicalBase, console_.length);
 }
 
