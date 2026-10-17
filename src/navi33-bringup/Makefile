@@ -131,11 +131,19 @@ $(BUILD)/test-sdma6-hardware-gate: tests/test_sdma6_hardware_gate.cpp src/Navi33
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_hardware_gate.cpp -o $@
 
+$(BUILD)/test-sdma6-mmio-queue: tests/test_sdma6_mmio_queue.cpp src/Navi33Sdma6MmioQueue.h src/Navi33Sdma6Staging.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_mmio_queue.cpp -o $@
+
+$(BUILD)/test-sdma6-mmio-off: tests/test_sdma6_mmio_off.cpp src/Navi33Sdma6MmioQueue.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_mmio_off.cpp -o $@
+
 $(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/Navi33Dcn321.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
 
-host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
 	$(BUILD)/test-hardware-plan
@@ -152,6 +160,8 @@ host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware
 	$(BUILD)/test-sdma6-status
 	$(BUILD)/test-sdma6-staging
 	$(BUILD)/test-sdma6-hardware-gate
+	$(BUILD)/test-sdma6-mmio-queue
+	$(BUILD)/test-sdma6-mmio-off
 	$(BUILD)/native-caps
 	python3 tests/test_manifest.py
 
