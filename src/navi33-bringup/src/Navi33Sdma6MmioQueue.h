@@ -503,7 +503,7 @@ private:
 #endif
     Code state_=Code::Denied;
     bool touchedHardware_=false;
-    uint32_t queueDelta_=0u;
+    [[maybe_unused]] uint32_t queueDelta_=0u;
     Request req_{};
     IO io_{};
     [[maybe_unused]] uint32_t oldCtl_=0u;
