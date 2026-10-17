@@ -3,6 +3,7 @@
 #include "../src/Navi33Dcn321.h"
 #include "../src/Navi33Psp13Status.h"
 #include "../src/Navi33Sdma6Status.h"
+#include "../src/Navi33Gmc11Mmhub.h"
 #include "../src/Navi33Sdma6BarAdapter.h"
 #include <cassert>
 #include <cstdio>
@@ -42,7 +43,7 @@ struct Fixture {
         put16(bytes,8,sum(bytes,10,binaryEnd));
     }
 };
-static Fixture make(bool wide=false, bool duplicateGc=false, bool zeroDcnBase2=false) {
+static Fixture make(bool wide=false, bool duplicateGc=false, bool zeroDcnBase2=false, bool withMmhub=false) {
     Fixture f{};
     f.wide=wide;
     auto &v=f.bytes;
@@ -57,7 +58,7 @@ static Fixture make(bool wide=false, bool duplicateGc=false, bool zeroDcnBase2=f
     put16(v,144,208);
     if (wide) v[206]=1;
     put16(v,208,0);
-    put16(v,210,duplicateGc?6:5);
+    put16(v,210,(duplicateGc || withMmhub)?6:5);
 
     // All five exact Navi33 engine fingerprints, per amdgpu_discovery.c.
     struct Entry { uint16_t id;uint8_t maj,min,rev;uint64_t base; };
@@ -67,11 +68,12 @@ static Fixture make(bool wide=false, bool duplicateGc=false, bool zeroDcnBase2=f
         {ipid::MP1,13,0,7,0x300u},
         {ipid::SDMA0,6,0,2,0x400u},
         {ipid::DMU,3,2,1,0x1800u},
-        {ipid::GC,11,0,2,0x100u}
+        {ipid::GC,11,0,2,0x100u},
+        {ipid::MMHUB,3,0,2,0x500u}
     };
     size_t p=212;
-    for(int i=0;i<(duplicateGc?6:5);++i) {
-        const auto &e=entries[i];
+    for(int i=0;i<((duplicateGc || withMmhub)?6:5);++i) {
+        const auto &e=entries[(i==5 && withMmhub)?6:i];
         put16(v,p,e.id);
         v[p+2]=0;v[p+3]=3; // >= 3 bases for DCN BASE_IDX 2.
         v[p+4]=e.maj;v[p+5]=e.min;v[p+6]=e.rev;v[p+7]=0;
@@ -154,6 +156,22 @@ int main() {
         assert(dcn321::resolveReadOnly(disc,
                   static_cast<dcn321::Register>(255),65536).code==
                AddressCode::MissingSegment);
+    }
+    {auto f=make(false,false,false,true);
+        assert(disc.parse(f.bytes.data(),f.bytes.size()));
+        assert(inventory(disc).code==InventoryCode::Pass);
+        const auto mmhub=mmhub11::planFromDiscovery(disc,65536u);
+        assert(mmhub.code==mmhub11::Code::Prepared);
+        assert(mmhub.revision==2u);
+        assert(mmhub.offsets[0u]==(0x500ull+0x06c0ull)*4ull);
+        assert(mmhub.offsets[8u]==(0x500ull+0x06f4ull)*4ull);
+        assert(mmhub11::planFromDiscovery(disc,64u).code==
+               mmhub11::Code::InvalidBar);
+    }
+    {auto f=make();
+        assert(disc.parse(f.bytes.data(),f.bytes.size()));
+        assert(mmhub11::planFromDiscovery(disc,65536u).code==
+               mmhub11::Code::NoDiscovery);
     }
     // Reject RDNA4/Phoenix IP versions instead of reusing Navi48 registers.
     for (int index=0;index<5;++index) {
