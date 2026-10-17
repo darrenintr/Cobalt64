@@ -37,6 +37,10 @@ int main(void) {
     assert(f.regs[0x100+0x1b37]==(5u<<16));
     assert(dcn321_flip_primary(&d,0,&s)==DCN321_PRECONDITION);
     f.regs[0x100+0x1b41]=1u; /* simulated active pipe, NOT enabled by this library */
+    f.regs[0x100+0x1b85]=0x100u; /* clock on */
+    f.regs[0x100+0x0607]=1919u; /* linear 1920-pixel pitch */
+    f.regs[0x100+0x05e5]=8u; /* 32bpp ARGB */
+    f.regs[0x100+0x05ea]=(1080u<<16)|1920u; /* viewport */
     assert(dcn321_program_otg_timing(&d,0,&m)==DCN321_PRECONDITION);
     assert(dcn321_flip_primary(&d,0,&s)==0);
     assert(f.regs[0x100+0x060a]==0x10010000u);
