@@ -144,6 +144,11 @@ partially-working GPU driver:
   and OTG frame counters), all using IP Discovery DMU BASE_IDX 2. These
   are potential read offsets only; a Kext does not access these registers.
   Each pipe may be inactive; the plan never assumes pipe0 drives the GOP.
+- `src/Navi33Sdma6Packet.h`: offline seven-DWORD SDMA6 linear copy packet
+  encoder, following Linux `sdma_v6_0_emit_copy_buffer`. Includes
+  alignment, byte-count, overflow, overlap, TMZ-disabled and parser
+  round-trip guards. It produces only CPU-owned command bytes; it cannot
+  submit any GPU work or touch a doorbell.
 - `src/Navi33FirmwareGuard.h`: Linux AMD common firmware-header metadata
   parser for families `gc_11_0_2`, `psp_13_0_7`, `smu_13_0_7`,
   `sdma_6_0_2`. Refuses wrong IP family, malformed header and out-of-range

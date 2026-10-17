@@ -9,6 +9,7 @@
 #include "Navi33HardwarePlan.h"
 #include "Navi33Dcn321.h"
 #include "Navi33FirmwareGuard.h"
+#include "Navi33Sdma6Packet.h"
 #include <libkern/c++/OSData.h>
 
 class Navi33Probe : public IOService {

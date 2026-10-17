@@ -35,7 +35,7 @@ parser = (root / "src" / "Navi33Discovery.h").read_text()
 assert "struct IPEntry" in parser and "isNavi33Candidate" in parser
 for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
     assert forbidden not in parser, f"IP parser gained {forbidden}"
-for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h"):
+for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h"):
     code = (root / "src" / filename).read_text()
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
