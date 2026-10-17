@@ -87,6 +87,11 @@ assert "#include \"Navi33Sdma6BarAdapter.h\"" not in client
 queue_code=(root/"src/Navi33Sdma6MmioQueue.h").read_text()
 assert "#ifdef COBALT_NAVI33_ENABLE_UNSAFE_MMIO" in queue_code
 assert "kDeviceSubmissionImplemented=false" in (root/"src/Navi33Sdma6HardwareGate.h").read_text()
+mmhub=(root/"src/Navi33Gmc11Mmhub.h").read_text()
+assert "#ifdef COBALT_NAVI33_ENABLE_UNSAFE_GMC11_MMIO" in mmhub
+assert "planFromDiscovery" in mmhub and "InvalidateAck" in mmhub
+assert '#include "Navi33Gmc11Mmhub.h"' not in source
+assert '#include "Navi33Gmc11Mmhub.h"' not in client
 assert "kGpuRingSubmissionEnabled=false" in (root/"src/Navi33Sdma6Staging.h").read_text()
 assert "#include \"Navi33Sdma6MmioQueue.h\"" not in source
 assert "#include \"Navi33Sdma6MmioQueue.h\"" not in client
