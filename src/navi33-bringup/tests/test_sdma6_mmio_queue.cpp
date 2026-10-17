@@ -13,7 +13,9 @@ struct Fake {
     uint32_t regs[256]{};
     std::vector<uint8_t> mem;
     unsigned writes=0u, delays=0u, before=0u, after=0u;
-    unsigned failWriteAt=0u;
+    unsigned reads=0u, failWriteAt=0u;
+    bool failWriteAfterCommit=false;
+    bool unstableSnapshot=false, lateOwnerRace=false;
     bool triggerGpu=true;
     bool copyData=true;
     bool writeFence=true;
@@ -27,14 +29,24 @@ struct Fake {
 static bool readReg(void *p,uint32_t r,uint32_t *value) {
     auto *f=static_cast<Fake *>(p);
     if(!value || r>=256u)return false;
-    *value=f->regs[r];return true;
+    ++f->reads;
+    *value=f->regs[r];
+    // Change the second snapshot, or the later pre-write cross-check.
+    if(f->unstableSnapshot && f->reads==9u && r==kRbCntl)
+        *value=kEnable;
+    if(f->lateOwnerRace && f->reads==17u && r==kRbBase)
+        *value=0x100u;
+    return true;
 }
 static bool writeReg(void *p,uint32_t r,uint32_t value) {
     auto *f=static_cast<Fake *>(p);
     if(r>=256u)return false;
     ++f->writes;
-    if(f->failWriteAt==f->writes)return false;
+    if(f->failWriteAt==f->writes && !f->failWriteAfterCommit)
+        return false;
     f->regs[r]=value;
+    if(f->failWriteAt==f->writes && f->failWriteAfterCommit)
+        return false; // device accepted MMIO despite software error
     if(r==kWptr && value==kCommandsBytes && f->triggerGpu) {
         if(f->copyData)
             for(size_t i=0;i<staging::kBytePage;++i)
@@ -116,8 +128,9 @@ static void success() {
     assert(!(f.regs[kRbCntl]&kEnable));
     assert(f.regs[kRbBase]==0u && f.regs[kRbBaseHi]==0u);
     assert(f.regs[kRptr]==0u && f.regs[kWptr]==0u);
-    assert(q.mayUnmapGpuMemory());
-    assert(!q.requiresRecovery());
+    assert(!q.mayUnmapGpuMemory());
+    assert(q.requiresIndependentResetBeforeUnmap());
+    assert(!q.requiresRecovery()); // queued work retired, VM teardown unproven
 }
 static void refusalAndFaults() {
     {
@@ -139,11 +152,40 @@ static void refusalAndFaults() {
         assert(f.writes==0u);
     }
     {
+        Fake f{};f.regs[kRbBase]=0x10u;
+        Queue q{};
+        assert(q.configure(ready(),request(),io(&f)).status==Code::Busy);
+        assert(f.writes==0u && q.mayUnmapGpuMemory());
+    }
+    {
+        Fake f{};f.unstableSnapshot=true;
+        Queue q{};
+        assert(q.configure(ready(),request(),io(&f)).status==Code::Unstable);
+        assert(f.writes==0u && !q.requiresIndependentResetBeforeUnmap());
+    }
+    {
+        Fake f{};f.lateOwnerRace=true;
+        Queue q{};
+        assert(q.configure(ready(),request(),io(&f)).status==Code::Unstable);
+        assert(f.writes==0u && q.mayUnmapGpuMemory());
+    }
+    {
+        Fake f{};f.failWriteAt=1u;f.failWriteAfterCommit=true;
+        Queue q{};
+        const auto o=q.configure(ready(),request(),io(&f));
+        assert(o.status==Code::RecoveryRequired && o.mmioWrites==1u);
+        assert(f.regs[kRbBase]!=0u); // hardware accepted failed write
+        assert(q.requiresRecovery() && !q.mayUnmapGpuMemory());
+        assert(q.requiresIndependentResetBeforeUnmap());
+    }
+    {
         Fake f{};f.failWriteAt=3u;
         Queue q{};
-        assert(q.configure(ready(),request(),io(&f)).status==Code::WriteFailed);
-        assert(q.mayUnmapGpuMemory());
-        assert(f.regs[kRbBase]==0u && f.regs[kRbBaseHi]==0u);
+        const auto o=q.configure(ready(),request(),io(&f));
+        assert(o.status==Code::RecoveryRequired && o.mmioWrites==3u);
+        assert(q.requiresRecovery() && !q.mayUnmapGpuMemory());
+        assert(q.requiresIndependentResetBeforeUnmap());
+        assert(f.regs[kRbBase]!=0u); // no unsafe speculative rollback
     }
     {
         Fake f{};f.triggerGpu=false;
@@ -169,14 +211,16 @@ static void refusalAndFaults() {
         assert(q.configure(ready(),request(),io(&f)).status==Code::Ready);
         assert(q.submit().status==Code::ReadFailed);
         assert(q.abortBeforeSubmit().status==Code::Completed);
-        assert(q.mayUnmapGpuMemory());
+        assert(!q.mayUnmapGpuMemory());
+        assert(q.requiresIndependentResetBeforeUnmap());
     }
     {
         Fake f{};
         Queue q{};
         assert(q.configure(ready(),request(),io(&f)).status==Code::Ready);
         assert(q.abortBeforeSubmit().status==Code::Completed);
-        assert(q.mayUnmapGpuMemory());
+        assert(!q.mayUnmapGpuMemory());
+        assert(q.requiresIndependentResetBeforeUnmap());
         assert((f.regs[kRbCntl]&kEnable)==0u);
         assert(f.regs[kRbBase]==0u && f.regs[kRbBaseHi]==0u);
         assert(q.submit().status==Code::Denied);
