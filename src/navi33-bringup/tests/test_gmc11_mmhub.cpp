@@ -188,7 +188,7 @@ static void cancellationAndFaults() {
         f.ackOnInvalidate=false;
         assert(vm.invalidateAndActivate(4u,5u).code==Code::Timeout);
         assert(vm.requiresRecovery() && !vm.mayReleaseMappedMemory());
-        assert(f.polls==3u); // ACK wait: four polls, three delays
+        assert(f.polls==4u); // ACK wait: four delays
     }
     {
         auto p=makePlan();Fake f=fakeFor(p);Controller vm{};
