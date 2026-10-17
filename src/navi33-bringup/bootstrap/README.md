@@ -65,7 +65,54 @@ Do not attempt to disable SIP, patch SSV / BootKC or move Kexts around in
 Preboot just to make the installer start: those are high-risk changes with
 no proven Navi33 display path yet.
 
-## 3. Validation scope
+## 3. Future live test-volume AuxKC staging (explicit opt-in)
+
+`auxkc_stage.py` is executable code, but **defaults to dry-run**. It makes
+no changes unless `--stage-live` and an explicit acknowledgement are both
+supplied. On Linux CI, actual stage execution is refused.
+
+Safe plan (Linux or macOS):
+
+~~~sh
+python3 src/navi33-bringup/bootstrap/auxkc_stage.py \
+  --kext src/navi33-bringup/display/build/Navi33GOPFB.kext
+~~~
+
+For a future **booted, recoverable x86_64 TEST macOS installation only**,
+after valid Kext-signing/approval prerequisites are established:
+
+~~~sh
+sudo python3 src/navi33-bringup/bootstrap/auxkc_stage.py \
+  --kext src/navi33-bringup/display/build/Navi33GOPFB.kext \
+  --stage-live --acknowledge-this-volume THIS_RUNNING_TEST_MACOS
+~~~
+
+It verifies the Kext's Info.plist, Mach-O CPU type, code signature, and
+destination availability. It refuses to overwrite an existing installation.
+It stages a root-owned Kext using a same-volume temporary directory and asks
+`kmutil load -p` to initiate the running macOS approval/AuxKC process.
+It **never** reboots, disables SIP, patches the System/Boot KC, touches EFI,
+or claims that the driver is now loaded. macOS may reject the CI artifact's
+ad-hoc code signature; an authorized Kext-signing certificate is normally
+needed under standard security policy. `--allow-adhoc-test` only bypasses
+this script's signature-type guard, NOT macOS security enforcement.
+
+**VM limitation:** this command stages on the current running macOS volume
+only. A Kext staged on your separate Tahoe VM does not get installed into
+an unrelated future physical Hackintosh disk. Preparing the actual bare-metal
+target using the *same* bootable macOS installation/disk is a separate step,
+and must not be improvised by copying random AuxKC/Preboot files.
+
+### Recovery
+
+If a future test cannot display, the independently prepared rescue OpenCore
+profile disables `Navi33GOPFB` via `navi33-fb-off=1`, if execution reached
+the Kext at all. It does not make unsupported hardware gain a basic display.
+To remove a staged Kext, boot that target macOS via a known-good recovery
+route, remove the exact `/Library/Extensions/Navi33GOPFB.kext` bundle after
+backup, and rebuild the AuxKC through `kmutil`. Avoid removing other Kexts.
+
+## 4. Validation scope
 
 - Linux/macOS CI: unit tests of NVRAM boot profiles, configuration
   preservation, profile file writes, Kext Info.plist and Mach-O preflight.

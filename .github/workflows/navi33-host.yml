@@ -52,6 +52,8 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :IOKitPersonalities:Navi33GOPFB:IOPCIPrimaryMatch" src/navi33-bringup/display/build/Navi33GOPFB.kext/Contents/Info.plist
       - name: Preflight AuxKC Kext compatibility (no installation)
         run: python3 src/navi33-bringup/bootstrap/auxkc_preflight.py --kext src/navi33-bringup/display/build/Navi33GOPFB.kext
+      - name: Audit live macOS AuxKC staging plan (dry-run; no installation)
+        run: python3 src/navi33-bringup/bootstrap/auxkc_stage.py --kext src/navi33-bringup/display/build/Navi33GOPFB.kext
       - name: Verify Kext signing
         run: codesign --verify --verbose=2 src/navi33-bringup/display/build/Navi33GOPFB.kext
       - name: Preserve compiled Kexts as CI artifacts (NOT boot-tested)

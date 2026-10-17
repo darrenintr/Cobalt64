@@ -115,6 +115,10 @@ Source: [bootstrap/README.md](bootstrap/README.md).
   It does not edit your active `config.plist` or any EFI partition.
 - `auxkc_preflight.py` inspects the RX 7600 framebuffer Kext's Info.plist,
   x86_64 Mach-O and System KC dependency before any possible AuxKC staging.
+- `auxkc_stage.py` implements **explicitly authorized** installation into
+  the **currently running, recoverable test macOS** via `kmutil load -p`,
+  with a dry-run default; it cannot magically stage a separate bare-metal
+  target from an unrelated macOS VM.
 - The GOP bridge now validates that firmware scanout lies within PCI BAR0
   and registers doze-only power states without touching DCN3.2.1 registers.
 - macOS CI compiles and signs both independent Kexts and stores build
