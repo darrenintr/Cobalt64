@@ -48,6 +48,18 @@ int main() {
                     false,false,true,false)==Shape::BadArgument);
     assert(validate(N33_SEL_VRAM_GEOMETRY,0,0,1,64,
                     false,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_QUEUE_CENSUS,0,0,0,
+                    sizeof(n33_queue_census_status),false,false,
+                    true,false)==Shape::Valid);
+    assert(validate(N33_SEL_QUEUE_CENSUS,0,0,0,63,
+                    false,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_QUEUE_CENSUS,0,0,64,64,
+                    false,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_QUEUE_CENSUS,0,0,0,64,
+                    false,false,true,true)==Shape::BadArgument);
+    assert(validate(N33_SEL_COUNT,0,0,0,64,
+                    false,false,true,false)==Shape::Unsupported);
+    static_assert(N33_ABI_VERSION==7u,"read-only Queue0 ABI bump");
     const n33_capabilities info={N33_ABI_VERSION,sizeof(n33_capabilities),
         N33_PCI_VENDOR,N33_PCI_DEVICE,N33_GFX_IP_VERSION,N33_FAMILY_GFX1102,
         N33_CAP_PCI_INVENTORY|N33_CAP_ROM_DISCOVERY,0u,0u,0u,0u,0u};
