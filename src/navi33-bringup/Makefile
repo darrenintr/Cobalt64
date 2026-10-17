@@ -26,7 +26,7 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
     -isysroot $(SDK) -nostdlib -Xlinker -kext \
     -L$(MKSDK)/Library/x86_64 -lkmodc++ -lkmod -Wl,-no_deduplicate
 
-.PHONY: all clean host-test
+.PHONY: all clean host-test physical-io-check
 all: $(KEXT)
 
 $(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h src/Navi33LiveMmio.h src/Navi33HwProbeLogic.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33Nbio43Capacity.h src/Navi33VramSurvey.h src/Navi33Psp13Status.h src/Navi33Psp13Firmware.h src/Navi33Sdma6Status.h src/Navi33Sdma6QueueCensus.h src/Navi33Probe.hpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h src/Navi33DarwinStage.h src/Navi33StageOwner.h
@@ -40,6 +40,15 @@ $(BUILD)/Navi33NativeClient.o: src/Navi33NativeClient.cpp src/Navi33NativeClient
 $(BUILD)/Navi33DarwinStage.o: src/Navi33DarwinStage.cpp src/Navi33DarwinStage.h src/Navi33Sdma6Staging.h src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Physical IOKit Queue1 bridge is compile-checked on macOS only. Never
+# link it into the live Navi33Probe.kext until PCI, VRAM, PSP and
+# independent device recovery are implemented and audited.
+$(BUILD)/Navi33DarwinQueue1IO.o: src/Navi33DarwinQueue1IO.cpp src/Navi33DarwinQueue1IO.h src/Navi33DarwinStage.h src/Navi33Sdma6BarAdapter.h src/Navi33Sdma6MmioQueue.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+physical-io-check: $(BUILD)/Navi33DarwinQueue1IO.o
 
 $(BUILD)/Navi33DarwinDma.o: src/Navi33DarwinDma.cpp src/Navi33DarwinDma.h src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h src/Navi33Identity.h
 	@mkdir -p $(BUILD)
