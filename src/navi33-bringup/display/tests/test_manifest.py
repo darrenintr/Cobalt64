@@ -16,6 +16,8 @@ source=(root/"src/Navi33GOPFB.cpp").read_text()
 for required in (
     'PE_parse_boot_argn("navi33-fb"', 'PE_parse_boot_argn("navi33-fb-off"',
     "getConsoleInfo(&video)", "IODeviceMemory::withRange",
+    "getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0)",
+    "checkBar0(d, barBase, barSize)",
     "isConsoleDevice()", "inspectGop(", "configRead16(0x04u)"
 ):
     assert required in source, required
@@ -25,4 +27,6 @@ for forbidden in (
     "LoadAccelerator", "IOConnectCallMethod"
 ):
     assert forbidden not in source, forbidden
-print("Navi33 GOP framebuffer manifest / no-MMIO-write checks: PASS")
+bar_guard = (root/"src/Navi33BarGuard.h").read_text()
+assert "checkBar0" in bar_guard and "layout.length > barLength - offset" in bar_guard
+print("Navi33 GOP framebuffer manifest / BAR0 ownership / no-MMIO-write checks: PASS")

@@ -2,6 +2,7 @@
 // BSD-3-Clause concept attribution: see ../LICENSE-RDNA4FB.txt.
 // Works only if the UEFI GOP display engine remains programmed and live.
 #include "Navi33GOPFB.hpp"
+#include "Navi33BarGuard.h"
 #include "../../src/Navi33Identity.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
@@ -51,8 +52,27 @@ bool Navi33GOPFB::captureConsole() {
                   d.width, d.height, d.rowBytes, d.depth);
         return false;
     }
+    // Read IOPCIFamily's assigned BAR0 *resource metadata*. Do not map BAR0
+    // or enable PCI memory decode. Reject any firmware address that points
+    // outside this GPU's advertised framebuffer aperture.
+    if (!pci_) return false;
+    IODeviceMemory *bar0 = pci_->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+    const uint64_t barBase = bar0 ? static_cast<uint64_t>(bar0->getPhysicalAddress()) : 0u;
+    const uint64_t barSize = bar0 ? static_cast<uint64_t>(bar0->getLength()) : 0u;
+    const auto ownership = navi33fb::checkBar0(d, barBase, barSize);
+    if (!navi33fb::ownedByBar0(ownership)) {
+        N33FB_LOG("GOP scanout refused: BAR0 ownership check %u (base 0x%llx, span 0x%llx)",
+                  static_cast<unsigned>(ownership.status),
+                  static_cast<unsigned long long>(barBase),
+                  static_cast<unsigned long long>(barSize));
+        return false;
+    }
+
     console_ = d;
     setProperty("Navi33FB,Stage", "GOP firmware scanout only");
+    setProperty("Navi33FB,BAR0Base", barBase, 64);
+    setProperty("Navi33FB,BAR0Bytes", barSize, 64);
+    setProperty("Navi33FB,ScanoutBAR0Offset", ownership.offset, 64);
     setProperty("Navi33FB,Base", d.physicalBase, 64);
     setProperty("Navi33FB,Length", d.length, 64);
     setProperty("Navi33FB,Width", static_cast<uint64_t>(d.width), 32);

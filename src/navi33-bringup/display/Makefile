@@ -27,7 +27,7 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) -isysroot $(SDK) \
 .PHONY: all clean host-test
 all: $(KEXT)
 
-$(BUILD)/Navi33GOPFB.o: src/Navi33GOPFB.cpp src/Navi33GOPFB.hpp src/Navi33GopLayout.h ../src/Navi33Identity.h
+$(BUILD)/Navi33GOPFB.o: src/Navi33GOPFB.cpp src/Navi33GOPFB.hpp src/Navi33GopLayout.h src/Navi33BarGuard.h ../src/Navi33Identity.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -44,7 +44,7 @@ $(KEXT): $(BUILD)/Navi33GOPFB.o $(BUILD)/kmod_info.o Info.plist
 	@test -f $(KEXT)/Contents/_CodeSignature/CodeResources
 	@echo "Built (NOT INSTALLED): $(KEXT)"
 
-$(BUILD)/test-layout: tests/test_layout.cpp src/Navi33GopLayout.h
+$(BUILD)/test-layout: tests/test_layout.cpp src/Navi33GopLayout.h src/Navi33BarGuard.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_layout.cpp -o $@
 

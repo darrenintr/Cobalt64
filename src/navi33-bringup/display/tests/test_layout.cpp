@@ -1,4 +1,5 @@
 #include "../src/Navi33GopLayout.h"
+#include "../src/Navi33BarGuard.h"
 #include <cassert>
 #include <cstdio>
 #include <cstdint>
@@ -34,7 +35,19 @@ int main() {
         assert(c.red!=c.green&&c.red!=c.blue&&c.green!=c.blue);
         assert((navi33fb::channelMask(c.red)&navi33fb::channelMask(c.blue))==0u);
     }
+    using navi33fb::checkBar0;
+    using navi33fb::ownedByBar0;
+    const auto good = checkBar0(normal, 0x840000000ull, 256ull << 20);
+    assert(ownedByBar0(good) && good.offset == 0);
+    assert(ownedByBar0(checkBar0(normal, 0x83ff00000ull, 256ull << 20)));
+    assert(!ownedByBar0(checkBar0(normal, 0, 0)));
+    assert(!ownedByBar0(checkBar0(normal, 0x840001000ull, 256ull << 20)));
+    assert(!ownedByBar0(checkBar0(normal, 0x840000000ull, 0x1000u)));
+    assert(!ownedByBar0(checkBar0(normal, 0xffffffffffff0000ull, 256ull << 20)));
+    assert(!ownedByBar0(checkBar0(inspectGop(0, 0, 1920, 1080, 7680, 32),
+                                   0x840000000ull, 256ull << 20)));
+    assert(ownedByBar0(checkBar0(normal, 0x840000000ull, 0x840000ull)));
     const auto defaultChannels=navi33fb::channelMapping(0);
     assert(defaultChannels.red==2&&defaultChannels.green==1&&defaultChannels.blue==0);
-    std::puts("Navi33 GOP geometry / pitch / bounds / pixel masks: PASS (CPU-only)");
+    std::puts("Navi33 GOP geometry / BAR0 ownership / pitch / bounds / pixel masks: PASS (CPU-only)");
 }
