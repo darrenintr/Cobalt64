@@ -10,7 +10,7 @@ using namespace navi33::mmhub11;
 struct Fake {
     std::vector<uint32_t> words;
     unsigned writes=0u, polls=0u, syncs=0u, hdps=0u;
-    unsigned failAtWrite=0u;
+    unsigned failAtWrite=0u, failAgainAtWrite=0u;
     bool ackOnInvalidate=true, acquireSemaphore=true, badSync=false;
     uint64_t sem=0u,req=0u,ack=0u;
     Fake():words(65536u/4u,0u){}
@@ -29,7 +29,8 @@ static bool write(void *ctx,uint64_t off,uint32_t value) {
     auto *f=static_cast<Fake *>(ctx);
     if((off&3ull) || off/4u>=f->words.size())return false;
     ++f->writes;
-    if(f->failAtWrite==f->writes)return false;
+    if(f->failAtWrite==f->writes || f->failAgainAtWrite==f->writes)
+        return false;
     f->words[off/4u]=value;
     if(off==f->req && f->ackOnInvalidate)
         f->words[f->ack/4u]|=kInvalidateVmid0;
@@ -173,6 +174,14 @@ static void cancellationAndFaults() {
         assert(vm.mayReleaseMappedMemory());
         for(unsigned i: {1u,2u,3u,4u,5u,6u,10u,11u})
             assert(f.words[p.offsets[i]/4u]==0u);
+    }
+    {
+        auto p=makePlan();Fake f=fakeFor(p);Controller vm{};
+        f.failAtWrite=3u;
+        f.failAgainAtWrite=4u;
+        assert(vm.prepare(p,gate(),table(),callbacks(f)).code==
+               Code::RecoveryRequired);
+        assert(vm.requiresRecovery() && !vm.mayReleaseMappedMemory());
     }
     {
         auto p=makePlan();Fake f=fakeFor(p);Controller vm{};
