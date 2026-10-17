@@ -99,11 +99,13 @@ IOReturn Navi33NativeClient::externalMethod(
         return kIOReturnBadArgument;
     const bool illegalDescriptor=args->structureOutputDescriptor!=nullptr ||
         (args->structureInputDescriptor!=nullptr && !romDescriptor);
+    // is_io_connect_method always passes non-null MIG scalar arrays, even
+    // for zero counts, so scalar presence must come from the counts.
     const navi33::native_policy::Shape result = navi33::native_policy::validate(
         selector, args->scalarInputCount, args->scalarOutputCount,
         static_cast<uint32_t>(inputBytes),
         static_cast<uint32_t>(args->structureOutputSize),
-        args->scalarInput != nullptr, args->scalarOutput != nullptr,
+        args->scalarInputCount != 0u, args->scalarOutputCount != 0u,
         args->structureOutput != nullptr, illegalDescriptor);
     if (result == navi33::native_policy::Shape::Unsupported)
         return kIOReturnUnsupported; // Cannot submit or allocate GPU memory.

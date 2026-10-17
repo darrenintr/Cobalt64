@@ -48,6 +48,11 @@ assert "N33_SEL_SDMA_STATUS" in client
 assert "N33_SEL_HW_PREFLIGHT" in client
 assert "owner_->hardwarePreflight(rom,romLen)" in client
 assert "N33_SEL_HW_ROM_PREFLIGHT" in client
+# Real IOKit passes non-null scalar arrays for zero counts; pointer checks
+# rejected every struct selector with kIOReturnBadArgument on hardware.
+assert "args->scalarInput != nullptr" not in client
+assert "args->scalarOutput != nullptr" not in client
+assert "args->scalarInputCount != 0u, args->scalarOutputCount != 0u" in client
 assert "structureInputDescriptor->readBytes(" in client
 assert "IOFree(copied,romLen)" in client
 assert "Navi33Probe::hardwarePreflight" in source
