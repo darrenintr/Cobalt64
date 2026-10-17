@@ -42,8 +42,11 @@ bool Navi33NativeClient::start(IOService *provider) {
 void Navi33NativeClient::stop(IOService *provider) {
     if (dmaLock_) IOLockLock(dmaLock_);
     active_ = false;
-    owner_ = nullptr;
+    // Keep the attached provider alive until its exclusive DMA stage
+    // lease has been released. Previous order cleared owner_ too early,
+    // leaving a permanently held stage-owner epoch after client stop.
     releaseStageLocked(); // revoke IOVA before releasing provider lease
+    owner_ = nullptr;
     if (dmaLock_) IOLockUnlock(dmaLock_);
     super::stop(provider);
 }
@@ -51,8 +54,8 @@ void Navi33NativeClient::stop(IOService *provider) {
 IOReturn Navi33NativeClient::clientClose() {
     if (dmaLock_) IOLockLock(dmaLock_);
     active_ = false;
-    owner_ = nullptr;
     releaseStageLocked(); // close/client death is equivalent to RELEASE
+    owner_ = nullptr;
     if (dmaLock_) IOLockUnlock(dmaLock_);
     terminate();
     return kIOReturnSuccess;
