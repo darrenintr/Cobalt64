@@ -74,3 +74,15 @@ verify a recoverable macOS/EFI boot and ensure no unintended Kext conflict.
   staged or executed. This is still not PSP bootloader initialization.
 - Native macOS diagnostic `n33query` includes the PSP status result.
   The live query has not been exercised on RX 7600 hardware.
+
+## Stage G4: SDMA6 queue-0 readback
+
+N33N selector 9 (64-byte SDMA status) is a **read-only**, root-only
+snapshot of GC11 SDMA0 status, firmware checksum, ring control, ring
+read pointer and ring write pointer. It is inert unless
+`navi33-probe=1 navi33-client=1 navi33-sdma-read=1` and a checksum-valid
+Navi33 IP Discovery snapshot are available. `navi33-sdma-off=1`
+overrides the opt-in. Uses only validated GC11 BASE_IDX=0 DWORD offsets
+from upstream Linux gc_11_0_0_offset.h. No doorbell, firmware reset,
+VRAM writes, fences, or actual GPU jobs. Counter movement and queue
+configuration have **not** been tested on Navi33 silicon.

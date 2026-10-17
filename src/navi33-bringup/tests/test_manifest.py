@@ -29,6 +29,8 @@ client=(root/"src/Navi33NativeClient.cpp").read_text()
 assert "Navi33NativeClient::externalMethod" in client
 assert "Navi33NativeClient::clientClose" in client
 assert "N33_SEL_PSP_STATUS" in client
+assert "N33_SEL_SDMA_STATUS" in client
+assert "owner_->sdmaStatus()" in client
 assert "owner_->pspStatus()" in client
 assert "clientHasPrivilege" in client
 assert "navi33::native_policy::validate" in client
@@ -47,6 +49,9 @@ assert 'Navi33,DCNReadPlanStatus' in source
 assert 'PE_parse_boot_argn("navi33-psp-read"' in source
 assert 'PE_parse_boot_argn("navi33-psp-off"' in source
 assert "navi33::psp13::buildPlan" in source
+assert 'PE_parse_boot_argn("navi33-sdma-read"' in source
+assert 'PE_parse_boot_argn("navi33-sdma-off"' in source
+assert "navi33::sdma6live::buildPlan" in source
 assert 'Navi33,GpuQueuesImplemented' in source
 assert 'Navi33,Gmc11GartHardwareReady' in source
 assert 'Navi33,SDMA6HardwareRingReady' in source
@@ -62,7 +67,8 @@ for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
     assert forbidden not in parser, f"IP parser gained {forbidden}"
 for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h", "Navi33Gmc11Gart.h",
                  "Navi33GpuVaArena.h", "Navi33Sdma6Ring.h", "Navi33DmaScatter.h",
-                 "Navi33Psp13Status.h", "Navi33Psp13Firmware.h"):
+                 "Navi33Psp13Status.h", "Navi33Psp13Firmware.h",
+                 "Navi33Sdma6Status.h"):
     code = (root / "src" / filename).read_text()
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):

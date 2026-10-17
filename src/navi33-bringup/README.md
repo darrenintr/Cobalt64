@@ -293,3 +293,10 @@ The default response is *disabled*. Live BAR5 reads require the explicit
 sOS version mailboxes, never writes them. PSP v2.0/v2.1 firmware
 containers can be parsed and CRC-checked offline (no blobs bundled).
 This does **not** allow compute, Vulkan, Metal, or modesetting.
+
+## Stage G4: SDMA6 queue observation only
+
+The native read-only N33N user client now can return a five-register
+SDMA0 queue snapshot if `navi33-sdma-read=1` is explicitly enabled
+and `navi33-sdma-off=1` is not. No GPU work is submitted; a readable
+ring pointer does not mean GFX11, Metal or acceleration works.

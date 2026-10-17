@@ -76,5 +76,11 @@ IOReturn Navi33NativeClient::externalMethod(
         args->structureOutputSize = sizeof(status);
         return kIOReturnSuccess;
     }
+    if (selector == N33_SEL_SDMA_STATUS) {
+        const n33_sdma_status status = owner_->sdmaStatus();
+        bcopy(&status, args->structureOutput, sizeof(status));
+        args->structureOutputSize = sizeof(status);
+        return kIOReturnSuccess;
+    }
     return kIOReturnUnsupported;
 }

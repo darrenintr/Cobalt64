@@ -21,14 +21,17 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
     // Explicitly refuse the future submit/memory selectors, even if the
     // requester attempts to pass a shape resembling a supported method.
     if (selector != N33_SEL_HELLO && selector != N33_SEL_QUERY_CAPS &&
-        selector != N33_SEL_PSP_STATUS)
+        selector != N33_SEL_PSP_STATUS &&
+        selector != N33_SEL_SDMA_STATUS)
         return Shape::Unsupported;
     if (selector == N33_SEL_HELLO)
         return scalarIn == 2u && scalarOut == 3u && !structIn &&
                !structOut && haveScalarsIn && haveScalarsOut
                    ? Shape::Valid : Shape::BadArgument;
     const uint32_t expected = selector == N33_SEL_QUERY_CAPS
-        ? sizeof(n33_capabilities) : sizeof(n33_psp_status);
+        ? sizeof(n33_capabilities) :
+        selector == N33_SEL_PSP_STATUS
+        ? sizeof(n33_psp_status) : sizeof(n33_sdma_status);
     return scalarIn == 0u && scalarOut == 0u && structIn == 0u &&
            structOut == expected && haveStructOut
                ? Shape::Valid : Shape::BadArgument;

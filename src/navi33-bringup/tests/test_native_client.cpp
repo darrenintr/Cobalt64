@@ -20,6 +20,8 @@ int main() {
         assert(validate(sel,0,0,0,0,true,true,true,false)==Shape::Unsupported);
     assert(validate(N33_SEL_PSP_STATUS,0,0,0,sizeof(n33_psp_status),false,false,true,false)==Shape::Valid);
     assert(validate(N33_SEL_PSP_STATUS,0,0,0,63,false,false,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_SDMA_STATUS,0,0,0,sizeof(n33_sdma_status),false,false,true,false)==Shape::Valid);
+    assert(validate(N33_SEL_SDMA_STATUS,1,0,0,sizeof(n33_sdma_status),true,false,true,false)==Shape::BadArgument);
     const n33_capabilities info={N33_ABI_VERSION,sizeof(n33_capabilities),
         N33_PCI_VENDOR,N33_PCI_DEVICE,N33_GFX_IP_VERSION,N33_FAMILY_GFX1102,
         N33_CAP_PCI_INVENTORY|N33_CAP_ROM_DISCOVERY,0u,0u,0u,0u,0u};

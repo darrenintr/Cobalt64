@@ -59,6 +59,17 @@ int main(void) {
     } else {
         fprintf(stderr,"N33N PSP status unavailable: 0x%x\n",psprc);
     }
+    struct n33_sdma_status sdma={0};
+    size_t sdma_size=sizeof(sdma);
+    const kern_return_t sdmarc = IOConnectCallStructMethod(
+        conn, N33_SEL_SDMA_STATUS, NULL, 0u, &sdma, &sdma_size);
+    if(sdmarc==KERN_SUCCESS && sdma_size==sizeof(sdma) &&
+       sdma.abi_version==N33_ABI_VERSION && sdma.size==sizeof(sdma)) {
+        printf("SDMA0 state=%u (5=observed; 0=disabled), ring rptr=%u wptr=%u, checksum=0x%08x\n",
+               sdma.state,sdma.ring_rptr,sdma.ring_wptr,sdma.ucode_checksum);
+    } else {
+        fprintf(stderr,"N33N SDMA read unavailable: 0x%x\n",sdmarc);
+    }
     IOServiceClose(conn);
     printf("GFX11 hardware command submission: %s; Metal: %s\n",
         n33_can_submit(&caps) ? "reported READY (still verify on GPU)" : "DISABLED",
