@@ -24,11 +24,18 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         selector != N33_SEL_PSP_STATUS && selector != N33_SEL_SDMA_STATUS &&
         selector != N33_SEL_DMA_STAGE && selector != N33_SEL_DMA_STATUS &&
         selector != N33_SEL_DMA_RELEASE &&
-        selector != N33_SEL_HW_PREFLIGHT)
+        selector != N33_SEL_HW_PREFLIGHT &&
+        selector != N33_SEL_HW_ROM_PREFLIGHT)
         return Shape::Unsupported;
     if (selector == N33_SEL_HELLO)
         return scalarIn == 2u && scalarOut == 3u && !structIn &&
                !structOut && haveScalarsIn && haveScalarsOut
+                   ? Shape::Valid : Shape::BadArgument;
+    if (selector == N33_SEL_HW_ROM_PREFLIGHT)
+        return scalarIn==0u && scalarOut==0u &&
+               structIn>=64u && structIn<=4u*1024u*1024u &&
+               structOut==sizeof(n33_hw_preflight) &&
+               !haveScalarsIn && !haveScalarsOut && haveStructOut
                    ? Shape::Valid : Shape::BadArgument;
     if (selector == N33_SEL_DMA_RELEASE)
         return scalarIn==0u && scalarOut==0u && structIn==0u &&
