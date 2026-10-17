@@ -1,0 +1,81 @@
+# Navi33GOPFB — firmware framebuffer handoff experiment
+
+An independent, opt-in \`IOFramebuffer\` Kext for RX 7600 (Navi33, \`1002:7480\`).
+Developed within the Cobalt64 RDNA3 port alongside \`Navi33Probe.kext\`.
+
+**Status:** untested on Navi33/Tahoe hardware. Successful Kext compilation is
+NOT evidence that this enables the installer or desktop, and it has NO Metal
+or GPU acceleration. This path exists to make future real driver testing
+possible on a Ryzen desktop with **no backup iGPU**.
+
+## Technical scope
+
+Borrowing the architecture of
+[RDNA4FB](https://github.com/somestupidgirl/RDNA4FB) (BSD-3-Clause; license
+included), the Kext reads \`IOPlatformExpert::getConsoleInfo\` and validates
+the firmware scanout physical address, stride, dimensions and depth. It offers
+the **same existing pixel range** to IOGraphics as one fixed software 32bpp
+mode. Its \`isConsoleDevice()\` reports true. No hardware mode setting occurs.
+
+The Kext does **not** reinitialize the DCN display controller, query VRAM
+through BAR5, alter PCI COMMAND, map GPU registers, initialize firmware,
+submit shaders or enable hardware acceleration. Only the OS may write
+software-composited pixels into the provided existing framebuffer aperture.
+
+Requirements for any successful screen: the GOP framebuffer must still
+exist, PCI memory decode must already be enabled, and the display engine must
+continue scanning out from the same buffer. None can be proved by CI.
+
+## Boot arguments and recovery
+
+- \`navi33-fb=1\`: explicit opt-in (default is entirely inert).
+- \`navi33-fb-off=1\`: kill switch, takes precedence even if enabled.
+- \`navi33-fb-cmap=0..5\`: advertised channel order correction, default 0.
+
+No separate EDID, hotplug, native modeset, VBL, display sleep or hardware
+cursor support yet. Refresh metadata advertises 60Hz as a placeholder; it
+does not measure the actual GOP mode.
+
+This is a framebuffer **component of the larger GFX11 + RADV + Metal port**,
+not a substitute for GPU acceleration.
+
+## Host-side verification (Ubuntu/macOS runners, no GPU)
+
+~~~sh
+make -C src/navi33-bringup/display host-test
+~~~
+
+## macOS Kext compile only (does not install)
+
+~~~sh
+make -C src/navi33-bringup/display MKSDK=/path/to/MacKernelSDK all
+~~~
+
+Output: \`src/navi33-bringup/display/build/Navi33GOPFB.kext\`.
+
+### Bootstrap limitation
+
+Because this Kext depends on \`IOGraphicsFamily\` in the macOS System KC, it
+**cannot simply be injected through OpenCore's Kernel/Add**. Installing into
+the macOS Auxiliary Kernel Collection requires an already accessible macOS
+environment with an appropriate \`kmutil\` workflow. Bootstrapping a
+completely blank, black-screen installer remains unresolved.
+
+Do NOT try this experimental Kext on the only macOS installation or change
+\`csr-active-config\` without a verified recovery path. When there is a
+recoverable Tahoe installation and a working display route, review the
+loading method, installer compatibility and macOS security policy first.
+\`-x\` Safe Boot or the kill switch are possible recovery tools, but are
+**not guaranteed to work** if macOS itself loses GOP output earlier.
+
+## Future integration
+
+1. Share validated firmware GOP geometry with later RDNA3 display and
+   scanout modules, then make the handoff from firmware to native DCN3.2.1.
+2. Add real GFX11 firmware/queues and independently validate GPU compute.
+3. Connect RADV gfx1102, then Metal and WindowServer GPU compositing.
+4. Replace fixed software framebuffer with buffers produced by actual GPU
+   rendering, once memory-coherence and scanout ownership are proven.
+
+Nothing here calls Navi48 bring-up routines, links RDNA4 drivers or writes
+RDNA4 display registers. The existing Navi48 path is unchanged.
