@@ -31,13 +31,21 @@ assert 'Navi33Dcn321.h' in source
 assert 'Navi33FirmwareGuard.h' in source
 assert 'Navi33,DCNReadPlanStatus' in source
 assert 'Navi33,GpuQueuesImplemented' in source
+assert 'Navi33,Gmc11GartHardwareReady' in source
+assert 'Navi33,SDMA6HardwareRingReady' in source
+assert 'Navi33,TLBInvalidationEnabled' in source
+assert 'Navi33,SDMA6DoorbellEnabled' in source
 parser = (root / "src" / "Navi33Discovery.h").read_text()
 assert "struct IPEntry" in parser and "isNavi33Candidate" in parser
 for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
     assert forbidden not in parser, f"IP parser gained {forbidden}"
-for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h"):
+for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h", "Navi33Gmc11Gart.h",
+                 "Navi33GpuVaArena.h", "Navi33Sdma6Ring.h"):
     code = (root / "src" / filename).read_text()
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
         assert forbidden not in code, f"{filename} gained hardware I/O: {forbidden}"
-print("Navi33 metadata-only hardware/firmware/DCN plans: static checks passed")
+assert "kCanProgramGfxhub = false" in (root/"src/Navi33Gmc11Gart.h").read_text()
+assert "kCanSubmitToHardware = false" in (root/"src/Navi33Sdma6Ring.h").read_text()
+assert "kCanRingDoorbell = false" in (root/"src/Navi33Sdma6Ring.h").read_text()
+print("Navi33 metadata-only GART/VM/SDMA-ring/backend guards: static checks passed")

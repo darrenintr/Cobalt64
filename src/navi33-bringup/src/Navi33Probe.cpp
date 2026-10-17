@@ -10,6 +10,9 @@
 #include "Navi33Dcn321.h"
 #include "Navi33FirmwareGuard.h"
 #include "Navi33Sdma6Packet.h"
+#include "Navi33Gmc11Gart.h"
+#include "Navi33GpuVaArena.h"
+#include "Navi33Sdma6Ring.h"
 #include <libkern/c++/OSData.h>
 
 class Navi33Probe : public IOService {
@@ -79,6 +82,12 @@ bool Navi33Probe::start(IOService *provider) {
     setProperty("Navi33,FirmwareLoadingImplemented", static_cast<uint64_t>(0), 8);
     setProperty("Navi33,GpuQueuesImplemented", static_cast<uint64_t>(0), 8);
     setProperty("Navi33,DcnModeSettingImplemented", static_cast<uint64_t>(0), 8);
+    // Software page-table and ring models compile into this Kext for shared
+    // type-checking, but they do not map DMA or submit to a physical GPU.
+    setProperty("Navi33,Gmc11GartHardwareReady", static_cast<uint64_t>(0), 8);
+    setProperty("Navi33,SDMA6HardwareRingReady", static_cast<uint64_t>(0), 8);
+    setProperty("Navi33,TLBInvalidationEnabled", static_cast<uint64_t>(0), 8);
+    setProperty("Navi33,SDMA6DoorbellEnabled", static_cast<uint64_t>(0), 8);
 
     // Inspect IOPCIFamily's *assigned resource metadata* only. In particular,
     // do not call setMemoryEnable(), mapDeviceMemoryWithRegister(), or touch

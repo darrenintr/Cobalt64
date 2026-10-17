@@ -176,6 +176,50 @@ or Metal without new hardware-backed code and a recoverable test path.
 Sources: Linux `amdgpu_discovery.c`, `amdgpu_ucode.h`, and
 `dcn_3_2_1_offset.h`, all under the AMD permissive MIT-style license.
 
+## Stage 6: GMC11/GART software page tables and SDMA6 ring/fences (host tested)
+
+**No real DMA/GPU allocation, no register writes, and no Kext hardware
+submission have been added.** These are bounded, self-contained CPU-only
+components designed to make the eventual physical backend testable:
+
+- \`src/Navi33Gmc11Gart.h\` implements 64-bit 4 KiB system-memory PTE
+  formatting for RDNA3/GMC11: VALID, SYSTEM, SNOOPED, READABLE,
+  optionally WRITEABLE, and **MTYPE_UC = 3 at bits 50:48** (not GFX12's
+  bit shift). Bus/DMA addresses must be 4 KiB-aligned, already IOMMU
+  mapped/pinned by the OS, and within a conservative 48-bit range.
+  Pages are written only to a caller-provided **CPU buffer**, transactionally:
+  a bad DMA address or already-occupied slot rejects the whole batch.
+  Unmapping similarly rejects unrecognized PTEs and leaves the CPU buffer
+  unchanged. **GFXHUB/MMHUB setup and TLB flush are not implemented**.
+- \`src/Navi33GpuVaArena.h\` is a 64-slot fixed-capacity, first-fit
+  GPU virtual-address reservation ledger with power-of-two alignment,
+  fragmentation reuse and duplicate-free checks. It does not reserve
+  system RAM, pin VRAM, or install page tables into a GPU.
+- \`src/Navi33Sdma6Ring.h\` models a power-of-two, caller-owned
+  **software** queue of seven-DWORD SDMA6 linear-copy packets. It
+  implements atomic batch validation, ring wraparound, backpressure,
+  32 outstanding logical fence records, consume/peek and fence
+  completion. CPU-only tests copy bytes in test memory after decoding
+  packets. No doorbell, GPU-visible command buffer, SDMA microcode,
+  interrupts or hardware fence polling exist.
+
+Test on Linux/macOS with GCC/Clang:
+
+~~~sh
+make -C src/navi33-bringup clean host-test HOST_CXX=clang++
+~~~
+
+For a meaningful GPU execution path we still need an OS DMA mapping
+adapter, pinned buffer objects, firmware/PSP authentication and SMU,
+GFXHUB/MMHUB VM page table ownership, hardware TLB invalidation,
+SDMA6 MQD/context/ring setup, coherency handling and measured GPU
+fence/readback. **Do not feed generated PTEs/packets to a GPU yet.**
+
+Source details: Linux \`amdgpu_vm.h\`, \`amdgpu_gart.c\`,
+\`gmc_v11_0.c\`, \`amdgpu_ring.c\`, \`sdma_v6_0.c\`, and
+\`soc_v1_0_enum.h\`; AMD permissive/MIT-style licenses.
+
+
 ## Next milestones (not implemented yet)
 
 1. Provide safe runtime IP Discovery acquisition from real Navi33 TMR/flash,

@@ -20,6 +20,9 @@ jobs:
         run: make -C src/navi33-bringup clean host-test HOST_CXX=g++
       - name: Clang host tests
         run: make -C src/navi33-bringup clean host-test HOST_CXX=clang++
+      - name: Run Navi33 tests with ASan and UBSan (Clang)
+        run: |
+          make -C src/navi33-bringup clean host-test HOST_CXX=clang++             HOST_FLAGS="-std=c++17 -Wall -Wextra -Werror -pedantic -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"
       - name: Verify GOP framebuffer geometry (GCC)
         run: make -C src/navi33-bringup/display clean host-test HOST_CXX=g++
       - name: Verify GOP framebuffer geometry (Clang)
