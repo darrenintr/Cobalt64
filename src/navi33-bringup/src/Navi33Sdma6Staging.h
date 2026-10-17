@@ -82,13 +82,20 @@ inline Report prepare(const dma::Segment *segments,size_t segmentCount,
     // This is a SOFTWARE SHADOW of a GPU page table, not a live GART.
     uint64_t ptes[kPages]{};
     const gmc11::Aperture aperture{kGuestGpuVa,kBytes};
-    const gmc11::Result mapped=gmc11::mapSystemPages(
-        aperture,kGuestGpuVa,busPages,kPages,true,ptes,kPages);
-    if(mapped.code!=gmc11::Code::Pass) {
+    // Source is read-only in the prospective GPU translation. Destination,
+    // ring and fence retain write permission. All remains CPU shadow only.
+    const gmc11::Result sourceMap=gmc11::mapSystemPages(
+        aperture,kGuestGpuVa,busPages,1u,false,ptes,kPages);
+    const gmc11::Result restMap=gmc11::mapSystemPages(
+        aperture,kGuestGpuVa+kBytePage,busPages+1u,kPages-1u,
+        true,ptes,kPages);
+    if(sourceMap.code!=gmc11::Code::Pass ||
+       restMap.code!=gmc11::Code::Pass) {
         out.code=Code::RejectedGart;return out;
     }
     for(size_t i=0;i<kPages;++i)
-        if(gmc11::parseSystemPte(ptes[i]).code!=gmc11::Code::Pass) {
+        if(gmc11::parseSystemPte(ptes[i]).code!=gmc11::Code::Pass ||
+           ((ptes[i] & gmc11::kPteWriteable)!=0u)!=(i!=kSourcePage)) {
             out.code=Code::RejectedGart;return out;
         }
 
@@ -152,10 +159,28 @@ inline bool verifyInitial(const uint8_t *memory,size_t length,
         read32(ring),read32(ring+4),read32(ring+8),read32(ring+12),
         read32(ring+16),read32(ring+20),read32(ring+24)
     };
-    if(sdma6::inspectCopy(packet,kCopyWords).status!=sdma6::CopyCode::Pass ||
+    const sdma6::CopyDescription copy=sdma6::inspectCopy(packet,kCopyWords);
+    if(copy.status!=sdma6::CopyCode::Pass ||
+       copy.source!=kGuestGpuVa+kSourcePage*kBytePage ||
+       copy.destination!=kGuestGpuVa+kTargetPage*kBytePage ||
+       copy.bytes!=kBytePage ||
        read32(ring+kCopyWords*4u)!=(5u | (3u<<16u)) ||
+       read32(ring+(kCopyWords+1u)*4u)!=
+           static_cast<uint32_t>(kGuestGpuVa+kFencePage*kBytePage) ||
+       read32(ring+(kCopyWords+2u)*4u)!=
+           static_cast<uint32_t>((kGuestGpuVa+kFencePage*kBytePage)>>32u) ||
        read32(ring+(kCopyWords+3u)*4u)!=kFenceCookie ||
        read32(memory+kFencePage*kBytePage)!=0u) return false;
+    for(size_t i=kCopyWords+kFenceWords;i<kRingWords;++i)
+        if(read32(ring+i*4u)!=0u)return false;
+    const uint8_t *pt=memory+kPageTablePage*kBytePage;
+    for(size_t i=0;i<kPages;++i) {
+        const uint64_t pte=static_cast<uint64_t>(read32(pt+i*8u)) |
+                           (static_cast<uint64_t>(read32(pt+i*8u+4u))<<32u);
+        if(gmc11::parseSystemPte(pte).code!=gmc11::Code::Pass ||
+           ((pte & gmc11::kPteWriteable)!=0u)!=(i!=kSourcePage))
+            return false;
+    }
     return hash(memory,kBytePage)==r.sourceHash &&
            hash(memory+kTargetPage*kBytePage,kBytePage)==r.destinationHash;
 }
