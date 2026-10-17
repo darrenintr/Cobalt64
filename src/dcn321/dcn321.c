@@ -122,7 +122,7 @@ int dcn321_flip_primary(struct dcn321_device *d,unsigned p,const struct dcn321_s
  * serialization.  Values describe internal display state, not photons. */
 int dcn321_snapshot_pipe(struct dcn321_device *d, unsigned p,
                          struct dcn321_pipe_state *out) {
-    struct dcn321_pipe_state s = {0};
+    struct dcn321_pipe_state s = {0u, 0u, 0u, 0u, false, false, false, false, false};
     uint32_t ctl, clock, flip, lock, surf, pitch, lo, hi;
     int rc;
     if (!out || !ready(d) || p >= DCN321_PIPE_COUNT) return DCN321_ARG;
