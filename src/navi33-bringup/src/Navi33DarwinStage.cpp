@@ -32,6 +32,7 @@ void Session::release() {
     }
     dmaPrepared_=false;
     descriptorBound_=false;
+    candidatePtIova_=0u;
     if(memory_) {
         if(memoryPrepared_) (void)memory_->complete();
         memory_->release();
@@ -115,6 +116,9 @@ n33_dma_stage_status Session::prepare(IOPCIDevice *pci) {
        !staging::verifyInitial(host,staging::kBytes,report))
         return failure(N33_DMA_IMAGE_FAILED);
 
+    // Retain the *candidate* OS device-IOMMU address for future
+    // hardware verification, not as a claim of GPU physical mapping.
+    candidatePtIova_=report.candidatePageTableDmaIova;
     cached_=state(N33_DMA_STAGED);
     cached_.flags=N33_DMA_FLAG_IOMMU_MAPPED|N33_DMA_FLAG_CPU_IMAGE_READY;
     cached_.page_count=report.pages;
