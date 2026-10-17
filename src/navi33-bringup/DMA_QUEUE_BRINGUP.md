@@ -82,3 +82,42 @@ do not program VM_CONTEXT0_PAGE_TABLE_BASE_ADDR with it.
 
 References: Linux AMDGPU gmc_v11_0.c, amdgpu_gart.c, sdma_v6_0.c;
 Apple Kernel IODMACommand::synchronize and PCI device ownership APIs.
+
+
+## Stage G10: live MMHUB3 framebuffer census, N33N ABI v5
+
+Navi33VramCensus.h uses exact Linux MMHUB offsets:
+- MMHUB 3.0.0: FB_LOCATION_BASE 0x08ec, TOP 0x08ed, FB_OFFSET 0x08d7.
+- MMHUB 3.0.2: FB_LOCATION_BASE 0x086c, TOP 0x086d, FB_OFFSET 0x0857.
+
+All three values contain 24-bit fields in 16 MiB units. After checking
+checksum-valid Navi33 IP Discovery and the assigned BAR5 bounds, the
+Kext reads each register twice. It rejects unstable, overflowing or
+implausibly large values. No GPU registers or VRAM are ever written,
+no BAR0 mapping is attempted.
+
+N33N root selector 15 returns a 64-byte VRAM geometry snapshot.
+A recoverable, working EFI must explicitly opt in using the boot
+arguments navi33-probe=1 navi33-client=1 navi33-vram-read=1.
+The kill switch navi33-vram-off=1 always wins. The macOS n33vram
+CLI prints the live FB window, the independent MC FB offset and
+the PCI BAR0 assigned aperture. These are NOT free-VRAM estimates.
+
+Navi33VramBoLedger.h implements page-aligned BO suballocation inside
+an EXTERNALLY OWNED subpool, excluding firmware/GOP ranges, rejecting
+double frees or stale epochs, and never unpinning memory after GPU
+access could have started. Separate FB-location and FB-offset MC
+address candidates are produced; they are not interchangeable and
+must be verified before any GPU page-table register is programmed.
+The ledger cannot guess a free BAR0 region and does not actually
+write physical VRAM.
+
+This branch also fixes an N33N client lifecycle bug: release the
+provider-scoped DMA stage lease BEFORE clearing the provider pointer
+on clientClose()/stop(). This prevents a stale owner from blocking
+the next client.
+
+Hardware blockers remain: independently proven exclusive PCI/VRAM
+ownership, firmware/GOP allocation map, real pinned VRAM BO allocation,
+physical GART upload, verified VMID0 ownership and independent reset.
+The production Kext still has NO VRAM writing or GPU command path.
