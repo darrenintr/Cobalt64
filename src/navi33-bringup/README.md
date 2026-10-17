@@ -317,7 +317,7 @@ cached state, and `sudo n33dma --stage` requests IOMMU staging.
 The latter always calls `DMA_RELEASE` and verifies teardown before
 closing the N33N session. No GPU packets are ever submitted.
 
-## Physical RX 7600 status trial (N33N ABI v3)
+## Physical RX 7600 status trial (N33N ABI v4)
 
 This is the first **physically observable** Cobalt64 diagnostic combining
 Navi33 PSP13, SDMA6, MMHUB Context0 and GFXHUB Context0 reads in one
