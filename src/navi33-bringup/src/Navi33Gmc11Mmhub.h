@@ -30,6 +30,13 @@ constexpr uint32_t kMmhub302[kCount] = {
     0x06c0u,0x072bu,0x072cu,0x074bu,0x074cu,0x076bu,0x076cu,
     0x06e2u,0x06f4u,0x0706u,0x0729u,0x072au,0x069bu
 };
+constexpr uint32_t kGfxhubGfx1102[kCount] = {
+    0x1688u,0x16f3u,0x16f4u,0x1713u,0x1714u,0x1733u,0x1734u,
+    0x16aau,0x16bcu,0x16ceu,0x16f1u,0x16f2u,0x15d7u
+};
+// GC11 GFXHUB uses the same VMID0 Context0/PT-base bit layout but does
+// NOT acquire the MMHUB invalidate semaphore or private cache bit.
+enum class Hub : uint8_t { Mmhub=0, Gfxhub=1 };
 constexpr uint32_t kContextEnable=0x01u;
 constexpr uint32_t kContextDepth=0x06u; // depth=0 for flat GART
 constexpr uint32_t kInvalidateVmid0=1u;
@@ -54,6 +61,7 @@ enum class Code : uint8_t {
 };
 struct Plan {
     Code code=Code::NoDiscovery;
+    Hub hub=Hub::Mmhub;
     uint8_t revision=0xffu;
     uint64_t barBytes=0u;
     uint64_t offsets[kCount]{};
@@ -88,6 +96,43 @@ inline Plan planFromEntry(const IPEntry &entry,bool identifiedNavi33,
     p.code=Code::Prepared; // address plan only, NO MMIO writes
     return p;
 }
+inline Plan planGfxFromEntry(const IPEntry &entry,bool identifiedNavi33,
+                             uint64_t barBytes) {
+    Plan p{};
+    p.hub=Hub::Gfxhub;
+    p.barBytes=barBytes;
+    if(!identifiedNavi33 || entry.hwId!=ipid::GC || entry.instance!=0u ||
+       entry.numBases<1u)return p;
+    if(entry.major!=11u || entry.minor!=0u || entry.revision!=2u) {
+        p.code=Code::UnsupportedVersion;return p;
+    }
+    p.revision=2u;
+    const uint64_t base=entry.bases[0u];
+    if(!base || base==UINT64_MAX || base==UINT32_MAX ||
+       barBytes<4u){p.code=Code::InvalidBar;return p;}
+    const uint64_t last=(barBytes-4u)/4u;
+    for(size_t i=0;i<kCount;++i) {
+        if(base>last || kGfxhubGfx1102[i]>last-base) {
+            p.code=Code::InvalidBar;return p;
+        }
+        p.offsets[i]=(base+kGfxhubGfx1102[i])*4u;
+        for(size_t j=0;j<i;++j)
+            if(p.offsets[i]==p.offsets[j]) {
+                p.code=Code::InvalidPlan;return p;
+            }
+    }
+    p.code=Code::Prepared;
+    return p;
+}
+inline Plan planGfxFromDiscovery(const IPDiscovery &disc,uint64_t barBytes) {
+    Plan p{};
+    p.hub=Hub::Gfxhub;
+    if(inventory(disc).code!=InventoryCode::Pass ||
+       !disc.isNavi33Candidate())return p;
+    IPEntry gc{};
+    if(!disc.find(ipid::GC,0u,gc))return p;
+    return planGfxFromEntry(gc,true,barBytes);
+}
 inline Plan planFromDiscovery(const IPDiscovery &disc,uint64_t barBytes) {
     Plan p{};
     if(inventory(disc).code!=InventoryCode::Pass ||
@@ -98,7 +143,9 @@ inline Plan planFromDiscovery(const IPDiscovery &disc,uint64_t barBytes) {
 }
 inline bool validPlan(const Plan &p) {
     if(p.code!=Code::Prepared || p.barBytes<4u ||
-       (p.revision!=0u && p.revision!=2u))return false;
+       (p.hub!=Hub::Mmhub && p.hub!=Hub::Gfxhub) ||
+       (p.revision!=0u && p.revision!=2u) ||
+       (p.hub==Hub::Gfxhub && p.revision!=2u))return false;
     for(size_t i=0;i<kCount;++i) {
         const uint64_t off=p.offsets[i];
         if(!off || (off&3u) || off>p.barBytes ||
@@ -111,7 +158,7 @@ inline bool validPlan(const Plan &p) {
 struct Gate {
     bool dedicatedGpuOwnership=false;
     bool noActiveDisplayConsumers=false;
-    bool mmhubExclusivelyOwned=false;
+    bool vmhubExclusivelyOwned=false;
     bool noOutstandingGpuJobs=false;
     bool firmwareAndHdpVerified=false;
     bool mmhubCacheAlreadyConfigured=false;
@@ -120,7 +167,7 @@ struct Gate {
 };
 constexpr bool eligible(Gate g) {
     return g.dedicatedGpuOwnership && g.noActiveDisplayConsumers &&
-           g.mmhubExclusivelyOwned && g.noOutstandingGpuJobs &&
+           g.vmhubExclusivelyOwned && g.noOutstandingGpuJobs &&
            g.firmwareAndHdpVerified && g.mmhubCacheAlreadyConfigured &&
            g.gpuTableMemoryPinnedAndTrusted &&
            g.isolatedPowerCycleAvailable;
@@ -192,13 +239,14 @@ public:
         uint32_t ack=0u,request=0u,privateValue=0u;
         if(!io.read(io.ctx,p.offsets[static_cast<size_t>(Register::InvalidateAck)],&ack) ||
            !io.read(io.ctx,p.offsets[static_cast<size_t>(Register::InvalidateReq)],&request) ||
-           !io.read(io.ctx,p.offsets[static_cast<size_t>(Register::PrivateInvalidate)],&privateValue)) {
+           (p.hub==Hub::Mmhub &&
+            !io.read(io.ctx,p.offsets[static_cast<size_t>(Register::PrivateInvalidate)],&privateValue))) {
             r.code=Code::ReadFailure;return r;
         }
         // Never replace a running/GOP-owned MMHUB or invalidate an
         // engine 17 transaction that belongs to another driver.
         if((old[0u]&kContextEnable) || (ack&kInvalidateVmid0) ||
-           request!=0u || (privateValue&kPrivateInvalidateBit)) {
+           request!=0u || (p.hub==Hub::Mmhub && (privateValue&kPrivateInvalidateBit))) {
             r.code=Code::Busy;return r;
         }
         if(!io.syncTableForDevice(io.ctx)) {
@@ -277,20 +325,23 @@ public:
            !io_.flushHdp(io_.ctx)) {
             state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
         }
-        // MMHUB3 requires SEM acquisition before invalidate when bare-metal.
-        bool acquired=false;
-        for(unsigned i=0u;i<maxPolls;++i) {
-            ++r.polls;
-            if(!io_.read(io_.ctx,plan_.offsets[
-                       static_cast<size_t>(Register::InvalidateSem)],&v)) {
-                state_=Code::RecoveryRequired;
-                r.code=Code::RecoveryRequired;return r;
+        // MMHUB3 requires a side-effecting SEM acquire on bare metal;
+        // GFXHUB3 invalidation does NOT use this semaphore in Linux GMC11.
+        if(plan_.hub==Hub::Mmhub) {
+            bool acquired=false;
+            for(unsigned i=0u;i<maxPolls;++i) {
+                ++r.polls;
+                if(!io_.read(io_.ctx,plan_.offsets[
+                           static_cast<size_t>(Register::InvalidateSem)],&v)) {
+                    state_=Code::RecoveryRequired;
+                    r.code=Code::RecoveryRequired;return r;
+                }
+                if(v&1u){acquired=true;break;}
+                io_.delayUs(io_.ctx,delayUs);
             }
-            if(v&1u){acquired=true;break;}
-            io_.delayUs(io_.ctx,delayUs);
-        }
-        if(!acquired) {
-            state_=Code::RecoveryRequired;r.code=Code::Timeout;return r;
+            if(!acquired) {
+                state_=Code::RecoveryRequired;r.code=Code::Timeout;return r;
+            }
         }
         if(!io_.write(io_.ctx,plan_.offsets[
                   static_cast<size_t>(Register::InvalidateReq)],
@@ -309,28 +360,31 @@ public:
             if(v&kInvalidateVmid0){acknowledged=true;break;}
             io_.delayUs(io_.ctx,delayUs);
         }
-        // Linux also releases the semaphore even when ACK times out.
-        if(!io_.write(io_.ctx,plan_.offsets[
-                  static_cast<size_t>(Register::InvalidateSem)],0u)) {
-            state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
+        // Linux also releases the MMHUB semaphore on ACK timeout.
+        if(plan_.hub==Hub::Mmhub) {
+            if(!io_.write(io_.ctx,plan_.offsets[
+                      static_cast<size_t>(Register::InvalidateSem)],0u)) {
+                state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
+            }
+            ++r.writes;
         }
-        ++r.writes;
         if(!acknowledged) {
             state_=Code::RecoveryRequired;r.code=Code::Timeout;return r;
         }
-        // Linux gmc_v11_0.c performs an additional MMHUB private cache
-        // invalidation. Re-read for RMW to preserve unrelated bits.
-        if(!io_.read(io_.ctx,plan_.offsets[
-                      static_cast<size_t>(Register::PrivateInvalidate)],&v) ||
-           !io_.write(io_.ctx,plan_.offsets[
-                      static_cast<size_t>(Register::PrivateInvalidate)],
-                      v|kPrivateInvalidateBit)) {
-            state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
-        }
-        ++r.writes;
-        if(!io_.read(io_.ctx,plan_.offsets[
-                      static_cast<size_t>(Register::PrivateInvalidate)],&v)) {
-            state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
+        // Only MMHUB requires the separate private cache invalidation.
+        if(plan_.hub==Hub::Mmhub) {
+            if(!io_.read(io_.ctx,plan_.offsets[
+                          static_cast<size_t>(Register::PrivateInvalidate)],&v) ||
+               !io_.write(io_.ctx,plan_.offsets[
+                          static_cast<size_t>(Register::PrivateInvalidate)],
+                          v|kPrivateInvalidateBit)) {
+                state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
+            }
+            ++r.writes;
+            if(!io_.read(io_.ctx,plan_.offsets[
+                          static_cast<size_t>(Register::PrivateInvalidate)],&v)) {
+                state_=Code::RecoveryRequired;r.code=Code::RecoveryRequired;return r;
+            }
         }
         state_=Code::Flushed;
         r.code=Code::Flushed;
