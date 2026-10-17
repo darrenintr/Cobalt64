@@ -316,3 +316,42 @@ dedicated recovery path is validated, `sudo n33dma --status` queries
 cached state, and `sudo n33dma --stage` requests IOMMU staging.
 The latter always calls `DMA_RELEASE` and verifies teardown before
 closing the N33N session. No GPU packets are ever submitted.
+
+## Physical RX 7600 status trial (N33N ABI v3)
+
+This is the first **physically observable** Cobalt64 diagnostic combining
+Navi33 PSP13, SDMA6, MMHUB Context0 and GFXHUB Context0 reads in one
+root-only N33N call. Unlike host CI tests, its result is derived from
+the PCI device actually bound to \`Navi33Probe.kext\` on the machine.
+
+Build \`Navi33Probe.kext\` and \`tools/n33compute.c\` (CI includes both in
+the macOS artifact). Only run on a working/recoverable macOS install;
+the unsigned/ad-hoc signed Kext may require approval, and CI does not
+install it. The Kext must be loaded against PCI \`1002:7480\`.
+A known-good recovery EFI is strongly recommended for a one-GPU system.
+
+After the Kext is loaded and following explicit OpenCore boot arguments,
+run as administrator:
+
+\`\`\`sh
+# OpenCore: navi33-probe=1 navi33-client=1 navi33-hw-probe=1
+sudo ./n33compute --probe
+\`\`\`
+
+\`navi33-hw-off=1\` always disables the hardware-status probe.
+No GPU memory allocation or MMIO write is made by this new selector.
+If \`ATY,bin_image\` is missing, the result explicitly reports
+\`N33_HW_NO_ROM\` rather than fabricating register bases.
+A valid IP Discovery ROM is required to reach physical MMIO.
+
+Possible blockers include PSP13 Secure OS not alive, SDMA6 status not
+readable, busy/active shared display VM context, absent ROM metadata,
+and lack of **exclusive GPU VM/queue ownership** even when the registers
+look idle. No returned status means GPU computation has succeeded.
+
+**This version still cannot submit a physical RX 7600 shader or SDMA
+copy.** The isolated GMC11 and SDMA6 write backends remain unlinked.
+In particular, no equivalent of Linux's PSP firmware upload, exclusive
+GPU memory allocator, hardware VMID installation or reset/recovery
+contract has been verified. The diagnostic is a concrete input for
+debugging those missing pieces, not a claim to have fixed them.
