@@ -27,7 +27,7 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) -isysroot $(SDK) \
 .PHONY: all clean host-test
 all: $(KEXT)
 
-$(BUILD)/Navi33GOPFB.o: src/Navi33GOPFB.cpp src/Navi33GOPFB.hpp src/Navi33GopLayout.h src/Navi33EDID.h src/Navi33BarGuard.h ../src/Navi33Identity.h
+$(BUILD)/Navi33GOPFB.o: src/Navi33GOPFB.cpp src/Navi33GOPFB.hpp src/Navi33GopLayout.h src/Navi33EDID.h src/Navi33Pattern.h src/Navi33BarGuard.h ../src/Navi33Identity.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -46,15 +46,20 @@ $(KEXT): $(BUILD)/Navi33GOPFB.o $(BUILD)/kmod_info.o Info.plist
 
 $(BUILD)/test-layout: tests/test_layout.cpp src/Navi33GopLayout.h src/Navi33BarGuard.h
 
+$(BUILD)/test-pattern: tests/test_pattern.cpp src/Navi33Pattern.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_pattern.cpp -o $@
+
 $(BUILD)/test-edid: tests/test_edid.cpp src/Navi33EDID.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_edid.cpp -o $@
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_layout.cpp -o $@
 
-host-test: $(BUILD)/test-layout $(BUILD)/test-edid
+host-test: $(BUILD)/test-layout $(BUILD)/test-edid $(BUILD)/test-pattern
 	$(BUILD)/test-layout
 	$(BUILD)/test-edid
+	$(BUILD)/test-pattern
 	python3 tests/test_manifest.py
 
 clean:

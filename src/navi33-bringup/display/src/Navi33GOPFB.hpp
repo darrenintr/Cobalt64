@@ -49,6 +49,7 @@ public:
 private:
     bool captureConsole();
     bool readInjectedEDID();
+    bool drawTestPattern();
     void initializePowerManagement();
     static constexpr IODisplayModeID kFirmwareMode = static_cast<IODisplayModeID>(1);
     IOPCIDevice *pci_ { nullptr }; // borrowed provider, no retain needed while attached

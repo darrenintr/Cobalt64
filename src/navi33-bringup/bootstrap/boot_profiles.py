@@ -17,7 +17,8 @@ import sys
 
 APPLE_BOOT_GUID = "7C436110-AB2A-4BBB-A880-FE41995C9F82"
 CONTROLLED_KEYS = ("navi33-fb=", "navi33-fb-off=", "navi33-probe=",
-                   "navi33-dma-preflight=", "navi33-dma-off=")
+                   "navi33-dma-preflight=", "navi33-dma-off=",
+                   "navi33-fb-pattern=")
 OUTPUTS = ("recovery", "vesa-baseline", "fb-trial",
            "tahoe-firmware", "tahoe-fb-trial")
 

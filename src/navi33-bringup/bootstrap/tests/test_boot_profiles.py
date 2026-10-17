@@ -42,6 +42,7 @@ class BootProfileTests(unittest.TestCase):
                 self.assertIn("agdpmod=pikera", tokens)
                 self.assertEqual(tokens.count("navi33-probe=1"), 0)
                 self.assertNotIn("navi33-dma-preflight=1", tokens)
+                self.assertFalse(any(x.startswith("navi33-fb-pattern=") for x in tokens))
                 self.assertEqual(tokens.count("navi33-dma-off=1"), 1)
                 self.assertEqual(result["ACPI"], frozen["ACPI"])
                 if name.startswith("tahoe-"):

@@ -21,6 +21,8 @@ for required in (
     "initializePowerManagement()", "kIOPMPreventSystemSleep",
     "isConsoleDevice()", "inspectGop(", "configRead16(0x04u)",
     'getDDCBlock(', 'hasDDCConnect(', 'readInjectedEDID()', 'setStartupDisplayMode(',
+    'PE_parse_boot_argn("navi33-fb-pattern"', 'drawTestPattern()',
+    'ownedByBar0(navi33fb::checkBar0(',
     '"Navi33,EDID"', '"Navi33FB,EDIDStatus"'
 ):
     assert required in source, required

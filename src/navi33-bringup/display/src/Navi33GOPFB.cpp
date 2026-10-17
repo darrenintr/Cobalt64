@@ -4,6 +4,8 @@
 #include "Navi33GOPFB.hpp"
 #include "Navi33BarGuard.h"
 #include "Navi33EDID.h"
+#include "Navi33Pattern.h"
+#include <IOKit/IOMemoryDescriptor.h>
 #include <libkern/c++/OSData.h>
 #include "../../src/Navi33Identity.h"
 #include <IOKit/IOLib.h>
@@ -118,6 +120,13 @@ bool Navi33GOPFB::start(IOService *provider) {
     // Load optional OpenCore-injected EDID before IOGraphics attaches an
     // IODisplay. No DP AUX/I2C transactions or MMIO read occurs.
     readInjectedEDID();
+    uint32_t draw=0u;
+    if(PE_parse_boot_argn("navi33-fb-pattern",&draw,sizeof(draw)) &&
+       draw==1u) {
+        const bool drawn=drawTestPattern();
+        setProperty("Navi33FB,PatternWriteSucceeded",
+                    static_cast<uint64_t>(drawn),8);
+    }
     pci_->setProperty("model", "AMD Radeon RX 7600 (GOP fallback)");
     pci_->setProperty("device_type", "display");
 
@@ -328,4 +337,45 @@ IOReturn Navi33GOPFB::getDDCBlock(IOIndex index, UInt32 block,
     memcpy(data,edid_+offset,n);
     *length=n;
     return kIOReturnSuccess;
+}
+
+
+// Draw only the top 32 rows of the *already validated* GOP BAR0 pixel
+// buffer. Never alter GPU display registers or scanout address.
+// Opt-in visual cue for the handoff phase (can be overwritten by WindowServer).
+bool Navi33GOPFB::drawTestPattern() {
+    if(!navi33fb::valid(console_) || !pci_) return false;
+    const uint32_t rows=(console_.height<navi33fb::pattern::kStripeRows)
+                        ?console_.height:navi33fb::pattern::kStripeRows;
+    if(!rows || console_.width==0u || console_.rowBytes<console_.width*4u)
+        return false;
+    const uint64_t bytes=static_cast<uint64_t>(console_.rowBytes)*rows;
+    if(bytes>console_.length || bytes>1024u*1024u) return false;
+    // Reconfirm BAR ownership immediately before a CPU write.
+    IODeviceMemory *bar0=pci_->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+    if(!bar0 || !navi33fb::ownedByBar0(navi33fb::checkBar0(
+        console_,static_cast<uint64_t>(bar0->getPhysicalAddress()),
+        static_cast<uint64_t>(bar0->getLength()))))
+        return false;
+    IODeviceMemory *memory=IODeviceMemory::withRange(
+        console_.physicalBase,static_cast<IOByteCount>(bytes));
+    if(!memory)return false;
+    IOMemoryMap *mapping=memory->map();
+    memory->release();
+    if(!mapping)return false;
+    const uintptr_t address=static_cast<uintptr_t>(mapping->getVirtualAddress());
+    if(!address || (address & 3u)){
+        mapping->release();
+        return false;
+    }
+    auto *pixels=reinterpret_cast<volatile uint32_t *>(address);
+    const size_t stride=console_.rowBytes/4u;
+    for(uint32_t row=0;row<rows;++row){
+        for(uint32_t x=0;x<console_.width;++x)
+            pixels[static_cast<size_t>(row)*stride+x]=
+                navi33fb::pattern::at(x,console_.width);
+    }
+    mapping->release();
+    N33FB_LOG("wrote 4-colour GOP test stripe (%u rows) to BAR0 pixels; screen not verified",rows);
+    return true;
 }

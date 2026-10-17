@@ -36,9 +36,10 @@ inline Summary inspect(const uint8_t *bytes,size_t length){
         if(checksum!=0u)
             return {Status::BadChecksum,0u,0u,0u};
     }
-    const uint16_t vendor=(static_cast<uint16_t>(bytes[8])<<8u)|bytes[9];
-    const uint16_t product=static_cast<uint16_t>(bytes[10])|
-                           (static_cast<uint16_t>(bytes[11])<<8u);
+    const uint16_t vendor=static_cast<uint16_t>(
+        (static_cast<uint32_t>(bytes[8])<<8u)|bytes[9]);
+    const uint16_t product=static_cast<uint16_t>(
+        bytes[10]|(static_cast<uint32_t>(bytes[11])<<8u));
     return {Status::Ok,static_cast<uint8_t>(length/kBlockBytes),
             vendor,product};
 }

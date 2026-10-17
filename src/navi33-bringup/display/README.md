@@ -46,6 +46,13 @@ resume path exists. This is not full macOS power-management support.
 - `navi33-fb=1`: explicit opt-in (default is entirely inert).
 - `navi33-fb-off=1`: kill switch, takes precedence even if enabled.
 - `navi33-fb-cmap=0..5`: advertised channel order correction, default 0.
+- `navi33-fb-pattern=1`: **separate, optional** kernel-stage visual
+  diagnostic. After confirming the GOP scanout memory belongs to the
+  RX 7600's BAR0, write red/green/blue/white stripes to only the
+  top 32 rows of its pixel buffer. Does not reset the card, set a new
+  scanout address or write DCN/GFX register MMIO. May be invisible
+  or quickly overwritten; memory-write success does not prove pixels
+  reach the monitor. All recovery profiles clear this experimental flag.
 - Optional OpenCore GPU DeviceProperties `Navi33,EDID` (raw 128/256-byte
   monitor EDID, checked header, extension count and checksums). Exposes
   this through IOGraphics DDC without touching DP AUX or I2C registers.

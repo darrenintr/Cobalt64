@@ -24,7 +24,7 @@ def efi(root:pathlib.Path,include_weg:bool=True):
         {"BundlePath":"VirtualSMC.kext","Enabled":True}],
         "Patch":[{"Enabled":True,"Comment":"AMD kernel patch"}]},
         "NVRAM":{"Add":{APPLE_BOOT_GUID:{
-            "boot-args":"-v keepsyms=1 -radvesa navi33-fb=1 navi33-dma-preflight=1",
+            "boot-args":"-v keepsyms=1 -radvesa navi33-fb=1 navi33-fb-pattern=1 navi33-dma-preflight=1",
             "csr-active-config":b"\0\0\0\0"}}},
         "DeviceProperties":{"Add":{"PciRoot(0)":{"device-id":b"\x80\x74\0\0"}}}}
     (source/"OC"/"config.plist").write_bytes(plistlib.dumps(conf))
@@ -46,6 +46,7 @@ class PackTests(unittest.TestCase):
                 value=plistlib.loads((copied/"OC"/"config.plist").read_bytes())
                 args=value["NVRAM"]["Add"][APPLE_BOOT_GUID]["boot-args"]
                 self.assertNotIn("navi33-dma-preflight=1",args)
+                self.assertNotIn("navi33-fb-pattern=1",args)
                 self.assertIn("navi33-dma-off=1",args)
                 self.assertEqual(value["Kernel"]["Patch"],conf["Kernel"]["Patch"])
                 self.assertEqual(value["DeviceProperties"],conf["DeviceProperties"])
