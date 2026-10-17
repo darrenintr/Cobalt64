@@ -15,6 +15,8 @@
 #include "Navi33Sdma6Ring.h"
 #include "Navi33DmaScatter.h"
 #include "Navi33DarwinDma.h"
+#include "Navi33NativeABI.h"
+#include "Navi33Gfx11Command.h"
 #include <libkern/c++/OSData.h>
 
 class Navi33Probe : public IOService {
@@ -73,6 +75,10 @@ bool Navi33Probe::start(IOService *provider) {
         return false;
 
     setProperty("Navi33,Stage", "PCI inventory and supplied-ROM IP discovery only");
+    setProperty("Navi33,NativeABIVersion", static_cast<uint64_t>(N33_ABI_VERSION), 32);
+    setProperty("Navi33,NativeUserClientType", static_cast<uint64_t>(N33_UC_TYPE), 32);
+    setProperty("Navi33,NativeCapabilities", static_cast<uint64_t>(N33_CAP_PCI_INVENTORY), 32);
+    setProperty("Navi33,MetalHardwareReady", static_cast<uint64_t>(0), 8);
     setProperty("Navi33,VendorID", static_cast<uint64_t>(id.vendorId), 16);
     setProperty("Navi33,DeviceID", static_cast<uint64_t>(id.deviceId), 16);
     setProperty("Navi33,RevisionID", static_cast<uint64_t>(id.revisionId), 8);
