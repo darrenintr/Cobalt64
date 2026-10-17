@@ -116,3 +116,193 @@ int dcn321_flip_primary(struct dcn321_device *d,unsigned p,const struct dcn321_s
     /* AMD DC requires high DWORD first, then low DWORD to latch. */
     return d->io.write(d->io.cookie,a,(uint32_t)s->address)?DCN321_IO:DCN321_OK;
 }
+
+
+/* Read-only pipe inventory.  Caller must ensure BAR/ASIC lifetime and MMIO
+ * serialization.  Values describe internal display state, not photons. */
+int dcn321_snapshot_pipe(struct dcn321_device *d, unsigned p,
+                         struct dcn321_pipe_state *out) {
+    struct dcn321_pipe_state s = {0};
+    uint32_t ctl, clock, flip, lock, surf, pitch, lo, hi;
+    int rc;
+    if (!out || !ready(d) || p >= DCN321_PIPE_COUNT) return DCN321_ARG;
+#define SNAP(reg, val) do { \
+        rc = rd(d, dcn321_r_##reg, p, &(val)); if (rc) return rc; \
+    } while (0)
+    SNAP(otg_otg_control, ctl);
+    SNAP(otg_otg_clock_control, clock);
+    SNAP(otg_otg_master_update_lock, lock);
+    SNAP(otg_otg_status_frame_count, s.frame_counter);
+    SNAP(hubpreq_dcsurf_flip_control, flip);
+    SNAP(hubpreq_dcsurf_surface_control, surf);
+    SNAP(hubp_dcsurf_surface_config, s.surface_format);
+    SNAP(hubpreq_dcsurf_surface_pitch, pitch);
+    SNAP(hubpreq_dcsurf_primary_surface_address_high, hi);
+    SNAP(hubpreq_dcsurf_primary_surface_address, lo);
+#undef SNAP
+    s.otg_enabled = (ctl & DCN321_F_OTG_OTG_CONTROL_OTG_MASTER_EN_MASK) != 0;
+    s.clock_on = (clock & DCN321_F_OTG_OTG_CLOCK_CONTROL_OTG_CLOCK_ON_MASK) != 0;
+    s.update_locked = (lock &
+        (DCN321_F_OTG_OTG_MASTER_UPDATE_LOCK_OTG_MASTER_UPDATE_LOCK_MASK |
+         DCN321_F_OTG_OTG_MASTER_UPDATE_LOCK_UPDATE_LOCK_STATUS_MASK)) != 0;
+    s.flip_pending = (flip &
+        DCN321_F_HUBPREQ_DCSURF_FLIP_CONTROL_SURFACE_FLIP_PENDING_MASK) != 0;
+    s.dcc_enabled = (surf &
+        DCN321_F_HUBPREQ_DCSURF_SURFACE_CONTROL_PRIMARY_SURFACE_DCC_EN_MASK) != 0;
+    s.frame_counter &= DCN321_F_OTG_OTG_STATUS_FRAME_COUNT_OTG_FRAME_COUNT_MASK;
+    s.surface_format &= DCN321_F_HUBP_DCSURF_SURFACE_CONFIG_SURFACE_PIXEL_FORMAT_MASK;
+    s.pitch_pixels = (pitch & DCN321_F_HUBPREQ_DCSURF_SURFACE_PITCH_PITCH_MASK) + 1u;
+    s.gpu_address = ((uint64_t)hi << 32) | lo;
+    *out = s;
+    return DCN321_OK;
+}
+
+int dcn321_wait_frame_progress(struct dcn321_device *d, unsigned p,
+                               unsigned samples, uint32_t interval_us) {
+    struct dcn321_pipe_state s;
+    uint32_t count;
+    unsigned i;
+    int rc;
+    if (!ready(d) || !d->io.delay_us || p >= DCN321_PIPE_COUNT ||
+        !samples || samples > 1000u || !interval_us || interval_us > 1000000u)
+        return DCN321_ARG;
+    rc = dcn321_snapshot_pipe(d, p, &s);
+    if (rc) return rc;
+    if (!s.otg_enabled || !s.clock_on) return DCN321_PRECONDITION;
+    for (i = 0; i < samples; ++i) {
+        d->io.delay_us(d->io.cookie, interval_us);
+        rc = dcn321_read_frame(d, p, &count);
+        if (rc) return rc;
+        /* Frame counter is 24 bits; modulo subtraction handles wraparound. */
+        if (((count - s.frame_counter) & 0x00ffffffu) != 0u)
+            return DCN321_OK;
+    }
+    return DCN321_TIMEOUT;
+}
+
+struct dcn321_edit {
+    const uint32_t *registers;
+    uint32_t mask, value;
+    uint32_t mmio_dword, previous, replacement;
+};
+
+/* Stage only a linear, non-DCC, full-viewport 32bpp plane on a completely
+ * disabled OTG.  Does not set any pixel clocks, DML watermarks, MPC/OPP,
+ * DPP, VM translation, link encoder or OTG_MASTER_EN.  Caller owns the VRAM
+ * reservation, firmware handoff, concurrency and rollback of other blocks. */
+int dcn321_prepare_linear_plane(struct dcn321_device *d, unsigned p,
+                                const struct dcn321_mode *m,
+                                const struct dcn321_scanout *s,
+                                enum dcn321_pixel_order order) {
+    struct dcn321_edit edits[10];
+    uint32_t ctl, clock, lock, flip;
+    uint64_t length;
+    size_t i;
+    int rc, restore_failed = 0;
+    uint32_t crossbar;
+    const uint32_t xbar_mask =
+        DCN321_F_HUBPRET_HUBPRET_CONTROL_CROSSBAR_SRC_CB_B_MASK |
+        DCN321_F_HUBPRET_HUBPRET_CONTROL_CROSSBAR_SRC_CR_R_MASK;
+
+    if (!ready(d) || p >= DCN321_PIPE_COUNT || !m || !s ||
+        (order != DCN321_ARGB8888 && order != DCN321_ABGR8888))
+        return DCN321_ARG;
+    rc = dcn321_validate_mode(m);
+    if (rc) return rc;
+    if (!s->address || (s->address & 255u) || !s->pitch_pixels ||
+        s->pitch_pixels > 16384u || m->width > 16383u ||
+        m->height > 16383u || s->pitch_pixels < m->width ||
+        s->height < m->height || s->height > 16383u)
+        return DCN321_ARG;
+    length = (uint64_t)s->pitch_pixels * (uint64_t)s->height * 4u;
+    if (s->address < d->vram_base || s->address >= d->vram_limit ||
+        length > d->vram_limit - s->address)
+        return DCN321_RANGE;
+    if (!d->armed) return DCN321_DISABLED;
+
+    rc = rd(d, dcn321_r_otg_otg_control, p, &ctl);
+    if (rc) return rc;
+    rc = rd(d, dcn321_r_otg_otg_clock_control, p, &clock);
+    if (rc) return rc;
+    rc = rd(d, dcn321_r_otg_otg_master_update_lock, p, &lock);
+    if (rc) return rc;
+    rc = rd(d, dcn321_r_hubpreq_dcsurf_flip_control, p, &flip);
+    if (rc) return rc;
+    if ((ctl & DCN321_F_OTG_OTG_CONTROL_OTG_MASTER_EN_MASK) ||
+        !(clock & DCN321_F_OTG_OTG_CLOCK_CONTROL_OTG_CLOCK_ON_MASK) ||
+        (lock & (DCN321_F_OTG_OTG_MASTER_UPDATE_LOCK_OTG_MASTER_UPDATE_LOCK_MASK |
+                 DCN321_F_OTG_OTG_MASTER_UPDATE_LOCK_UPDATE_LOCK_STATUS_MASK)) ||
+        (flip & (DCN321_F_HUBPREQ_DCSURF_FLIP_CONTROL_SURFACE_UPDATE_LOCK_MASK |
+                 DCN321_F_HUBPREQ_DCSURF_FLIP_CONTROL_SURFACE_FLIP_PENDING_MASK)))
+        return DCN321_PRECONDITION;
+
+    /* Linux dcn20/dcn32 hubp uses pixel format 8 for ARGB/ABGR8888,
+     * PITCH=surface_pitch-1, zero META_PITCH with DCC disabled. */
+    crossbar = order == DCN321_ARGB8888 ?
+        ((2u << DCN321_F_HUBPRET_HUBPRET_CONTROL_CROSSBAR_SRC_CB_B_SHIFT) |
+         (3u << DCN321_F_HUBPRET_HUBPRET_CONTROL_CROSSBAR_SRC_CR_R_SHIFT)) :
+        ((3u << DCN321_F_HUBPRET_HUBPRET_CONTROL_CROSSBAR_SRC_CB_B_SHIFT) |
+         (2u << DCN321_F_HUBPRET_HUBPRET_CONTROL_CROSSBAR_SRC_CR_R_SHIFT));
+
+#define STEP(i, reg, bits, data) do { \
+        edits[i].registers = dcn321_r_##reg; \
+        edits[i].mask = (bits); edits[i].value = (data); \
+    } while (0)
+    STEP(0, hubpreq_dcsurf_surface_control,
+         DCN321_F_HUBPREQ_DCSURF_SURFACE_CONTROL_PRIMARY_SURFACE_DCC_EN_MASK |
+         DCN321_F_HUBPREQ_DCSURF_SURFACE_CONTROL_PRIMARY_SURFACE_TMZ_MASK, 0u);
+    STEP(1, hubp_dcsurf_tiling_config,
+         DCN321_F_HUBP_DCSURF_TILING_CONFIG_SW_MODE_MASK, 0u);
+    STEP(2, hubp_dcsurf_surface_config,
+         DCN321_F_HUBP_DCSURF_SURFACE_CONFIG_SURFACE_PIXEL_FORMAT_MASK |
+         DCN321_F_HUBP_DCSURF_SURFACE_CONFIG_ROTATION_ANGLE_MASK |
+         DCN321_F_HUBP_DCSURF_SURFACE_CONFIG_H_MIRROR_EN_MASK, 8u);
+    STEP(3, hubpret_hubpret_control, xbar_mask, crossbar);
+    STEP(4, hubpreq_vmid_settings_0,
+         DCN321_F_HUBPREQ_VMID_SETTINGS_0_VMID_MASK, 0u);
+    STEP(5, hubpreq_dcsurf_surface_pitch,
+         DCN321_F_HUBPREQ_DCSURF_SURFACE_PITCH_PITCH_MASK |
+         DCN321_F_HUBPREQ_DCSURF_SURFACE_PITCH_META_PITCH_MASK,
+         s->pitch_pixels - 1u);
+    STEP(6, hubp_dcsurf_pri_viewport_start,
+         DCN321_F_HUBP_DCSURF_PRI_VIEWPORT_START_PRI_VIEWPORT_X_START_MASK |
+         DCN321_F_HUBP_DCSURF_PRI_VIEWPORT_START_PRI_VIEWPORT_Y_START_MASK, 0u);
+    STEP(7, hubp_dcsurf_pri_viewport_dimension,
+         DCN321_F_HUBP_DCSURF_PRI_VIEWPORT_DIMENSION_PRI_VIEWPORT_WIDTH_MASK |
+         DCN321_F_HUBP_DCSURF_PRI_VIEWPORT_DIMENSION_PRI_VIEWPORT_HEIGHT_MASK,
+         ((uint32_t)m->height << 16u) | m->width);
+    STEP(8, hubpreq_dcsurf_primary_surface_address_high, UINT32_MAX,
+         (uint32_t)(s->address >> 32u));
+    STEP(9, hubpreq_dcsurf_primary_surface_address, UINT32_MAX,
+         (uint32_t)s->address);
+#undef STEP
+
+    /* Snapshot the entire transaction BEFORE its first write.  Prevent a
+     * bad BAR boundary or preflight read error from partially modifying HW. */
+    for (i = 0; i < 10u; ++i) {
+        rc = address(d, edits[i].registers, p, &edits[i].mmio_dword);
+        if (rc) return rc;
+        if (d->io.read(d->io.cookie, edits[i].mmio_dword,
+                       &edits[i].previous))
+            return DCN321_IO;
+        edits[i].replacement =
+            (edits[i].previous & ~edits[i].mask) |
+            (edits[i].value & edits[i].mask);
+    }
+    for (i = 0; i < 10u; ++i) {
+        if (d->io.write(d->io.cookie, edits[i].mmio_dword,
+                        edits[i].replacement)) {
+            size_t j;
+            /* Restore in forward order to preserve high-then-low latch
+             * semantics for the surface MC address.  The failed write may
+             * have reached HW, so include its register in compensation. */
+            for (j = 0; j <= i; ++j) {
+                if (d->io.write(d->io.cookie, edits[j].mmio_dword,
+                                edits[j].previous))
+                    restore_failed = 1;
+            }
+            return restore_failed ? DCN321_ROLLBACK : DCN321_IO;
+        }
+    }
+    return DCN321_OK;
+}
