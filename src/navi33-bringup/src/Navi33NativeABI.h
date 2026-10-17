@@ -11,7 +11,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 3u /* adds owned, opt-in DMA staging selectors */
+#define N33_ABI_VERSION 4u /* adds owned, opt-in DMA staging selectors */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -32,7 +32,8 @@ enum n33_selector {
   N33_SEL_CTX_CREATE=5, N33_SEL_SUBMIT=6, N33_SEL_WAIT=7,
   N33_SEL_PSP_STATUS=8, N33_SEL_SDMA_STATUS=9,
   N33_SEL_DMA_STAGE=10, N33_SEL_DMA_STATUS=11,
-  N33_SEL_DMA_RELEASE=12, N33_SEL_HW_PREFLIGHT=13, N33_SEL_COUNT=14
+  N33_SEL_DMA_RELEASE=12, N33_SEL_HW_PREFLIGHT=13, N33_SEL_HW_ROM_PREFLIGHT=14,
+  N33_SEL_COUNT=15
 };
 // PSP status is deliberately read-only, never a readiness flag for GFX.
 enum n33_psp_state {
