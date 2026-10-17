@@ -14,6 +14,9 @@ struct Fake {
     std::array<uint32_t,32768> regs{};
     std::vector<uint8_t> mem=std::vector<uint8_t>(staging::kBytes);
     h::Plan mm{},gfx{};
+    std::array<uint64_t,vram_root::kRootWords> rootPtes{};
+    queue_owner::Registry lease{};
+    bool corruptRoot=false;
     unsigned writes=0u;
     bool failCopy=false,failAck=false,failQueue=false;
     Fake() {
@@ -100,9 +103,29 @@ static p::Isolation isolation() {
     g.deviceCacheMaintenanceAvailable=true;g.exclusiveSdma0Queue=true;
     g.independentPowerCycleAndRecovery=true;return g;
 }
+static bool readVramRoot(void *v,uint64_t addr,uint64_t *out) {
+    Fake &f=*static_cast<Fake*>(v);
+    if(!out || addr<0x400000ull || (addr&7ull) ||
+       (addr-0x400000ull)/8u>=f.rootPtes.size())return false;
+    *out=f.rootPtes[(addr-0x400000ull)/8u];return true;
+}
+static vram_root::Reservation rootReservation() {
+    vram_root::Reservation r{};
+    r.mcVramStart=0x200000ull;
+    r.mcVramBytes=0x800000ull;
+    r.ownedBoMcStart=0x400000ull;
+    r.ownedBoBytes=4096ull;
+    r.rootMcAddress=0x400000ull;
+    return r;
+}
 static p::Report run(Fake &f,p::Isolation e=isolation()) {
-    return p::run(e,f.mm,f.gfx,table(),request(),hubIO(f),hubIO(f),
-                  sdmaIO(f),4u,4u);
+    const auto t=table();
+    for(size_t i=0;i<staging::kPages;++i)
+        f.rootPtes[i]=t.entries[i]; // model a separately pinned VRAM BO
+    if(f.corruptRoot)f.rootPtes[100u]=0xdeadbeefull;
+    return p::run(e,f.mm,f.gfx,t,request(),rootReservation(),
+                  readVramRoot,&f,f.lease,&f,
+                  hubIO(f),hubIO(f),sdmaIO(f),4u,4u);
 }
 int main() {
     static_assert(p::kWritePathCompiled,"Only a fake backend can enable unsafe code");
@@ -122,6 +145,16 @@ int main() {
         assert(r.ringWasSubmitted && r.fourKiBCopyVerified);
         assert(r.observedFence==staging::kFenceCookie);
         assert(!r.stagingMayBeReleased && r.physicalResetBeforeRelease);
+        assert(f.lease.phase()==queue_owner::Phase::GpuMayHaveFetched);
+        const unsigned written=f.writes;
+        assert(run(f).verdict==p::Verdict::Refused);
+        assert(f.writes==written); // second job cannot reprogram Queue0
+    }
+    {
+        Fake f;f.corruptRoot=true;
+        assert(run(f).verdict==p::Verdict::Refused);
+        assert(f.writes==0u);
+        assert(f.lease.phase()==queue_owner::Phase::Available);
     }
     {
         Fake f;f.failQueue=true;auto r=run(f);
