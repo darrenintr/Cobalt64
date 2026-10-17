@@ -242,3 +242,44 @@ to the NBIO capacity/VRAM uploader prototype). No real silicon compute.
 - The diagnostic is not sufficient to enable unsafe GMC11 or SDMA writes.
   No real RX7600 SDMA COPY/FENCE, GPU BO ownership, or Metal compute proof
   exists at this stage.
+
+## Stage G14: independent SDMA0 Queue1 + GMC11 VMID1 host transport
+
+This branch replaces the previous **VMID1-with-Queue0** test mismatch
+with Queue1's actual register bank and a matching two-hub VM context.
+
+- SDMA0 Queue1 RB_CNTL=0x00d8, BASE=0x00d9, RPTR=0x00db,
+  WPTR=0x00dd, DOORBELL=0x00ea, MINOR_PTR_UPDATE=0x010d.
+  They are in the GFX11 GC BASE_IDX0 bank and differ from the Queue0
+  registers by 0x58 DWORDs. The BAR5 adapter validates the selected
+  bank and refuses Queue0 register writes by a Queue1-only adapter.
+- GMC11 MMHUB v3.0.2 Context1: CNTL=0x06c1, TABLE_LO=0x072d,
+  START_LO=0x074d, END_LO=0x076d. GFXHUB gfx1102 Context1:
+  CNTL=0x1689, TABLE_LO=0x16f5, START_LO=0x1715,
+  END_LO=0x1735. Context0 remains untouched in synthetic tests.
+  Invalidation register **addresses are shared**; the requested/acked
+  VMID bit is 2 for VMID1, not 1 for VMID0.
+- The isolated COPY/FENCE orchestrator rejects mismatched VMIDs,
+  Queue1 without an independent ownership attestation, or one
+  incorrectly substituted Queue0 register bank. Host fake-GPU tests
+  exercise MMHUB1 + GFXHUB1 + SDMA0 Queue1 and check the 4096-byte
+  output. They also prove no Queue0 ownership flag is required by the
+  *software* Queue1 path.
+- Any attempted GMC11 or SDMA MMIO write permanently quarantines the
+  related GPU-visible allocations in the controller and device ledger.
+  Even a clean-looking abort cannot justify IOMMU/VRAM unpinning,
+  reinitialization or reuse without externally validated GPU reset.
+- Both experimental write-capable components remain compiled only
+  with explicit unsafe build macros in the **offline host harness**.
+  Neither writer is linked into the macOS Navi33Probe Kext.
+
+This is NOT yet RX7600 hardware computation, 3D acceleration or Metal.
+The booleans in the isolation contract are fake test evidence and cannot
+replace actual PCI exclusion, PSP/SDMA firmware initialization,
+per-VMID page-table depth/permissions review, GPU IOMMU/VRAM ownership,
+silicon TLB/cache behavior, a physical fence, or a provable GPU reset.
+Queue1 still shares SDMA0 silicon and firmware with Queue0: using a
+different queue does NOT make the GPU independent of its display owner.
+
+Authoritative register references: Linux AMDGPU headers
+gc_11_0_0_offset.h, mmhub_3_0_2_offset.h and mmhub_3_0_0_offset.h.
