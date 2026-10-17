@@ -9,6 +9,7 @@
 #include <IOKit/IOKitLib.h>
 #include <mach/mach.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -31,8 +32,10 @@ static const char *why(uint32_t value) {
     }
 }
 int main(int argc,char **argv) {
-    if(argc!=2 || strcmp(argv[1],"--probe")!=0) {
-        fputs("Usage: sudo n33compute --probe (read-only hardware diagnostic)\n",stderr);
+    const int usingFile=(argc==3 && strcmp(argv[1],"--rom")==0);
+    if(!usingFile && (argc!=2 || strcmp(argv[1],"--probe")!=0)) {
+        fputs("Usage: sudo n33compute --probe | --rom rx7600.rom\n"
+              "Both operations are read-only hardware diagnostics.\n",stderr);
         return 1;
     }
     if(geteuid()!=0) {
@@ -57,10 +60,35 @@ int main(int argc,char **argv) {
         fputs("N33N ABI version mismatch.\n",stderr);
         IOServiceClose(conn);return 5;
     }
+    void *rom=NULL;
+    size_t romLen=0u;
+    if(usingFile) {
+        FILE *fp=fopen(argv[2],"rb");
+        if(!fp) {
+            perror("Cannot open RX7600 VBIOS");
+            IOServiceClose(conn);return 8;
+        }
+        long len=-1;
+        if(fseek(fp,0L,SEEK_END)==0)len=ftell(fp);
+        if(len<64L || len>4L*1024L*1024L ||
+           fseek(fp,0L,SEEK_SET)!=0) {
+            fputs("VBIOS ROM must be 64 bytes to 4 MiB.\n",stderr);
+            fclose(fp);IOServiceClose(conn);return 8;
+        }
+        romLen=(size_t)len;
+        rom=malloc(romLen);
+        if(!rom || fread(rom,1u,romLen,fp)!=romLen) {
+            fputs("Failed to read VBIOS.\n",stderr);
+            free(rom);fclose(fp);IOServiceClose(conn);return 8;
+        }
+        fclose(fp);
+    }
     struct n33_hw_preflight hw={0};
     size_t size=sizeof(hw);
-    kr=IOConnectCallStructMethod(conn,N33_SEL_HW_PREFLIGHT,
-                                 NULL,0u,&hw,&size);
+    kr=IOConnectCallStructMethod(conn,
+        usingFile?N33_SEL_HW_ROM_PREFLIGHT:N33_SEL_HW_PREFLIGHT,
+        rom,romLen,&hw,&size);
+    free(rom);
     IOServiceClose(conn);
     if(kr!=KERN_SUCCESS || size!=sizeof(hw) ||
        hw.abi_version!=N33_ABI_VERSION ||
