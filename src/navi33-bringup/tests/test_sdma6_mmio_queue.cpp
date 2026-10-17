@@ -10,7 +10,7 @@ using namespace navi33;
 using namespace navi33::sdma6_mmio;
 
 struct Fake {
-    uint32_t regs[256]{};
+    uint32_t regs[512]{};
     std::vector<uint8_t> mem;
     unsigned writes=0u, delays=0u, before=0u, after=0u;
     unsigned reads=0u, failWriteAt=0u;
@@ -29,7 +29,7 @@ struct Fake {
 };
 static bool readReg(void *p,uint32_t r,uint32_t *value) {
     auto *f=static_cast<Fake *>(p);
-    if(!value || r>=256u)return false;
+    if(!value || r>=512u)return false;
     ++f->reads;
     *value=f->regs[r];
     // Change the second snapshot, or the later pre-write cross-check.
@@ -43,14 +43,15 @@ static bool readReg(void *p,uint32_t r,uint32_t *value) {
 }
 static bool writeReg(void *p,uint32_t r,uint32_t value) {
     auto *f=static_cast<Fake *>(p);
-    if(r>=256u)return false;
+    if(r>=512u)return false;
     ++f->writes;
     if(f->failWriteAt==f->writes && !f->failWriteAfterCommit)
         return false;
     f->regs[r]=value;
     if(f->failWriteAt==f->writes && f->failWriteAfterCommit)
         return false; // device accepted MMIO despite software error
-    if(r==kWptr && value==kCommandsBytes && f->triggerGpu) {
+    if((r==kWptr || r==kWptr+kQueue1DwordDelta) &&
+       value==kCommandsBytes && f->triggerGpu) {
         if(f->copyData)
             for(size_t i=0;i<staging::kBytePage;++i)
                 f->mem[staging::kTargetPage*staging::kBytePage+i]=
@@ -58,7 +59,7 @@ static bool writeReg(void *p,uint32_t r,uint32_t value) {
         if(f->writeFence)
             staging::write32(f->mem.data()+staging::kFencePage*
                              staging::kBytePage,staging::kFenceCookie);
-        f->regs[kRptr]=value;
+        f->regs[kRptr+(r==kWptr ? 0u : kQueue1DwordDelta)]=value;
     }
     return true;
 }
@@ -101,6 +102,7 @@ static void vmidIsolation() {
     auto p=ready();
     auto r=request();
     r.vmid=1u;
+    r.queueIndex=1u;
     // VMID0 eligibility must NOT authorize hardware VMID1.
     assert(q.configure(p,r,io(&f)).status==Code::Denied);
     assert(f.writes==0u);
@@ -108,15 +110,21 @@ static void vmidIsolation() {
     assert(q.configure(p,r,io(&f)).status==Code::Denied);
     assert(f.writes==0u);
     p.vmid1ExclusivelyOwned=true;
+    assert(q.configure(p,r,io(&f)).status==Code::Denied);
+    p.queue1ExclusivelyOwned=true;
     auto a=q.configure(p,r,io(&f));
     assert(a.status==Code::Ready);
-    assert(((f.regs[kRbCntl]&kVmidMask)>>24u)==1u);
+    assert(((f.regs[kRbCntl+kQueue1DwordDelta]&kVmidMask)>>24u)==1u);
     a=q.submit();
     assert(a.status==Code::Submitted);
-    assert(((f.regs[kRbCntl]&kVmidMask)>>24u)==1u);
+    assert(((f.regs[kRbCntl+kQueue1DwordDelta]&kVmidMask)>>24u)==1u);
+    assert(f.regs[kWptr+kQueue1DwordDelta]==kCommandsBytes);
+    assert(f.regs[kRbCntl]==0u && f.regs[kWptr]==0u);
     assert(q.waitAndVerify(3u).status==Code::Completed);
     assert(q.stopAfterCompleted().status==Code::Completed);
     assert(!q.mayUnmapGpuMemory());
+    r.vmid=0u;
+    assert(!validRequest(r));
     r.vmid=2u;
     assert(!validRequest(r)); // only modelled VMID0/1
 }
