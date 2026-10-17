@@ -16,6 +16,12 @@ public:
     ~Session() { release(); }
     n33_dma_stage_status prepare(IOPCIDevice *pci);
     n33_dma_stage_status snapshot() const;
+    // Kernel-only diagnostic data, never copied to N33N userspace.
+    // IOVA alone cannot authorize GMC11 page-table register writes.
+    uint64_t candidateTableDeviceIova() const {
+        return dmaPrepared_ && memoryPrepared_ &&
+               cached_.state==N33_DMA_STAGED ? candidatePtIova_ : 0u;
+    }
     void release();
 
 private:
@@ -25,6 +31,7 @@ private:
     bool memoryPrepared_=false;
     bool descriptorBound_=false;
     bool dmaPrepared_=false;
+    uint64_t candidatePtIova_=0u;
     n33_dma_stage_status cached_{};
     n33_dma_stage_status failure(n33_dma_stage_state code);
 };
