@@ -23,6 +23,10 @@ jobs:
       - name: Run Navi33 tests with ASan and UBSan (Clang)
         run: |
           make -C src/navi33-bringup clean host-test HOST_CXX=clang++             HOST_FLAGS="-std=c++17 -Wall -Wextra -Werror -pedantic -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"
+      - name: Verify separate gfx1102 ABI with C11 compiler
+        run: |
+          printf '#include "src/navi33-bringup/src/Navi33NativeABI.h"\nint main(void){struct n33_capabilities c={0};return n33_can_submit(&c);}\n' | cc -std=c11 -Wall -Wextra -Werror -pedantic -x c -I. - -o /tmp/test-n33abi
+          /tmp/test-n33abi
       - name: Verify GOP framebuffer geometry (GCC)
         run: make -C src/navi33-bringup/display clean host-test HOST_CXX=g++
       - name: Verify GOP framebuffer geometry (Clang)
