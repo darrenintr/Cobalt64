@@ -151,7 +151,9 @@ public:
         return {Code::NotBuilt,0u,0u,0u,0u,0u};
 #else
         Observation result{};
-        if(state_!=Code::Denied) {result.status=Code::Busy;return result;}
+        if(state_!=Code::Denied || touchedHardware_) {
+            result.status=Code::Busy;return result;
+        }
         if(!eligible(gate)) {result.status=Code::Denied;return result;}
         if(!validRequest(req) || !io.read || !io.write ||
            !io.beforeGpu || !io.afterGpu || !io.readByte ||
@@ -244,6 +246,16 @@ public:
             if(old[i]!=snapshotOld[i]) {
                 result.status=Code::Unstable;return result;
             }
+        }
+        // After validating packet contents and all saved registers, check
+        // the entire queue (including doorbell) again. This does not
+        // eliminate races; only independent PCI ownership can do that.
+        QueueSnapshot finalCheck{};
+        if(!readQueueSnapshot(io,finalCheck)) {
+            result.status=Code::ReadFailed;return result;
+        }
+        if(!sameQueueSnapshot(second,finalCheck)) {
+            result.status=Code::Unstable;return result;
         }
         // An MMIO callback returning "false" could still have written
         // silicon. From the first attempt onward the ring and its DMA
