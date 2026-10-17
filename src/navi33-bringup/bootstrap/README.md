@@ -169,3 +169,51 @@ backup, and rebuild the AuxKC through `kmutil`. Avoid removing other Kexts.
 - Apple's kmutil manual: https://keith.github.io/xcode-man-pages/kmutil.8.html
 - OpenCore NVRAM configuration: https://github.com/acidanthera/OpenCorePkg
 - WhateverGreen -radvesa: https://github.com/acidanthera/WhateverGreen
+
+## Physical RX7600 N33N hardware-status test EFI (experimental; separate USB)
+
+The read-only \`Navi33Probe.kext\` uses only IOPCIFamily and kernel
+classes, **not** IOGraphicsFamily like the display Kext. A separate
+OpenCore test EFI can therefore attempt injecting *Navi33Probe* only.
+This is NOT a working graphics Kext and is not guaranteed to load on
+the target Tahoe kernel. Do not inject the separate \`Navi33GOPFB.kext\`
+through OpenCore's Kernel/Add.
+
+On Linux/macOS, after downloading the CI-built \`Navi33Probe.kext\`
+and \`n33compute\` binary, copy your known-good EFI directory to a
+separate **non-boot** working folder. Then run:
+
+\`\`\`sh
+python3 src/navi33-bringup/bootstrap/build_hw_probe_efi.py \
+  --source-efi /path/to/your/copied/EFI \
+  --kext /path/to/Navi33Probe.kext \
+  --output-dir /path/to/new/navi33-hw-probe-efis
+\`\`\`
+
+The program creates TWO separate subdirectories:
+
+- \`probe/EFI\`: one additional **read-only** Navi33Probe.kext entry
+  and \`navi33-probe=1 navi33-client=1 navi33-hw-probe=1\`.
+- \`recovery/EFI\`: source EFI with no Navi33Probe injection and
+  \`navi33-hw-off=1 navi33-client-off=1\`.
+
+Both profiles set \`navi33-dma-off=1\`,
+\`navi33-dma-stage-off=1\`, and \`navi33-fb-off=1\`;
+no GPU write/test firmware command is enabled. They are **not**
+entries in the same OpenCore picker; each EFI directory must be
+placed on a DIFFERENT bootable FAT32 USB after manual inspection.
+Never overwrite the only working EFI. The original source directory
+is not modified.
+
+Once a macOS boot with the probe Kext loaded is successful, run:
+
+\`\`\`sh
+sudo ./n33compute --probe
+\`\`\`
+
+It reports actual PSP13/SDMA6/MMHUB/GFXHUB readbacks or a precise
+failure reason. No physical GPU copy, Metal, SDMA ring enabling, or
+display acceleration is implemented in that tool. Kext injection
+is subject to macOS security, trust and signing policy; a CI-built
+ad-hoc-signed Kext may not be accepted without a separately
+configured, approved testing environment.
