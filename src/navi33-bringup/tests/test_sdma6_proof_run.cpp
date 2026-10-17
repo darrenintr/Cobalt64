@@ -174,8 +174,9 @@ int main() {
         assert(f.lease.phase()==queue_owner::Phase::Available);
     }
     {
-        Fake f(true);
-        const auto r=run(f);
+        Fake f(true);auto e=isolation();
+        e.exclusiveSdma0Queue=false; // firmware may own Queue0
+        const auto r=run(f,e);
         assert(r.verdict==p::Verdict::CopiedButVmStillActive);
         assert(r.ringWasSubmitted && r.fourKiBCopyVerified);
         assert(r.observedFence==staging::kFenceCookie);
@@ -185,6 +186,14 @@ int main() {
         assert(f.regs[s::kRbCntl+s::kQueue1DwordDelta]==0u);
         assert(f.lease.phase()==queue_owner::Phase::GpuMayHaveFetched);
         assert(f.rootArena.isQuarantined());
+    }
+    {
+        Fake f(true);
+        // Both hubs must refer to one exact VMID for the Queue1 packet.
+        f.gfx.vmid=0u;
+        const auto r=run(f);
+        assert(r.verdict==p::Verdict::Refused && f.writes==0u);
+        assert(f.lease.phase()==queue_owner::Phase::Available);
     }
     {
         Fake f;assert(f.rootArena.release(&f,f.rootToken));
