@@ -12,6 +12,7 @@ struct Fake {
     unsigned writes=0u, polls=0u, syncs=0u, hdps=0u;
     unsigned failAtWrite=0u, failAgainAtWrite=0u;
     bool ackOnInvalidate=true, acquireSemaphore=true, badSync=false;
+    bool failAfterCommit=false;
     uint32_t vmidMask=kInvalidateVmid0;
     uint64_t sem=0u,req=0u,ack=0u;
     Fake():words(65536u/4u,0u){}
@@ -30,9 +31,11 @@ static bool write(void *ctx,uint64_t off,uint32_t value) {
     auto *f=static_cast<Fake *>(ctx);
     if((off&3ull) || off/4u>=f->words.size())return false;
     ++f->writes;
-    if(f->failAtWrite==f->writes || f->failAgainAtWrite==f->writes)
-        return false;
+    const bool failing=f->failAtWrite==f->writes ||
+                       f->failAgainAtWrite==f->writes;
+    if(failing && !f->failAfterCommit)return false;
     f->words[off/4u]=value;
+    if(failing && f->failAfterCommit)return false;
     if(off==f->req && f->ackOnInvalidate)
         f->words[f->ack/4u]|=f->vmidMask;
     return true;
@@ -256,7 +259,9 @@ static void cancellationAndFaults() {
         assert(vm.prepare(p,gate(),table(),callbacks(f)).code==Code::Prepared);
         auto o=vm.abortBeforeActivation();
         assert(o.code==Code::Aborted && o.writes==8u);
-        assert(vm.mayReleaseMappedMemory());
+        assert(!vm.mayReleaseMappedMemory());
+        assert(vm.requiresIndependentResetBeforeUnmap());
+        assert(vm.prepare(p,gate(),table(),callbacks(f)).code==Code::Busy);
         for(unsigned i: {1u,2u,3u,4u,5u,6u,10u,11u})
             assert(f.words[p.offsets[i]/4u]==0u);
     }
@@ -275,10 +280,22 @@ static void cancellationAndFaults() {
     {
         auto p=makePlan();Fake f=fakeFor(p);Controller vm{};
         f.failAtWrite=3u;
-        assert(vm.prepare(p,gate(),table(),callbacks(f)).code==Code::WriteFailure);
-        assert(vm.mayReleaseMappedMemory());
-        for(unsigned i: {1u,2u,3u,4u,5u,6u,10u,11u})
-            assert(f.words[p.offsets[i]/4u]==0u);
+        const auto failure=vm.prepare(p,gate(),table(),callbacks(f));
+        assert(failure.code==Code::RecoveryRequired);
+        assert(failure.writes==3u);
+        assert(vm.requiresRecovery() && !vm.mayReleaseMappedMemory());
+        assert(vm.requiresIndependentResetBeforeUnmap());
+        assert(f.words[p.offsets[1u]/4u]!=0u);
+        assert(vm.abortBeforeActivation().code==Code::Denied);
+    }
+    {
+        auto p=makePlan(2u,1u);Fake f=fakeFor(p);Controller vm{};
+        f.failAtWrite=1u;f.failAfterCommit=true;
+        const auto o=vm.prepare(p,gate(),table(),callbacks(f));
+        assert(o.code==Code::RecoveryRequired && o.writes==1u);
+        assert(f.words[p.offsets[1u]/4u]!=0u);
+        assert(vm.requiresRecovery() && !vm.mayReleaseMappedMemory());
+        assert(vm.requiresIndependentResetBeforeUnmap());
     }
     {
         auto p=makePlan();Fake f=fakeFor(p);Controller vm{};
