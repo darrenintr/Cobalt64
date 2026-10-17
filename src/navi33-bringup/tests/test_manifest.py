@@ -191,4 +191,41 @@ for filename in ("Navi33Nbio43Capacity.h","Navi33VramSurvey.h"):
                       "mapDeviceMemory", "->setMemoryEnable", "setPowerState(",
                       "IOConnectCallMethod("):
         assert forbidden not in code, f"{filename} gained GPU IO: {forbidden}"
+# The real BAR5 Queue1 and BAR0 root-read adapters deliberately compile
+# as separate macOS objects only. Neither is linked into the live Kext.
+queue_bridge=(root/"src/Navi33DarwinQueue1IO.cpp").read_text()
+root_bridge=(root/"src/Navi33DarwinRootReadback.cpp").read_text()
+stage_header=(root/"src/Navi33DarwinStage.h").read_text()
+makefile=(root/"Makefile").read_text()
+for required in ("Navi33DarwinQueue1IO.o", "Navi33DarwinRootReadback.o",
+                 "physical-io-check"):
+    assert required in makefile
+assert "Navi33DarwinQueue1IO.o $(BUILD)/Navi33DarwinRootReadback.o" in makefile
+for required in ("IOPCIDevice", "getDeviceMemoryWithRegister",
+                 "kIOPCIConfigBaseAddress5", "sdma6_bar::buildPlan",
+                 "stage_->synchronizeForDevice()",
+                 "stage_->synchronizeForHost()", "stage_->readByte"):
+    assert required in queue_bridge, required
+assert "denyQueueRegisterWrite" in queue_bridge
+for forbidden in ("configWrite", "setBusMasterEnable", "setMemoryEnable",
+                  "writeBar5", "WREG32(", "->setPowerState("):
+    assert forbidden not in queue_bridge
+for required in ("kIOPCIConfigBaseAddress0", "readWord", "readPhysical",
+                 "rootPhysical_", "rootBarOffset_", "vram_geometry::locate"):
+    assert required in root_bridge
+assert "void RootReadback::write" not in root_bridge
+assert "kBar0WriteEnabled=false" in (root/"src/Navi33DarwinRootReadback.h").read_text()
+assert "bool pinnedAndMapped() const" in stage_header
+assert "bool synchronizeForHost()" in stage_header
+assert "bool readByte(size_t offset,uint8_t *out) const" in stage_header
+for forbidden_include in ('#include "Navi33DarwinQueue1IO.h"',
+                          '#include "Navi33DarwinRootReadback.h"'):
+    assert forbidden_include not in source
+    assert forbidden_include not in client
+bridge_workflow=(root.parents[1]/".github/workflows/navi33-host.yml").read_text()
+assert "physical-io-check" in bridge_workflow
+assert "Navi33DarwinRootReadback.o" in bridge_workflow
+# Do not allow low-level BAR/IOVA callbacks to advertise hw acceleration.
+assert "N33_CAP_HW_SDMA" not in queue_bridge
+assert "N33_CAP_METAL" not in root_bridge
 print("Navi33 device IOMMU staging and GPU submission boundaries: static checks passed")
