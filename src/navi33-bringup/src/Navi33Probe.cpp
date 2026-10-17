@@ -17,6 +17,7 @@
 #include "Navi33DarwinDma.h"
 #include "Navi33NativeABI.h"
 #include "Navi33Gfx11Command.h"
+#include "Navi33LiveMmio.h"
 #include <libkern/c++/OSData.h>
 
 class Navi33Probe : public IOService {
@@ -28,6 +29,20 @@ public:
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
 };
+
+
+// Live READ-ONLY BAR5 probe, opt-in separately from navi33-probe.
+// Never enables memory/BM, writes GPU registers, starts firmware or
+// accesses VRAM. PCI resource is retained only during this one shot.
+static bool navi33ReadStatusDword(void *ctx, uint64_t off, uint32_t *out) {
+    IOMemoryMap *map = static_cast<IOMemoryMap *>(ctx);
+    if (!map || !out || (off & 3u) || off > map->getLength() ||
+        map->getLength() - off < sizeof(uint32_t)) return false;
+    const uintptr_t base = static_cast<uintptr_t>(map->getVirtualAddress());
+    if (!base || off > UINTPTR_MAX - base) return false;
+    *out = *reinterpret_cast<const volatile uint32_t *>(base + static_cast<uintptr_t>(off));
+    return true;
+}
 
 OSDefineMetaClassAndStructors(Navi33Probe, IOService)
 
@@ -185,6 +200,49 @@ bool Navi33Probe::start(IOService *provider) {
                   static_cast<size_t>(navi33::dcn321::Register::Pipe0SurfaceLo)];
                 setProperty("Navi33,DCN321OTG0FrameOffset", otg0, 64);
                 setProperty("Navi33,DCN321HUBP0SurfaceOffset", hubp0, 64);
+            }
+            // This is deliberately NOT a GPU bring-up: read three status
+            // registers on each of four OTGs only after two boot flags and
+            // checksum-valid Navi33 IP Discovery. Never write a GPU register.
+            uint32_t mmioOptIn = 0u, mmioOff = 0u;
+            const bool liveOff = PE_parse_boot_argn("navi33-mmio-off",
+                &mmioOff, sizeof(mmioOff)) && mmioOff != 0u;
+            const bool liveOptIn = PE_parse_boot_argn("navi33-mmio-read",
+                &mmioOptIn, sizeof(mmioOptIn)) && mmioOptIn == 1u;
+            if (!liveOff && liveOptIn && candidate) {
+                const navi33::live_mmio::Plan plan =
+                    navi33::live_mmio::buildPlan(disc, bar5Bytes);
+                setProperty("Navi33,LiveMMIOPlanStatus",
+                    static_cast<uint64_t>(plan.code), 8);
+                if (plan.code == navi33::live_mmio::Code::Pass && regs) {
+                    IOMemoryMap *mmio = regs->map();
+                    if (mmio) {
+                        const navi33::live_mmio::Sample s =
+                            navi33::live_mmio::readSnapshot(plan, true,
+                                navi33ReadStatusDword, mmio);
+                        setProperty("Navi33,LiveMMIOStatus",
+                            static_cast<uint64_t>(s.code), 8);
+                        setProperty("Navi33,LiveMMIOReads",
+                            static_cast<uint64_t>(s.reads), 8);
+                        if (s.code == navi33::live_mmio::Code::Pass) {
+                            setProperty("Navi33,OTGActiveMask",
+                                static_cast<uint64_t>(s.activeMask), 8);
+                            setProperty("Navi33,OTGClockMask",
+                                static_cast<uint64_t>(s.clockMask), 8);
+                            for (unsigned pipe=0; pipe<4u; ++pipe) {
+                                const char *names[4] = {
+                                    "Navi33,OTG0Frame", "Navi33,OTG1Frame",
+                                    "Navi33,OTG2Frame", "Navi33,OTG3Frame"
+                                };
+                                setProperty(names[pipe],
+                                    static_cast<uint64_t>(s.frame[pipe]), 32);
+                            }
+                        }
+                        mmio->release();
+                    } else {
+                        setProperty("Navi33,LiveMMIOStatus", "BAR5 mapping failed");
+                    }
+                }
             }
             struct Query { uint16_t hwid; const char *key; };
             static const Query queries[] = {
