@@ -44,11 +44,15 @@ $(BUILD)/Navi33DarwinStage.o: src/Navi33DarwinStage.cpp src/Navi33DarwinStage.h 
 # Physical IOKit Queue1 bridge is compile-checked on macOS only. Never
 # link it into the live Navi33Probe.kext until PCI, VRAM, PSP and
 # independent device recovery are implemented and audited.
+$(BUILD)/Navi33DarwinRootReadback.o: src/Navi33DarwinRootReadback.cpp src/Navi33DarwinRootReadback.h src/Navi33Gmc11VramLease.h src/Navi33Gmc11RootVram.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD)/Navi33DarwinQueue1IO.o: src/Navi33DarwinQueue1IO.cpp src/Navi33DarwinQueue1IO.h src/Navi33DarwinStage.h src/Navi33Sdma6BarAdapter.h src/Navi33Sdma6MmioQueue.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-physical-io-check: $(BUILD)/Navi33DarwinQueue1IO.o
+physical-io-check: $(BUILD)/Navi33DarwinQueue1IO.o $(BUILD)/Navi33DarwinRootReadback.o
 
 $(BUILD)/Navi33DarwinDma.o: src/Navi33DarwinDma.cpp src/Navi33DarwinDma.h src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h src/Navi33Identity.h
 	@mkdir -p $(BUILD)
