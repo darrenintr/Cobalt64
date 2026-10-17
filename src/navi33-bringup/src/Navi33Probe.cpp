@@ -402,7 +402,8 @@ n33_sdma_status Navi33Probe::sdmaStatus() {
 // This is an ACTUAL physical RX7600 status read, not a mock test.
 // It never changes PCI command state, VRAM, SDMA rings, page tables,
 // MMHUB contexts, or doorbells. Results never advertise HW_VM/GFX/Metal.
-n33_hw_preflight Navi33Probe::hardwarePreflight() {
+n33_hw_preflight Navi33Probe::hardwarePreflight(
+    const uint8_t *romBytes,size_t romLength) {
     uint32_t enabled=0u,off=0u;
     const bool allowed=PE_parse_boot_argn("navi33-hw-probe",
                                          &enabled,sizeof(enabled)) && enabled==1u;
@@ -419,13 +420,26 @@ n33_hw_preflight Navi33Probe::hardwarePreflight() {
     if(!navi33::isSupported(id))
         return navi33::hwprobe::blank(N33_HW_NO_PROVIDER);
 
-    auto *rom=OSDynamicCast(OSData,pci->getProperty("ATY,bin_image"));
-    if(!rom || rom->getLength()<32u ||
-       rom->getLength()>navi33::IPDiscovery::kMaxBlob)
+    // Either read the bootloader-provided ROM or take the exact bounded
+    // caller-supplied bytes for this *one* synchronous root-client request.
+    // No firmware loading, persistent storage or PCI ROM-decode writes.
+    if((romBytes && (romLength<64u ||
+        romLength>navi33::IPDiscovery::kMaxBlob)) ||
+       (!romBytes && romLength!=0u))
+        return navi33::hwprobe::blank(N33_HW_BAD_ROM);
+    const auto *property=romBytes ? nullptr :
+        OSDynamicCast(OSData,pci->getProperty("ATY,bin_image"));
+    const uint8_t *rom=romBytes ? romBytes :
+        property ? static_cast<const uint8_t *>(property->getBytesNoCopy()) :
+        nullptr;
+    const size_t bytesInRom=romBytes ? romLength :
+        property ? static_cast<size_t>(property->getLength()) : 0u;
+    if(!rom || bytesInRom<64u)
         return navi33::hwprobe::blank(N33_HW_NO_ROM);
+    if(bytesInRom>navi33::IPDiscovery::kMaxBlob)
+        return navi33::hwprobe::blank(N33_HW_BAD_ROM);
     navi33::IPDiscovery disc;
-    if(!disc.parse(static_cast<const uint8_t *>(rom->getBytesNoCopy()),
-                   rom->getLength()) ||
+    if(!disc.parse(rom,bytesInRom) ||
        navi33::inventory(disc).code!=navi33::InventoryCode::Pass)
         return navi33::hwprobe::blank(N33_HW_BAD_ROM);
 
