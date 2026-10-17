@@ -46,5 +46,4 @@ private:
     IOPCIDevice *pci_ { nullptr }; // borrowed provider, no retain needed while attached
     navi33fb::Layout console_ {};
     uint32_t colorMap_ { 0 };
-    bool ready_ { false };
 };
