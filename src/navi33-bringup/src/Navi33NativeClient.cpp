@@ -10,6 +10,15 @@
 
 OSDefineMetaClassAndStructors(Navi33NativeClient, IOUserClient)
 
+void Navi33NativeClient::releaseStageLocked() {
+    // The current Kext NEVER enables a physical GPU queue, so this unpins
+    // only a CPU image with a live device-IOMMU mapping, not GPU work.
+    dmaStage_.release();
+    if(owner_ && dmaLeaseEpoch_)
+        owner_->releaseStageOwner(this,dmaLeaseEpoch_);
+    dmaLeaseEpoch_=0u;
+}
+
 bool Navi33NativeClient::initWithTask(task_t owningTask, void *securityID,
                                        UInt32 type, OSDictionary *properties) {
     if (type != N33_UC_TYPE ||
@@ -34,7 +43,7 @@ void Navi33NativeClient::stop(IOService *provider) {
     if (dmaLock_) IOLockLock(dmaLock_);
     active_ = false;
     owner_ = nullptr;
-    dmaStage_.release(); // revoke the device IOVA mapping before detach
+    releaseStageLocked(); // revoke IOVA before releasing provider lease
     if (dmaLock_) IOLockUnlock(dmaLock_);
     super::stop(provider);
 }
@@ -43,7 +52,7 @@ IOReturn Navi33NativeClient::clientClose() {
     if (dmaLock_) IOLockLock(dmaLock_);
     active_ = false;
     owner_ = nullptr;
-    dmaStage_.release(); // close/client death is equivalent to RELEASE
+    releaseStageLocked(); // close/client death is equivalent to RELEASE
     if (dmaLock_) IOLockUnlock(dmaLock_);
     terminate();
     return kIOReturnSuccess;
@@ -54,8 +63,13 @@ IOReturn Navi33NativeClient::clientDied() {
 }
 
 void Navi33NativeClient::free() {
-    dmaStage_.release(); // idempotent last-resort revoke
-    if (dmaLock_) { IOLockFree(dmaLock_); dmaLock_ = nullptr; }
+    if(dmaLock_)IOLockLock(dmaLock_);
+    releaseStageLocked(); // idempotent last-resort revoke
+    if(dmaLock_) {
+        IOLockUnlock(dmaLock_);
+        IOLockFree(dmaLock_);
+        dmaLock_=nullptr;
+    }
     super::free();
 }
 
@@ -189,7 +203,7 @@ IOReturn Navi33NativeClient::externalMethod(
             return kIOReturnNotReady;
         }
         if (selector == N33_SEL_DMA_RELEASE) {
-            dmaStage_.release(); // always permitted even with kill switch
+            releaseStageLocked(); // always permitted even with kill switch
             IOLockUnlock(dmaLock_);
             return kIOReturnSuccess;
         }
@@ -207,9 +221,21 @@ IOReturn Navi33NativeClient::externalMethod(
                 status.size=sizeof(status);
                 status.state=N33_DMA_DISABLED;
             } else {
-                IOPCIDevice *pci=OSDynamicCast(IOPCIDevice,
-                                               owner_->getProvider());
-                status=dmaStage_.prepare(pci);
+                // Per-client IOLock is not enough: only ONE user client
+                // may pin diagnostic mappings for this provider at a time.
+                if(!dmaLeaseEpoch_)
+                    dmaLeaseEpoch_=owner_->claimStageOwner(this);
+                if(!dmaLeaseEpoch_) {
+                    status.abi_version=N33_ABI_VERSION;
+                    status.size=sizeof(status);
+                    status.state=N33_DMA_BUSY;
+                } else {
+                    IOPCIDevice *pci=OSDynamicCast(IOPCIDevice,
+                                                   owner_->getProvider());
+                    status=dmaStage_.prepare(pci);
+                    if(status.state!=N33_DMA_STAGED)
+                        releaseStageLocked();
+                }
             }
         }
         bcopy(&status,args->structureOutput,sizeof(status));
