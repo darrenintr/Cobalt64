@@ -34,7 +34,11 @@ assert "Navi33NativeClient::clientClose" in client
 assert "N33_SEL_PSP_STATUS" in client
 assert "N33_SEL_SDMA_STATUS" in client
 assert "N33_SEL_HW_PREFLIGHT" in client
-assert "owner_->hardwarePreflight()" in client
+assert "owner_->hardwarePreflight(rom,romLen)" in client
+assert "N33_SEL_HW_ROM_PREFLIGHT" in client
+assert "structureInputDescriptor->readBytes(" in client
+assert "IOFree(copied,romLen)" in client
+assert "Navi33Probe::hardwarePreflight" in source
 assert "N33_SEL_DMA_STAGE" in client
 assert "N33_SEL_DMA_STATUS" in client
 assert "N33_SEL_DMA_RELEASE" in client
