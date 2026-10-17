@@ -11,6 +11,7 @@
 #include "Navi33Gmc11Mmhub.h"
 #include "Navi33Sdma6MmioQueue.h"
 #include "Navi33Gmc11RootVram.h"
+#include "Navi33Gmc11VramLease.h"
 #include "Navi33Sdma6QueueOwner.h"
 
 namespace navi33 { namespace sdma6_proof {
@@ -98,7 +99,8 @@ inline Report run(const Isolation &e,
                   const mmhub11::Plan &gfxPlan,
                   const mmhub11::Table &table,
                   const sdma6_mmio::Request &copy,
-                  const vram_root::Reservation &ownedVramRoot,
+                  const vram_geometry::Geometry &geometry,
+                  vram_bo::Arena &rootArena,vram_bo::Token rootToken,
                   vram_root::ReadWord readRootVram,void *rootReaderContext,
                   queue_owner::Registry &queueLeases,const void *client,
                   mmhub11::IO mmIo,mmhub11::IO gfxIo,
@@ -110,7 +112,8 @@ inline Report run(const Isolation &e,
     !defined(COBALT_NAVI33_ENABLE_UNSAFE_MMIO)
     (void)e;(void)mmPlan;(void)gfxPlan;(void)table;(void)copy;
     (void)mmIo;(void)gfxIo;(void)sdmaIo;(void)hubPolls;(void)fencePolls;
-    (void)ownedVramRoot;(void)readRootVram;(void)rootReaderContext;
+    (void)geometry;(void)rootArena;(void)rootToken;
+    (void)readRootVram;(void)rootReaderContext;
     (void)queueLeases;(void)client;
     return r;
 #else
@@ -132,8 +135,14 @@ inline Report run(const Isolation &e,
     // Linux AMDGPU allocates the GART root in a pinned VRAM BO. Require
     // exact readback of the complete root (including unused zero PTEs)
     // from a SEPARATELY owned VRAM allocation before ANY GPU MMIO writes.
+    // A caller cannot provide an arbitrary "owned" ROM/VRAM address:
+    // the active per-device ledger MUST identify this exact BO lease.
+    const auto binding=vram_binding::bindRoot(
+        geometry,rootArena,client,rootToken);
+    if(!binding.valid ||
+       binding.rootPhysicalAddress!=table.gpuPhysicalPageTable)return r;
     const auto rootProof=vram_root::inspect(
-        ownedVramRoot,table,readRootVram,rootReaderContext);
+        binding.reservation,table,readRootVram,rootReaderContext);
     if(rootProof.code!=vram_root::Code::ImageMatches)return r;
 
     // Software lease prevents two independent Cobalt64 Queue0 transactions.
@@ -147,6 +156,10 @@ inline Report run(const Isolation &e,
         (void)queueLeases.releaseUnmodified(client,lease);
         return r;
     }
+    // The GPU could fetch the root/packets as soon as registers change.
+    // Never release/reuse this page after any possibly-live MMIO access,
+    // regardless of the synthetic fence result.
+    rootArena.quarantine();
 
     const mmhub11::Gate vmGate{
         e.exclusiveGpuAndBothVmHubs,
