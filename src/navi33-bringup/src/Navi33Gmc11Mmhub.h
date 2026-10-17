@@ -146,10 +146,19 @@ inline bool validPlan(const Plan &p) {
        (p.hub!=Hub::Mmhub && p.hub!=Hub::Gfxhub) ||
        (p.revision!=0u && p.revision!=2u) ||
        (p.hub==Hub::Gfxhub && p.revision!=2u))return false;
+    const uint32_t *regs=p.hub==Hub::Gfxhub ? kGfxhubGfx1102 :
+        p.revision==2u ? kMmhub302 : kMmhub300;
+    if(p.offsets[0u]<(static_cast<uint64_t>(regs[0u])*4u))
+        return false;
+    const uint64_t baseByteOffset=p.offsets[0u]-
+                                  static_cast<uint64_t>(regs[0u])*4u;
+    if(!baseByteOffset || (baseByteOffset&3u))return false;
     for(size_t i=0;i<kCount;++i) {
         const uint64_t off=p.offsets[i];
         if(!off || (off&3u) || off>p.barBytes ||
-           p.barBytes-off<4u)return false;
+           p.barBytes-off<4u ||
+           off!=baseByteOffset+static_cast<uint64_t>(regs[i])*4u)
+            return false;
         for(size_t j=0;j<i;++j)
             if(p.offsets[j]==off)return false;
     }
