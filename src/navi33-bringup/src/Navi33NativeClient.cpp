@@ -70,5 +70,11 @@ IOReturn Navi33NativeClient::externalMethod(
         args->structureOutputSize = sizeof(caps);
         return kIOReturnSuccess;
     }
+    if (selector == N33_SEL_PSP_STATUS) {
+        const n33_psp_status status = owner_->pspStatus();
+        bcopy(&status, args->structureOutput, sizeof(status));
+        args->structureOutputSize = sizeof(status);
+        return kIOReturnSuccess;
+    }
     return kIOReturnUnsupported;
 }
