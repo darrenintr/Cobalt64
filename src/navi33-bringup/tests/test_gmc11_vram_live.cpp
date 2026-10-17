@@ -62,7 +62,7 @@ int main() {
     assert(snapshot.flags&N33_VRAM_FLAG_PAIRED);
     auto result=live::report(snapshot,256ull*1024ull*1024ull,
                              131072u,p.mmRevision);
-    assert(result.abi_version==N33_ABI_VERSION && result.size==64u);
+    assert(result.abi_version==N33_ABI_VERSION && result.size==96u);
     assert(result.mm_fb_base==0x6000u && result.gfx_fb_base==0x6000u);
     assert(result.mm_fb_offset==0x100u && result.gfx_fb_offset==0x100u);
     assert(result.candidate_physical_fb_base==(0x100ull<<24u));
