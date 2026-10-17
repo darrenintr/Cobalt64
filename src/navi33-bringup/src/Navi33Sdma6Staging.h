@@ -41,6 +41,9 @@ struct Report {
     uint32_t pages=0u;
     uint32_t packetDwords=0u;
     uint64_t sourceHash=0u, destinationHash=0u;
+    // OS IOMMU address for the fifth (GART shadow) page. This is NOT
+    // verified as a GPU MC-physical page-table base.
+    uint64_t candidatePageTableDmaIova=0u;
 };
 
 // Never rely on host endianness or pointer aliasing for GPU-visible data.
@@ -142,6 +145,7 @@ inline Report prepare(const dma::Segment *segments,size_t segmentCount,
     out.segments=static_cast<uint32_t>(segmentCount);
     out.pages=static_cast<uint32_t>(kPages);
     out.packetDwords=static_cast<uint32_t>(kRingWords);
+    out.candidatePageTableDmaIova=busPages[kPageTablePage];
     out.sourceHash=hash(memory+kSourcePage*kBytePage,kBytePage);
     out.destinationHash=hash(memory+kTargetPage*kBytePage,kBytePage);
     return out;
