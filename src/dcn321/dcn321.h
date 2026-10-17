@@ -46,8 +46,11 @@ int dcn321_validate_mode(const struct dcn321_mode *);
 /* Timing-only: require caller to have powered DCN, set pixel clocks, trained link,
  * configured MPC/OPP/DPP/HubP, and blanked the pipe. Does not enable OTG. */
 int dcn321_program_otg_timing(struct dcn321_device *, unsigned, const struct dcn321_mode *);
-/* Atomic primary-address update for a fully configured and already active HUBP.
- * Does not configure tiling, pitch, pixel format, VM or scanout routing. */
+/* High-then-low primary-address update for an already active and clocked
+ * linear 32bpp HUBP. Requires matching pitch, visible viewport, no DCC/TMZ,
+ * no rotation/tiling, no pending flip or update locks. On a failed write,
+ * tries restoring the prior address; DCN321_ROLLBACK means that restore
+ * failed. Caller must ensure VM/VRAM pinning and external pipe ownership. */
 int dcn321_flip_primary(struct dcn321_device *, unsigned, const struct dcn321_scanout *);
 
 /* CPU-observable pipe status; does not prove a connected monitor has light. */
