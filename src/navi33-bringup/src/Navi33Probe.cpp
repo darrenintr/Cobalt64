@@ -27,6 +27,7 @@
 #include "Navi33Gmc11VramLive.h"
 #include "Navi33VramSurvey.h"
 #include <libkern/c++/OSData.h>
+#include <libkern/libkern.h>
 
 
 
@@ -538,6 +539,9 @@ n33_hw_preflight Navi33Probe::hardwarePreflight(
         pspPlan,true,navi33ReadStatusDword,mapped);
     const navi33::sdma6live::Sample sdma=navi33::sdma6live::readOnce(
         sdmaPlan,true,navi33ReadStatusDword,mapped);
+    uint32_t bootloader=0u;
+    const bool bootRead=navi33::psp13::readBootloader(
+        pspPlan,navi33ReadStatusDword,mapped,&bootloader);
     uint32_t mmContext=UINT32_MAX,gfxContext=UINT32_MAX;
     const bool mmOk=navi33ReadStatusDword(mapped,hubs.mmhub,&mmContext);
     const bool gfxOk=navi33ReadStatusDword(mapped,hubs.gfxhub,&gfxContext);
@@ -545,13 +549,27 @@ n33_hw_preflight Navi33Probe::hardwarePreflight(
     if(!mmOk || !gfxOk)
         return navi33::hwprobe::blank(N33_HW_MMIO_READ_FAILED);
 
-    const n33_hw_preflight result=navi33::hwprobe::classify(
-        navi33::psp13::report(psp),navi33::sdma6live::report(sdma),
-        mmContext,gfxContext,bytes);
+    const n33_sdma_status sdmaStatus=navi33::sdma6live::report(sdma);
+    n33_hw_preflight result=navi33::hwprobe::classify(
+        navi33::psp13::report(psp),sdmaStatus,mmContext,gfxContext,bytes);
+    if(bootRead)++result.mmio_reads;
+    // The ABI struct has no room for these raw words, so they go to the
+    // kernel log and to ioreg, which the physical results script captures.
+    char boot[12],raw[192];
+    if(bootRead)snprintf(boot,sizeof(boot),"%08x",bootloader);
+    else snprintf(boot,sizeof(boot),"unread");
+    snprintf(raw,sizeof(raw),
+             "reason %u reads %u PSP %u SDMA %u C2PMSG_35 %s "
+             "SDMA0_STATUS %08x UCODE_CHECKSUM %08x "
+             "MMHUB_CTX0 %08x GFXHUB_CTX0 %08x",
+             result.reason,result.mmio_reads,result.psp_state,
+             result.sdma_state,boot,sdmaStatus.status_register,
+             sdmaStatus.ucode_checksum,mmContext,gfxContext);
+    setProperty("Navi33,LastHwPreflight",raw);
     // These two facts are not optional: a status read doesn't demonstrate
     // exclusive queue ownership or any working compute command path.
-    IOLog("Navi33Probe: RX7600 physical HW preflight reason %u, reads %u, PSP %u, SDMA %u; no GPU copy submitted\n",
-          result.reason,result.mmio_reads,result.psp_state,result.sdma_state);
+    IOLog("Navi33Probe: RX7600 physical HW preflight %s; no GPU copy submitted\n",
+          raw);
     return result;
 }
 

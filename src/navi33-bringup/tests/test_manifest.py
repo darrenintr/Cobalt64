@@ -81,6 +81,8 @@ assert 'Navi33,DCNReadPlanStatus' in source
 assert 'PE_parse_boot_argn("navi33-psp-read"' in source
 assert 'PE_parse_boot_argn("navi33-psp-off"' in source
 assert "navi33::psp13::buildPlan" in source
+assert "navi33::psp13::readBootloader(" in source
+assert '"Navi33,LastHwPreflight"' in source
 assert 'PE_parse_boot_argn("navi33-sdma-read"' in source
 assert 'PE_parse_boot_argn("navi33-sdma-off"' in source
 assert "navi33::sdma6live::buildPlan" in source

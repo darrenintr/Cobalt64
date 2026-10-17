@@ -158,6 +158,7 @@ int main() {
     assert(psp.state==N33_PSP_STOPPED);
     assert(psp.aliveOffset==0x58244u);                     // MP0_SMN_C2PMSG_81
     assert(psp.versionOffset==0x581e8u);                   // MP0_SMN_C2PMSG_58
+    assert(psp.bootloaderOffset==0x5818cu);                // MP0_SMN_C2PMSG_35
 
     // NBIO 4.3.1 RCC_CONFIG_MEMSIZE: NBIF BASE_IDX 2 = 0xD20. NBIF
     // BASE_IDX 0 is 0 on real silicon, so the index really matters.

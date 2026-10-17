@@ -24,7 +24,7 @@ static const char *why(uint32_t value) {
     case N33_HW_MAP_FAILED: return "cannot map BAR5 device registers";
     case N33_HW_MMIO_READ_FAILED: return "GPU register read failed";
     case N33_HW_PSP_NOT_RUNNING: return "PSP13 SOS not alive";
-    case N33_HW_SDMA_READ_FAILED: return "SDMA0 register reads unavailable";
+    case N33_HW_SDMA_READ_FAILED: return "SDMA0 reads unavailable or GC block not answering";
     case N33_HW_SHARED_GPU_STATE: return "VM context or SDMA queue active / unowned";
     case N33_HW_NO_OWNED_GPU_VM: return "GPU memory/queue ownership not established";
     case N33_HW_COMPUTE_COMPLETE: return "RESERVED, not implemented";

@@ -6,7 +6,7 @@ using namespace navi33;
 using namespace navi33::psp13;
 
 struct Mock {
-    uint32_t life=1u, version=0x01020304u;
+    uint32_t life=1u, version=0x01020304u, boot=0x80000000u;
     unsigned reads=0u;
     unsigned failAt=0u;
     bool allOnes=false, changing=false;
@@ -21,6 +21,7 @@ static bool mockRead(void *ctx, uint64_t offset, uint32_t *out) {
         return true;
     }
     if (offset == 0x1020u) {*out=m->version;return true;}
+    if (offset == 0x1040u) {*out=m->boot;return true;}
     return false;
 }
 int main() {
@@ -52,6 +53,20 @@ int main() {
     assert(readOnce(p,true,mockRead,&m).state==N33_PSP_READ_ERROR);
     m=Mock{};m.changing=true;
     assert(readOnce(p,true,mockRead,&m).state==N33_PSP_UNSTABLE);
+    // Bootloader mailbox: read once whatever the sOS state, never written.
+    const Plan b={N33_PSP_STOPPED,0x1004u,0x1020u,0x1040u};
+    uint32_t word=0u;
+    m=Mock{};m.life=0u;
+    assert(readOnce(b,true,mockRead,&m).state==N33_PSP_STOPPED);
+    assert(readBootloader(b,mockRead,&m,&word) && word==kBootloaderReady);
+    assert(m.reads==2u);
+    m=Mock{};
+    assert(!readBootloader(p,mockRead,&m,&word) && m.reads==0u);
+    assert(!readBootloader(Plan{},mockRead,&m,&word) && m.reads==0u);
+    assert(!readBootloader(b,nullptr,&m,&word));
+    assert(!readBootloader(b,mockRead,&m,nullptr) && m.reads==0u);
+    m=Mock{};m.failAt=1u;
+    assert(!readBootloader(b,mockRead,&m,&word));
     static_assert(!kCanWriteMailbox && !kCanLoadFirmware,"status only");
     std::puts("PSP13 host MMIO reads and fail-safe diagnostics passed");
 }

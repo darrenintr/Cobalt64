@@ -64,7 +64,11 @@ inline n33_hw_preflight classify(const n33_psp_status &psp,
         return out;
     }
     out.flags|=N33_HW_FLAG_PSP_ALIVE;
-    if(sdma.state!=N33_SDMA_OBSERVED) {
+    // SDMA0 sits in the GC block on GFX11. An idle, clocked SDMA sets
+    // STATUS_REG.IDLE, so all-zero is a GC block that isn't answering
+    // (the first RX 7600 run read 0 from every GC register it reported
+    // while MMHUB returned 0x01fffe00), never an idle queue.
+    if(sdma.state!=N33_SDMA_OBSERVED || !sdma.status_register) {
         out.reason=N33_HW_SDMA_READ_FAILED;
         return out;
     }

@@ -59,6 +59,19 @@ Every register index and bitfield used by `src/navi33-bringup` and
 `mmhub_3_0_{0,2}`, `mp_13_0_2`, `nbio_4_3_0` and `dcn_3_2_1` headers;
 all match. That proves the addresses, not that writing them is safe.
 
+### First live read-only preflight (2026-10-17, Navi33Probe 0.0.3)
+
+`n33compute --rom rx7600-ipd.bin` (built by `tools/ipd-from-capture.py`)
+on macOS 26.7.1 made 8 BAR5 reads, none all-ones. PSP13 C2PMSG_81 = 0
+(reason 8, sOS not loaded: expected with no OS driver for 1002:7480).
+MMHUB VM_CONTEXT0_CNTL = `0x01fffe00`, a plausible power-on value, the
+first live sign that the Discovery-derived offsets land on real registers.
+GFXHUB VM_CONTEXT0_CNTL and SDMA0 RB_CNTL/RPTR/WPTR all read 0, which
+suggests a GC block that isn't answering rather than an idle queue. 0.0.4
+reports SDMA0_STATUS_REG, UCODE_CHECKSUM and the PSP bootloader mailbox
+(C2PMSG_35) in `Navi33,LastHwPreflight`, and no longer classifies a zero
+SDMA0_STATUS_REG as an observed SDMA.
+
 ## Actual hardware compute remains BLOCKED
 
 A Queue1 ring and a ROM/register read do not confer ownership.

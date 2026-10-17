@@ -2,8 +2,11 @@
 // Navi33 PSP13 MP0 mailbox observer. Read-only and host-testable.
 // Registers from Linux amdgpu mp_13_0_2_offset.h, MP0 BASE_IDX 0:
 //   SMN_C2PMSG_81 = 0x0091 (sOS sign of life),
-//   SMN_C2PMSG_58 = 0x007a (sOS firmware version).
+//   SMN_C2PMSG_58 = 0x007a (sOS firmware version),
+//   SMN_C2PMSG_35 = 0x0063 (ROM bootloader command/status).
 // The sOS-alive register is used by Linux psp_v13_0_is_sos_alive().
+// psp_v13_0_wait_for_bootloader() polls C2PMSG_35 for exactly 0x80000000
+// (ready for a load command); bits[7:0] report a command error.
 // These two reads CANNOT prove GFX11/SDMA/VM/Metal are initialized.
 #pragma once
 #include "Navi33HardwarePlan.h"
@@ -15,6 +18,8 @@ namespace navi33 { namespace psp13 {
 constexpr uint8_t kSegment = 0u;
 constexpr uint32_t kAliveDword = 0x0091u;
 constexpr uint32_t kVersionDword = 0x007au;
+constexpr uint32_t kBootloaderDword = 0x0063u;
+constexpr uint32_t kBootloaderReady = 0x80000000u;
 constexpr bool kCanWriteMailbox = false;
 constexpr bool kCanLoadFirmware = false;
 static_assert(!kCanWriteMailbox && !kCanLoadFirmware,
@@ -24,6 +29,7 @@ struct Plan {
     n33_psp_state state = N33_PSP_NO_INVENTORY;
     uint64_t aliveOffset = 0u;
     uint64_t versionOffset = 0u;
+    uint64_t bootloaderOffset = 0u;
 };
 inline Plan buildPlan(const IPDiscovery &disc, uint64_t bar5Length) {
     Plan plan{};
@@ -32,7 +38,10 @@ inline Plan buildPlan(const IPDiscovery &disc, uint64_t bar5Length) {
         disc, Engine::PSP13, kSegment, kAliveDword, bar5Length);
     const RegisterAddress ver = resolveDword(
         disc, Engine::PSP13, kSegment, kVersionDword, bar5Length);
-    if (alive.code != AddressCode::Pass || ver.code != AddressCode::Pass)
+    const RegisterAddress boot = resolveDword(
+        disc, Engine::PSP13, kSegment, kBootloaderDword, bar5Length);
+    if (alive.code != AddressCode::Pass || ver.code != AddressCode::Pass ||
+        boot.code != AddressCode::Pass)
         { plan.state = N33_PSP_BAD_MMIO_PLAN; return plan; }
     if (!alive.bar5ByteOffset || !ver.bar5ByteOffset ||
         alive.bar5ByteOffset == ver.bar5ByteOffset ||
@@ -44,8 +53,17 @@ inline Plan buildPlan(const IPDiscovery &disc, uint64_t bar5Length) {
         plan.state = N33_PSP_BAD_MMIO_PLAN;
         return plan;
     }
+    if (!boot.bar5ByteOffset || (boot.bar5ByteOffset & 3u) ||
+        boot.bar5ByteOffset == alive.bar5ByteOffset ||
+        boot.bar5ByteOffset == ver.bar5ByteOffset ||
+        boot.bar5ByteOffset > bar5Length ||
+        bar5Length - boot.bar5ByteOffset < 4u) {
+        plan.state = N33_PSP_BAD_MMIO_PLAN;
+        return plan;
+    }
     plan.aliveOffset = alive.bar5ByteOffset;
     plan.versionOffset = ver.bar5ByteOffset;
+    plan.bootloaderOffset = boot.bar5ByteOffset;
     plan.state = N33_PSP_STOPPED; // planning passed; not a hardware verdict
     return plan;
 }
@@ -102,6 +120,16 @@ inline Sample readOnce(const Plan &plan, bool optIn,
     result.signOfLife=first;
     result.sosVersion=version;
     return result;
+}
+// One read of the bootloader mailbox, whatever the sOS state: a stopped
+// sOS above an idle bootloader is what an un-driven dGPU should show.
+// Reading never issues a bootloader command; kCanWriteMailbox stays false.
+inline bool readBootloader(const Plan &plan, ReadDword reader, void *ctx,
+                           uint32_t *value) {
+    if (!value || !reader || plan.state != N33_PSP_STOPPED ||
+        !plan.bootloaderOffset || (plan.bootloaderOffset & 3u))
+        return false;
+    return reader(ctx, plan.bootloaderOffset, value);
 }
 inline n33_psp_status report(const Sample &sample) {
     n33_psp_status out{};
