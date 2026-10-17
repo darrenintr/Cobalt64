@@ -252,6 +252,15 @@ static void test_flip_preflight_and_rollback(void) {
     f.regs[SEG + 0x05e7] = 2u; /* not linear */
     assert(dcn321_flip_primary(&d, 0, &s) == DCN321_PRECONDITION);
     f.regs[SEG + 0x05e7] = 0u;
+    f.regs[SEG + 0x061a] = 0x01u; /* trusted memory zone cannot be mixed */
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_PRECONDITION);
+    f.regs[SEG + 0x061a] = 0u;
+    f.regs[SEG + 0x05e5] = 8u | (1u << 8u); /* rotated surface */
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_PRECONDITION);
+    f.regs[SEG + 0x05e5] = 8u;
+    f.regs[SEG + 0x05ea] = 0u; /* missing viewport */
+    assert(dcn321_flip_primary(&d, 0, &s) == DCN321_PRECONDITION);
+    f.regs[SEG + 0x05ea] = (1080u << 16u) | 1920u;
     assert(f.successful_writes == 0u);
 
     memcpy(saved, f.regs, sizeof(saved));
