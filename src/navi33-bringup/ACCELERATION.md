@@ -52,3 +52,25 @@ compiled on macOS, but CI does not run it on hardware.
 This is a real kernel/userspace communication path, **not** hardware
 acceleration or firmware bring-up. Before opening it on the only GPU,
 verify a recoverable macOS/EFI boot and ensure no unintended Kext conflict.
+
+## Stage G3: PSP13 live-state query and offline firmware validation
+
+- `N33_SEL_PSP_STATUS` is a new 64-byte, root-only, read-only N33N call.
+  It returns `DISABLED` unless both `navi33-probe=1` and
+  `navi33-client=1` are set as before, plus `navi33-psp-read=1`
+  for live PSP mailbox reads; `navi33-psp-off=1` overrides.
+- No unsafe fixed MMIO base guesses: parses the validated
+  `ATY,bin_image` IP Discovery metadata for MP0 version 13.0.7 and
+  computes bounded BAR5 offsets for MP0 C2PMSG_81 and _58.
+- Reads sign-of-life twice with the version between; rejects an unmapped
+  all-ones value and any changing or unreadable state. Sign-of-life
+  observed does **not** imply GPU command rings are initialized or
+  Metal acceleration works.
+- Host-only `Navi33Psp13Firmware.h` checks the common header and
+  PSP v2.0/v2.1 descriptor table, component bounds, duplicate types,
+  overlap, and CRC32-IEEE of the advertised payload.
+  This checksum detects accidental corruption, **not** AMD signatures
+  or trusted firmware authenticity. Firmware blobs are NOT distributed,
+  staged or executed. This is still not PSP bootloader initialization.
+- Native macOS diagnostic `n33query` includes the PSP status result.
+  The live query has not been exercised on RX 7600 hardware.

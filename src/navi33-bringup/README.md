@@ -283,3 +283,13 @@ QUERY_CAPS (64 bytes) and is gated by `navi33-probe=1` plus
 No GPU engine is started and all mutation/submit selectors refuse requests.
 The read-only `tools/n33query.c` example compiles on macOS but is never
 executed in CI. This is not a RADV/Metal GPU execution path.
+
+## Stage G3: PSP13 state, no firmware launch
+
+The `N33N` root-only user client adds a PSP13 status snapshot selector.
+The default response is *disabled*. Live BAR5 reads require the explicit
+`navi33-psp-read=1` switch and validated Navi33 IP Discovery snapshot;
+`navi33-psp-off=1` wins. It only reads the MP0 sign-of-life and
+sOS version mailboxes, never writes them. PSP v2.0/v2.1 firmware
+containers can be parsed and CRC-checked offline (no blobs bundled).
+This does **not** allow compute, Vulkan, Metal, or modesetting.

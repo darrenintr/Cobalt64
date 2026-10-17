@@ -1,6 +1,7 @@
 // Offline, synthetic AMD IP Discovery fixtures. No GPU or PCI access.
 #include "../src/Navi33HardwarePlan.h"
 #include "../src/Navi33Dcn321.h"
+#include "../src/Navi33Psp13Status.h"
 #include <cassert>
 #include <cstdio>
 #include <vector>
@@ -121,6 +122,10 @@ int main() {
                (0x1800ull+0x060aull)*4ull);
         assert(m.offsets[static_cast<size_t>(dcn321::Register::VmFbBase)]==
                (0x1800ull+0x0475ull)*4ull);
+        const auto psp=navi33::psp13::buildPlan(disc,65536u);
+        assert(psp.state==N33_PSP_STOPPED);
+        assert(psp.aliveOffset==(0x200ull+0x0091ull)*4ull);
+        assert(psp.versionOffset==(0x200ull+0x007aull)*4ull);
         assert(dcn321::combineSurfaceAddress(0xabcd1234u,0x00000002u)==
                0x00000002abcd1234ull);
         assert(resolveDword(disc,Engine::DCN321,2,UINT32_MAX,65536).code==
