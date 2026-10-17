@@ -17,14 +17,20 @@ python3 src/navi33-bringup/bootstrap/boot_profiles.py \
 
 Outputs:
 - `recovery.plist`: original boot-args except experimental Navi33 flags,
-  with `navi33-fb-off=1`. This disables the custom framebuffer if it has been
-  installed. It **cannot** recover a screen that died before the Kext loaded.
+  with `navi33-fb-off=1 navi33-dma-off=1`. This disables both the custom
+  framebuffer and optional IOMMU preflight if they have been installed.
+  It **cannot** recover a screen that died before a Kext loaded.
 - `vesa-baseline.plist`: adds `-radvesa` and `navi33-fb-off=1`. It is a
   diagnostic for the WhateverGreen software-display path, **not** evidence
   that RX 7600 will show the installer or WindowServer.
 - `fb-trial.plist`: adds `-radvesa navi33-fb=1`. It can only do anything
   after the separate `Navi33GOPFB.kext` has been added to the **target
   macOS** Auxiliary Kernel Collection (AuxKC).
+
+All profiles also set `navi33-dma-off=1`, including the trial profile.
+They do **not** automatically invoke the `navi33-dma-preflight=1` IOMMU
+mapping experiment. That experiment is separately opt-in and only
+meaningful after a macOS kernel boot with a working, recoverable display.
 
 The tool **never overwrites the input** and refuses output-name collisions.
 Profiles preserve SMBIOS, AMD kernel patches, DeviceProperties, and existing

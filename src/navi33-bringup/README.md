@@ -258,13 +258,18 @@ a CPU-owned shadow page-table array: it is NOT assigned to the GPU.
 
 ## Next milestones (not implemented yet)
 
-1. Provide safe runtime IP Discovery acquisition from real Navi33 TMR/flash,
-   with strict bounds, isolation and recovery. Current only parses **supplied** snapshots.
-2. Build separate RDNA3 firmware, GMC/GART and GFX11 queues, interrupts and
-   power management. Never call Navi48 GC12 / PSP14 / SDMA7 routines.
-3. Validate fences and a real gfx1102 compute dispatch/readback.
-4. Adapt RADV Darwin winsys to Navi33; then Metal and WindowServer.
-   Keep the GOP display for recovery.
+1. Establish a genuinely observable, recoverable native macOS boot on
+   the user's single RX7600. OpenCore GOP and AuxKC remain unverified.
+2. Validate device-associated IOMMU/IOVA mapping on actual macOS and keep
+   the OS bus mapping lifetime valid through GPU execution. Stage 7's
+   `IODMACommand` adapter only preflights in software and cleans up.
+3. Implement separate RDNA3 firmware/PSP13/SMU13, real GMC11 GART page
+   tables, GFXHUB/MMHUB state/TLB updates, SDMA6 rings/doorbells,
+   interrupts, PCI DMA-safe synchronization and measured hardware fences.
+   Never mix Navi48 GC12/PSP14/SDMA7 routines.
+4. Validate actual SDMA6 readback then GFX11 compute; adapt Darwin
+   RADV gfx1102 and finally Metal/WindowServer GPU acceleration.
+   Preserve GOP output and a boot recovery path.
 
 Base: Almosst-DEV/Cobalt64 (MIT). Linux amdgpu/Mesa are implementation
 references, not proofs that this port works. No firmware or Apple binaries
