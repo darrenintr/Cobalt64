@@ -6,9 +6,9 @@ This is an **independent, fail-closed DCN321 register layer**, not a loadable RX
 
 - Extracted exact per-instance register offsets and masks from Linux amdgpu's `dcn_3_2_1_offset.h` and `dcn_3_2_1_sh_mask.h` (SHA identifiers in `dcn321_regs.h`). Offsets are DWORD units relative to **discovered DCN segment 2**, never hard-coded absolute BAR addresses.
 - A host-portable MMIO abstraction with strict BAR bounds, Navi33 PCI ID checks, reserved scanout address bounds and default-off write gate.
-- Timing register programming for a **previously disabled OTG**, with Linux OPTC's blank/sync formulas. Does not modify the active pipe or enable it.
+- Transactional timing register programming for a **previously disabled OTG**, using Linux OPTC blank/sync formulas and masked register writes; snapshots all edits before writing, then attempts rollback on a failed write. Does not modify the active pipe or enable it.
 - Read-only frame counter and active-pipe-only primary address latch (high DWORD before low DWORD), requiring already configured and pinned VRAM plus plane/format.
-- Host MMIO mock tests and GCC/Clang-compatible C11 and C++17 CI targets.
+- Host MMIO mock tests covering timing and linear-plane transactions (including injected read/write/rollback failures), with C11 sanitizers and C++17 CI targets.
 
 ## Remaining steps before GOP-independent display
 
@@ -37,7 +37,7 @@ Linux reference: `drivers/gpu/drm/amd/display/dc/resource/dcn321/dcn321_resource
 - Read-only `dcn321_wait_frame_progress`: checks for frame counter changes with wraparound awareness and an explicit bounded delay callback. Frame-counter movement **does not prove light from a DP/HDMI connector**.
 - Opt-in `dcn321_prepare_linear_plane`: stages a 32bpp ARGB8888/ABGR8888 linear, non-DCC primary surface on a **disabled but clocked** OTG; checks 256-byte address alignment, VRAM bounds, pitch/viewport dimensions, update locks, and pending flips. Programs format, swizzle, pitch, viewport, VMID0, crossbar and MC address in high-then-low order. Does **not** enable OTG or transmit pixels. `DCN321_ROLLBACK` reports incomplete register compensation on MMIO failure.
 - The transaction snapshots all affected registers before writing, then performs best-effort compensation on write error; this does not replace a hardware-safe rollback of clocks, link, pipe-routing, firmware or VM state. Caller must synchronize MMIO and guarantee GPU VRAM pinning and correct VMID0 address mapping.
-- New host test `tests/test_dcn321_plane.c` covers guards, register values, read/write failures, compensation failures and 24-bit frame-counter wrap. No real hardware is exercised.
+- New host test `tests/test_dcn321_plane.c` covers guards, register values, timing/plane read/write failures, compensation failures and 24-bit frame-counter wrap. No real hardware is exercised.
 
 `dcn321_prepare_linear_plane` is still dangerous to call on an active/sole display GPU. Do not attach it to any boot or IOKit probe flow; `dcn321_device.armed` remains false after init. It is not a complete DCN321 native modesetting implementation.
 
