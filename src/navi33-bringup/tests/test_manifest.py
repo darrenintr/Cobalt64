@@ -215,6 +215,16 @@ for required in ("kIOPCIConfigBaseAddress0", "readWord", "readPhysical",
     assert required in root_bridge
 assert "void RootReadback::write" not in root_bridge
 assert "kBar0WriteEnabled=false" in (root/"src/Navi33DarwinRootReadback.h").read_text()
+assert 'Navi33DmaLifetime.h' in stage_header
+lifetime_policy=(root/"src/Navi33DmaLifetime.h").read_text()
+stage_cpp=(root/"src/Navi33DarwinStage.cpp").read_text()
+assert 'quarantineBeforeFirstMmioAttempt' in lifetime_policy
+assert 'requiresExternalHardwareReset' in lifetime_policy
+assert 'lifetime_.quarantineBeforeFirstMmioAttempt()' in stage_cpp
+assert 'if(!lifetime_.mayCompleteIommuMapping())' in stage_cpp
+assert 'if(dmaStage_.requiresExternalReset())' in client
+assert 'return state(N33_DMA_BUSY);' in stage_cpp
+assert 'test-dma-lifetime' in makefile
 assert "bool pinnedAndMapped() const" in stage_header
 assert "bool synchronizeForHost()" in stage_header
 assert "bool readByte(size_t offset,uint8_t *out) const" in stage_header
