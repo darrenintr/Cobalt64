@@ -121,6 +121,27 @@ assert "N33_CAP_HW_SDMA" not in client
 for caller in (source,client):
     assert '#include "Navi33Gmc11VramUpload.h"' not in caller
 assert "N33_SEL_VRAM_GEOMETRY" in client
+assert "N33_SEL_QUEUE_CENSUS" in client
+assert "owner_->queueCensus()" in client
+assert 'Navi33Probe::queueCensus' in source
+assert 'navi33::queue_census::readStable' in source
+assert '#include "Navi33Sdma6QueueCensus.h"' in source
+assert "Navi33Sdma6QueueCensus.h" in (root / "Makefile").read_text()
+assert "N33_SEL_QUEUE_CENSUS" in (root / "tools/n33compute.c").read_text()
+assert "--queue" in (root / "tools/n33compute.c").read_text()
+census=(root / "src/Navi33Sdma6QueueCensus.h").read_text()
+for forbidden in ("->configWrite", "WREG32(", "->setBusMasterEnable",
+                  "mapDeviceMemory", "->setMemoryEnable", "setPowerState(",
+                  "IOConnectCallMethod(", "writeMmio", "writeRegister"):
+    assert forbidden not in census, f"Queue0 census gained GPU write: {forbidden}"
+assert "N33_QUEUE_FLAG_APPARENTLY_PARKED" in census
+assert "N33_QUEUE_UNSTABLE" in census
+assert "kCanWriteRegisters=false" in census
+# Hardware writer MUST remain isolated from both production entrypoints.
+for user_code in (source,client):
+    assert '#include "Navi33Sdma6MmioQueue.h"' not in user_code
+    assert '#include "Navi33Sdma6BarAdapter.h"' not in user_code
+
 assert '"navi33-vram-read"' in source and '"navi33-vram-off"' in source
 assert "N33_CAP_ACCELERATION" not in source
 
