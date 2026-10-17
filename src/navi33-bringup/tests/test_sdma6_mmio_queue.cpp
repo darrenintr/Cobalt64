@@ -95,6 +95,31 @@ static Request request() {
     r.cookie=staging::kFenceCookie;
     return r;
 }
+static void vmidIsolation() {
+    Fake f{};
+    Queue q{};
+    auto p=ready();
+    auto r=request();
+    r.vmid=1u;
+    // VMID0 eligibility must NOT authorize hardware VMID1.
+    assert(q.configure(p,r,io(&f)).status==Code::Denied);
+    assert(f.writes==0u);
+    p.vmid1MappedByThisDriver=true;
+    assert(q.configure(p,r,io(&f)).status==Code::Denied);
+    assert(f.writes==0u);
+    p.vmid1ExclusivelyOwned=true;
+    auto a=q.configure(p,r,io(&f));
+    assert(a.status==Code::Ready);
+    assert(((f.regs[kRbCntl]&kVmidMask)>>24u)==1u);
+    a=q.submit();
+    assert(a.status==Code::Submitted);
+    assert(((f.regs[kRbCntl]&kVmidMask)>>24u)==1u);
+    assert(q.waitAndVerify(3u).status==Code::Completed);
+    assert(q.stopAfterCompleted().status==Code::Completed);
+    assert(!q.mayUnmapGpuMemory());
+    r.vmid=2u;
+    assert(!validRequest(r)); // only modelled VMID0/1
+}
 static void success() {
     Fake f{};
     Queue q{};
@@ -242,6 +267,7 @@ static void refusalAndFaults() {
 int main() {
     static_assert(kWriteBackendCompiled,"only mock harness opts into write code");
     success();
+    vmidIsolation();
     refusalAndFaults();
     std::puts("Navi33 SDMA6 MMIO configuration / actual wptr / hardware-fence interface verified with fake GPU only");
     return 0;
