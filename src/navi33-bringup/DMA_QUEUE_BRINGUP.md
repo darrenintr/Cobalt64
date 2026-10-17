@@ -182,3 +182,34 @@ Metal, and is NOT a working RX7600 hardware-copy driver.
 
 Nothing here flashes VBIOS, programs SPI flash, changes permanent
 GPU parameters, or starts a real command on the user's RX 7600.
+
+## Stage G12: Queue0 register-stability preflight and irreversible DMA quarantine
+
+Branch: feature/navi33-sdma6-queue-quarantine-preflight (draft follow-up
+to the NBIO capacity/VRAM uploader prototype). No real silicon compute.
+
+- The isolated Navi33Sdma6MmioQueue.h now reads two complete Queue0
+  register snapshots (control, doorbell, read/write pointers, ring base)
+  and refuses to touch MMIO if they differ, are inaccessible, are all-ones,
+  or suggest an already-initialized/owned queue. It rechecks the expected
+  values immediately before the first write.
+- These snapshots only detect conflicts; they are NOT proof of exclusive
+  ownership. A future, independent OS/firmware-approved PCI owner must
+  still attest exclusive access and hardware reset.
+- The first attempted Queue0 register write now sets a sticky quarantine
+  flag BEFORE calling the transport. A failed callback may have
+  committed to silicon; there is deliberately no speculative write-back
+  of "old" registers after a failure. Physical reset and verified VM
+  teardown remain prerequisites before unpinning IOMMU/VRAM memory.
+- A successful 4096-byte simulated COPY/FENCE, queue disarm, or
+  abort-before-submit does NOT clear that sticky quarantine. These
+  operations cannot prove that both GMC11 VM hubs released the backing
+  pages. requiresIndependentResetBeforeUnmap() reports the state.
+- The production macOS Kext still does not link this experimental
+  backend and no boot argument enables it. GCC/Clang/ASan CI test a
+  synthetic register and DMA model only. Fault tests include register
+  changes between snapshots, a queue changing during pre-write validation,
+  a write that reaches hardware but returns failure, and abort/stop.
+- This stage intentionally does not acquire PCI ownership, initialize
+  PSP/GMC11, map GPU-visible live VRAM, issue a real SDMA command or
+  provide native Metal acceleration.
