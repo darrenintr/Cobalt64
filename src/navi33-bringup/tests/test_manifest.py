@@ -26,8 +26,18 @@ assert "pci->configRead32" in source
 assert "getDeviceMemoryWithRegister" in source
 assert '"ATY,bin_image"' in source
 assert 'Navi33Discovery.h' in source
+assert 'Navi33HardwarePlan.h' in source
+assert 'Navi33Dcn321.h' in source
+assert 'Navi33FirmwareGuard.h' in source
+assert 'Navi33,DCNReadPlanStatus' in source
+assert 'Navi33,GpuQueuesImplemented' in source
 parser = (root / "src" / "Navi33Discovery.h").read_text()
 assert "struct IPEntry" in parser and "isNavi33Candidate" in parser
 for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
     assert forbidden not in parser, f"IP parser gained {forbidden}"
-print("Navi33 manifest/read-only regression checks passed (static checks only)")
+for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h"):
+    code = (root / "src" / filename).read_text()
+    for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
+                      "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
+        assert forbidden not in code, f"{filename} gained hardware I/O: {forbidden}"
+print("Navi33 metadata-only hardware/firmware/DCN plans: static checks passed")

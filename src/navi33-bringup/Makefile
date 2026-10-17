@@ -29,7 +29,7 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
 .PHONY: all clean host-test
 all: $(KEXT)
 
-$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h
+$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -59,9 +59,23 @@ $(BUILD)/discovery-dump: tools/discovery_dump.cpp src/Navi33Discovery.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/discovery_dump.cpp -o $@
 
-host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/discovery-dump
+$(BUILD)/test-hardware-plan: tests/test_hardware_plan.cpp src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33Discovery.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_hardware_plan.cpp -o $@
+
+$(BUILD)/test-firmware: tests/test_firmware.cpp src/Navi33FirmwareGuard.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_firmware.cpp -o $@
+
+$(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/Navi33Dcn321.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
+
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/discovery-dump $(BUILD)/backend-report
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
+	$(BUILD)/test-hardware-plan
+	$(BUILD)/test-firmware
 	python3 tests/test_manifest.py
 
 clean:

@@ -6,6 +6,9 @@
 #include <pexpert/pexpert.h>
 #include "Navi33Identity.h"
 #include "Navi33Discovery.h"
+#include "Navi33HardwarePlan.h"
+#include "Navi33Dcn321.h"
+#include "Navi33FirmwareGuard.h"
 #include <libkern/c++/OSData.h>
 
 class Navi33Probe : public IOService {
@@ -72,6 +75,9 @@ bool Navi33Probe::start(IOService *provider) {
         (static_cast<uint32_t>(id.subClass) << 8) | id.progIf), 32);
     setProperty("Navi33,SubsystemPair", static_cast<uint64_t>(pci->configRead32(0x2Cu)), 32);
     setProperty("Navi33,GpuWritesEnabled", static_cast<uint64_t>(0), 32);
+    setProperty("Navi33,FirmwareLoadingImplemented", static_cast<uint64_t>(0), 8);
+    setProperty("Navi33,GpuQueuesImplemented", static_cast<uint64_t>(0), 8);
+    setProperty("Navi33,DcnModeSettingImplemented", static_cast<uint64_t>(0), 8);
 
     // Inspect IOPCIFamily's *assigned resource metadata* only. In particular,
     // do not call setMemoryEnable(), mapDeviceMemoryWithRegister(), or touch
@@ -109,8 +115,37 @@ bool Navi33Probe::start(IOService *provider) {
             setProperty("Navi33,DiscoveryOffset", static_cast<uint64_t>(disc.binaryOffset()), 64);
             setProperty("Navi33,IPCount", static_cast<uint64_t>(disc.count()), 16);
             setProperty("Navi33,IPBases64", static_cast<uint64_t>(disc.is64BitBase()), 8);
-            const bool candidate = disc.isNavi33Candidate();
+            const navi33::InventoryReport generation = navi33::inventory(disc);
+            const bool candidate = generation.code == navi33::InventoryCode::Pass;
             setProperty("Navi33,VersionsMatch", static_cast<uint64_t>(candidate), 8);
+            setProperty("Navi33,HardwarePlanStatus",
+                        static_cast<uint64_t>(generation.code), 8);
+            setProperty("Navi33,HardwarePlanMatchedEngines",
+                        static_cast<uint64_t>(generation.matchedEngines), 8);
+            setProperty("Navi33,HardwarePlanRejectedEngine",
+                        static_cast<uint64_t>(generation.failingEngine), 8);
+
+            // Assigned BAR5 resource metadata only. No MMIO mapping or
+            // device access: the plan lists hypothetical read locations,
+            // strictly bounded to the aperture. It is NOT executed here.
+            IODeviceMemory *regs = pci->getDeviceMemoryWithRegister(
+                kIOPCIConfigBaseAddress5);
+            const uint64_t bar5Bytes = regs ?
+                static_cast<uint64_t>(regs->getLength()) : 0u;
+            const navi33::dcn321::ReadPlan display =
+                navi33::dcn321::buildReadPlan(disc, bar5Bytes);
+            setProperty("Navi33,DCNReadPlanStatus",
+                        static_cast<uint64_t>(display.code), 8);
+            setProperty("Navi33,DCNReadPlanCount",
+                        static_cast<uint64_t>(display.resolved), 8);
+            if (display.code == navi33::AddressCode::Pass) {
+                const uint64_t otg0 = display.offsets[
+                  static_cast<size_t>(navi33::dcn321::Register::Pipe0FrameCount)];
+                const uint64_t hubp0 = display.offsets[
+                  static_cast<size_t>(navi33::dcn321::Register::Pipe0SurfaceLo)];
+                setProperty("Navi33,DCN321OTG0FrameOffset", otg0, 64);
+                setProperty("Navi33,DCN321HUBP0SurfaceOffset", hubp0, 64);
+            }
             struct Query { uint16_t hwid; const char *key; };
             static const Query queries[] = {
                 {navi33::ipid::GC, "Navi33,GCVersion"},
@@ -127,8 +162,9 @@ bool Navi33Probe::start(IOService *provider) {
                                          (static_cast<uint32_t>(e.minor) << 8u) | e.revision;
                 setProperty(q.key, static_cast<uint64_t>(version), 32);
             }
-            IOLog("Navi33Probe: supplied IP snapshot count %u, Navi33 versions %s; no HW writes\n",
-                  disc.count(), candidate ? "MATCH" : "MISMATCH");
+            IOLog("Navi33Probe: supplied IP snapshot %u blocks, GFX11 gate=%s, DCN read-plan=%u; no GPU access\n",
+                  disc.count(), candidate ? "MATCH" : "MISMATCH",
+                  static_cast<unsigned>(display.code));
         }
     }
 

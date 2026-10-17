@@ -128,6 +128,49 @@ Source: [bootstrap/README.md](bootstrap/README.md).
 AuxKC before a bare-metal first boot, and ensuring Tahoe's firmware/installer
 keeps GOP pixels visible. Real GFX11, RADV and Metal are still pending.
 
+## Stage 4: separate GFX11/DCN3.2.1 backend plan (host tested)
+
+These NEW modules are compiled by both GCC/Clang Linux CI and the macOS
+`Navi33Probe.kext`. They are deliberately **metadata-only**, not a
+partially-working GPU driver:
+
+- `src/Navi33HardwarePlan.h`: strict per-engine fingerprint for
+  GC 11.0.2 (GFX11/GMC11), MP0 13.0.7 (PSP13), MP1 13.0.7 (SMU13),
+  SDMA 6.0.2, DMU 3.2.1 (DCN3.2.1). Rejects missing/duplicate/older
+  or RDNA4 blocks. Every BAR5-relative register offset is derived from
+  supplied IP Discovery and bounds-checked against **assigned BAR5 size**.
+- `src/Navi33Dcn321.h`: **18 exact, source-pinned DCN3.2.1 register
+  definitions** (DCN VRAM base/top, all four HUBPREQ pitch/surface pairs,
+  and OTG frame counters), all using IP Discovery DMU BASE_IDX 2. These
+  are potential read offsets only; a Kext does not access these registers.
+  Each pipe may be inactive; the plan never assumes pipe0 drives the GOP.
+- `src/Navi33FirmwareGuard.h`: Linux AMD common firmware-header metadata
+  parser for families `gc_11_0_2`, `psp_13_0_7`, `smu_13_0_7`,
+  `sdma_6_0_2`. Refuses wrong IP family, malformed header and out-of-range
+  payloads. CRC is reported as an **unverified field**, not a trust proof.
+  No firmware binaries bundled and no firmware execution path.
+- `tools/backend_report.cpp`: read-only offline CLI accepting a full ROM/TMR
+  snapshot and the PCI BAR5 resource **size in bytes**:
+
+~~~sh
+make -C src/navi33-bringup host-test
+src/navi33-bringup/build/backend-report /path/to/full-rom.bin 0x100000
+~~~
+
+If input is missing or incompatible, it prints a rejection rather than
+guessing register addresses. `Navi33Probe.kext` exposes the inventory
+and offset-plan statuses in IORegistry when a full `ATY,bin_image`
+snapshot and BAR5 metadata are available, without mapping/readback.
+
+**Important:** None of these modules initializes PSP, SMU, SDMA,
+memory translation, interrupts or GFX11 command rings. Their
+`kRegisterWritesImplemented` and `kGpuCommandSubmissionImplemented`
+guards remain compile-time false. They cannot enable macOS display
+or Metal without new hardware-backed code and a recoverable test path.
+
+Sources: Linux `amdgpu_discovery.c`, `amdgpu_ucode.h`, and
+`dcn_3_2_1_offset.h`, all under the AMD permissive MIT-style license.
+
 ## Next milestones (not implemented yet)
 
 1. Provide safe runtime IP Discovery acquisition from real Navi33 TMR/flash,
