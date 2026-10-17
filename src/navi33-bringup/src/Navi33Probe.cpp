@@ -22,6 +22,7 @@
 #include "Navi33LiveMmio.h"
 #include "Navi33Psp13Status.h"
 #include "Navi33Sdma6Status.h"
+#include "Navi33Sdma6QueueCensus.h"
 #include "Navi33HwProbeLogic.h"
 #include "Navi33Gmc11VramLive.h"
 #include "Navi33VramSurvey.h"
@@ -404,6 +405,69 @@ n33_sdma_status Navi33Probe::sdmaStatus() {
         mapping->release();
     }
     return navi33::sdma6live::report(sample);
+}
+
+// Root-gated READ-ONLY Queue0 register census. Two snapshots of
+// physical BAR5 are checked for stability; an idle register snapshot
+// is NOT proof of any PCI, firmware or queue ownership. NO writes.
+n33_queue_census_status Navi33Probe::queueCensus() {
+    navi33::queue_census::Sample sample{};
+    uint32_t enabled=0u,disabled=0u;
+    const bool on=PE_parse_boot_argn("navi33-sdma-read",&enabled,
+                                     sizeof(enabled)) && enabled==1u;
+    const bool off=PE_parse_boot_argn("navi33-sdma-off",&disabled,
+                                      sizeof(disabled)) && disabled!=0u;
+    if(!on || off)return navi33::queue_census::report(sample);
+    auto *pci=OSDynamicCast(IOPCIDevice,getProvider());
+    if(!pci) {
+        sample.state=N33_QUEUE_NO_INVENTORY;
+        return navi33::queue_census::report(sample);
+    }
+    const auto id=navi33::inspectPci(
+        pci->configRead32(kIOPCIConfigVendorID),
+        pci->configRead32(kIOPCIConfigRevisionID));
+    if(!navi33::isSupported(id)) {
+        sample.state=N33_QUEUE_NO_INVENTORY;
+        return navi33::queue_census::report(sample);
+    }
+    auto *snapshot=OSDynamicCast(OSData,pci->getProperty("ATY,bin_image"));
+    if(!snapshot || snapshot->getLength()<64u ||
+       snapshot->getLength()>navi33::IPDiscovery::kMaxBlob) {
+        sample.state=N33_QUEUE_NO_INVENTORY;
+        return navi33::queue_census::report(sample);
+    }
+    navi33::IPDiscovery disc;
+    if(!disc.parse(static_cast<const uint8_t *>(snapshot->getBytesNoCopy()),
+                   snapshot->getLength()) ||
+       navi33::inventory(disc).code!=navi33::InventoryCode::Pass) {
+        sample.state=N33_QUEUE_NO_INVENTORY;
+        return navi33::queue_census::report(sample);
+    }
+    IODeviceMemory *bar=pci->getDeviceMemoryWithRegister(
+        kIOPCIConfigBaseAddress5);
+    const uint64_t bytes=bar?static_cast<uint64_t>(bar->getLength()):0u;
+    const auto plan=navi33::queue_census::fromDiscovery(disc,bytes);
+    if(plan.state!=N33_QUEUE_OBSERVED) {
+        sample.state=plan.state;
+        return navi33::queue_census::report(sample);
+    }
+    if(!bar) {
+        sample.state=N33_QUEUE_BAD_MMIO_PLAN;
+        return navi33::queue_census::report(sample);
+    }
+    IOMemoryMap *mapping=bar->map();
+    if(!mapping) {
+        sample.state=N33_QUEUE_READ_ERROR;
+    } else {
+        if(static_cast<uint64_t>(mapping->getLength())<bytes) {
+            sample.state=N33_QUEUE_BAD_MMIO_PLAN;
+        } else {
+            sample=navi33::queue_census::readStable(
+                plan,true,navi33ReadStatusDword,mapping);
+        }
+        mapping->release();
+    }
+    return navi33::queue_census::report(sample);
 }
 
 // This is an ACTUAL physical RX7600 status read, not a mock test.
