@@ -1,0 +1,24 @@
+name: Navi33 host verification
+
+on:
+  push:
+    branches: ['feature/navi33-*']
+    paths: ['src/navi33-bringup/**', '.github/workflows/navi33-host.yml']
+  pull_request:
+    paths: ['src/navi33-bringup/**', '.github/workflows/navi33-host.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: GCC host tests
+        run: make -C src/navi33-bringup clean host-test HOST_CXX=g++
+      - name: Clang host tests
+        run: make -C src/navi33-bringup clean host-test HOST_CXX=clang++
+      - name: Python compile check
+        run: python3 -m compileall -q src/navi33-bringup/tests
