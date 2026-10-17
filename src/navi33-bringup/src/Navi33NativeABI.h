@@ -11,7 +11,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 5u /* adds read-only GMC11 paired-hub VRAM geometry */
+#define N33_ABI_VERSION 6u /* adds verified read-only NBIO 4.3 VRAM capacity */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -115,15 +115,26 @@ enum n33_vram_state {
 };
 #define N33_VRAM_FLAG_PAIRED (1u<<0)
 #define N33_VRAM_FLAG_BAR0_ASSIGNED (1u<<1)
+#define N33_VRAM_FLAG_CAPACITY_VALID (1u<<2)
+#define N33_VRAM_FLAG_MC_GEOMETRY_VALID (1u<<3)
+enum n33_nbio_capacity_state {
+  N33_NBIO_NO_INVENTORY=0, N33_NBIO_UNSUPPORTED=1,
+  N33_NBIO_MISSING_BASE=2, N33_NBIO_BAD_OFFSET=3,
+  N33_NBIO_READ_FAILED=4, N33_NBIO_UNSTABLE=5,
+  N33_NBIO_INVALID_CAPACITY=6, N33_NBIO_STABLE=7,
+  N33_NBIO_GEOMETRY_MISMATCH=8
+};
 struct n33_vram_geometry_status {
   uint32_t abi_version,size,state,flags;
   uint32_t mm_fb_base,mm_fb_top,mm_fb_offset;
   uint32_t gfx_fb_base,gfx_fb_top,gfx_fb_offset;
   uint32_t bar0_mib,bar5_kib,read_count,mmhub_revision;
   uint64_t candidate_physical_fb_base;
+  uint32_t nbio_state,nbio_revision,nbio_memsize_mib,nbio_reads;
+  uint64_t verified_vram_bytes,verified_mc_start;
 };
-N33_STATIC_ASSERT(sizeof(struct n33_vram_geometry_status)==64,
-                  "N33 read-only VRAM geometry status must be 64 bytes");
+N33_STATIC_ASSERT(sizeof(struct n33_vram_geometry_status)==96,
+                  "N33 read-only VRAM geometry status must be 96 bytes");
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;
