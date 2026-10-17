@@ -54,6 +54,7 @@ jobs:
         run: |
           make -C src/navi33-bringup MKSDK=/tmp/RDNA4FB/MacKernelSDK physical-io-check
           test -f src/navi33-bringup/build/Navi33DarwinQueue1IO.o
+          test -f src/navi33-bringup/build/Navi33DarwinRootReadback.o
           # Verify this prototype is not linked into Navi33Probe.kext.
           ! nm src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe | grep 'Navi33DarwinQueue1IO'
       - name: Compile N33N read-only macOS user-space diagnostic (do not run)
