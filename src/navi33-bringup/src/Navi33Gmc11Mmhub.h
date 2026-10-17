@@ -296,6 +296,7 @@ public:
         }
         for(size_t i=0u;i<9u;++i)saved_[i]=old[i];
         plan_=p;io_=io;
+        gpuTable_=table.gpuPhysicalPageTable;
         state_=Code::Prepared;
         r.code=Code::Prepared;r.writes=written;
         return r;
@@ -420,6 +421,10 @@ public:
     }
 
     bool canUseGpuPageTable() const {return state_==Code::Flushed;}
+    Hub currentHub() const {return plan_.hub;}
+    uint64_t verifiedTableAddress() const {
+        return state_==Code::Flushed ? gpuTable_ : 0u;
+    }
     // No MMHUB teardown has yet been validated on silicon. A mapped table
     // must remain pinned until a separate reset/recovery path is verified.
     bool mayReleaseMappedMemory() const {return state_==Code::Disabled;}
@@ -431,5 +436,15 @@ private:
     Plan plan_{};
     IO io_{};
     [[maybe_unused]] uint32_t saved_[9u]{};
+    uint64_t gpuTable_=0u;
 };
+// A verified single hub must NOT unlock SDMA6. Both hubs need to report
+// completed invalidations for the exact same pinned root table.
+inline bool dualHubReady(const Controller &mmhub,const Controller &gfxhub) {
+    const uint64_t root=mmhub.verifiedTableAddress();
+    return mmhub.canUseGpuPageTable() && gfxhub.canUseGpuPageTable() &&
+           mmhub.currentHub()==Hub::Mmhub &&
+           gfxhub.currentHub()==Hub::Gfxhub &&
+           root!=0u && gfxhub.verifiedTableAddress()==root;
+}
 } } // namespace navi33::mmhub11
