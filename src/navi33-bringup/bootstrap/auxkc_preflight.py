@@ -46,7 +46,8 @@ def inspect_kext(folder: pathlib.Path) -> dict:
         if "com.apple.iokit.IOGraphicsFamily" not in p.get("OSBundleLibraries", {}):
             errors.append("missing IOGraphicsFamily dependency")
     try:
-        header = exe.open("rb").read(8)
+        with exe.open("rb") as binary:
+            header = binary.read(8)
         if header[:4] != MH_MAGIC_64_BYTES:
             errors.append("expected 64-bit Mach-O x86_64 executable")
         elif len(header) < 8 or struct.unpack("<I", header[4:8])[0] != CPU_TYPE_X86_64:
