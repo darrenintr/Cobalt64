@@ -18,6 +18,7 @@ for required in (
     "getConsoleInfo(&video)", "IODeviceMemory::withRange",
     "getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0)",
     "checkBar0(d, barBase, barSize)",
+    "initializePowerManagement()", "kIOPMPreventSystemSleep",
     "isConsoleDevice()", "inspectGop(", "configRead16(0x04u)"
 ):
     assert required in source, required

@@ -42,8 +42,10 @@ public:
                                         uintptr_t value) override;
 private:
     bool captureConsole();
+    void initializePowerManagement();
     static constexpr IODisplayModeID kFirmwareMode = static_cast<IODisplayModeID>(1);
     IOPCIDevice *pci_ { nullptr }; // borrowed provider, no retain needed while attached
     navi33fb::Layout console_ {};
     uint32_t colorMap_ { 0 };
+    bool pmInitialized_ { false };
 };

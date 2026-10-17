@@ -6,6 +6,7 @@
 #include "../../src/Navi33Identity.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
+#include <IOKit/pwr_mgt/IOPM.h>
 
 #define N33FB_LOG(fmt, ...) IOLog("Navi33GOPFB: " fmt "\n", ##__VA_ARGS__)
 
@@ -123,9 +124,31 @@ void Navi33GOPFB::stop(IOService *provider) {
     super::stop(provider);
 }
 
+void Navi33GOPFB::initializePowerManagement() {
+    if (pmInitialized_) return;
+    // IOGraphicsFamily registers power states during enableController(),
+    // not start(): calling this before IOFramebuffer has joined the power
+    // tree can hang during driver startup. Use the RDNA4FB/IONDRV pattern.
+    static IOPMPowerState powerStates[3] = {
+        { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        { 1, 0, 0, kIOPMPowerOn, 0, 0, 0, 0, 0, 0, 0, 0 },
+        { 1, kIOPMDeviceUsable, kIOPMPowerOn, kIOPMPowerOn, 0, 0, 0, 0, 0, 0, 0, 0 },
+    };
+    // A GOP-only driver cannot resume a reset/power-gated DCN3.2 display.
+    // Refuse full system sleep rather than destroying the last image.
+    for (auto &state : powerStates)
+        state.capabilityFlags |= kIOPMPreventSystemSleep;
+    pmInitialized_ = true;
+    registerPowerDriver(this, powerStates, 3);
+    temporaryPowerClampOn();
+    changePowerStateTo(1);
+    N33FB_LOG("power: registered doze-only policy; system sleep disallowed");
+}
+
 IOReturn Navi33GOPFB::enableController() {
     if (!navi33fb::valid(console_) && !captureConsole())
         return kIOReturnNoResources;
+    initializePowerManagement();
     return kIOReturnSuccess;
 }
 
