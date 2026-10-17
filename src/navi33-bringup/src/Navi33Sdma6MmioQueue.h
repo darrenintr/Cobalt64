@@ -338,6 +338,39 @@ public:
         o.status=Code::Timeout;return o;
 #endif
     }
+    // No command was ever published. Only an exclusively owned, still
+    // disabled ring may be disarmed without GPU fence proof.
+    Observation abortBeforeSubmit() {
+#ifndef COBALT_NAVI33_ENABLE_UNSAFE_MMIO
+        return {Code::NotBuilt,0u,0u,0u,0u,0u};
+#else
+        Observation o{};
+        if(state_!=Code::Ready) {o.status=Code::Denied;return o;}
+        uint32_t ctl=0u,rptr=0u,wptr=0u;
+        if(!io_.read(io_.ctx,kRbCntl,&ctl) ||
+           !io_.read(io_.ctx,kRptr,&rptr) ||
+           !io_.read(io_.ctx,kWptr,&wptr) ||
+           (ctl&kEnable) || rptr!=0u || wptr!=0u) {
+            state_=Code::RecoveryRequired;
+            o.status=Code::RecoveryRequired;
+            return o;
+        }
+        if(!io_.write(io_.ctx,kRbCntl,oldCtl_ & ~kEnable)) {
+            state_=Code::RecoveryRequired;
+            o.status=Code::RecoveryRequired;
+            return o;
+        }
+        ++o.mmioWrites;
+        if(!io_.read(io_.ctx,kRbCntl,&ctl) || (ctl&kEnable)) {
+            state_=Code::RecoveryRequired;
+            o.status=Code::RecoveryRequired;
+            return o;
+        }
+        state_=Code::Denied;
+        o.status=Code::Completed;
+        return o;
+#endif
+    }
     Observation stopAfterCompleted() {
 #ifndef COBALT_NAVI33_ENABLE_UNSAFE_MMIO
         return {Code::NotBuilt,0u,0u,0u,0u,0u};
