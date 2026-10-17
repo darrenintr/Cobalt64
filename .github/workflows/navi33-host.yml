@@ -68,6 +68,12 @@ jobs:
             -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33compute.c \
             -framework IOKit -framework CoreFoundation -o /tmp/n33compute
           file /tmp/n33compute
+      - name: Compile read-only MMHUB VRAM geometry CLI (never execute on runner)
+        run: |
+          clang -arch x86_64 -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33vram.c \
+            -framework IOKit -framework CoreFoundation -o /tmp/n33vram
+          file /tmp/n33vram
       - name: Compile strict Metal triangle readback proof (do not execute)
         run: |
           clang -arch x86_64 -fobjc-arc -O2 -std=gnu11 -Wall -Wextra -Werror \
@@ -100,5 +106,6 @@ jobs:
             src/navi33-bringup/build/Navi33Probe.kext
             src/navi33-bringup/display/build/Navi33GOPFB.kext
             /tmp/n33compute
+            /tmp/n33vram
           if-no-files-found: error
           retention-days: 30
