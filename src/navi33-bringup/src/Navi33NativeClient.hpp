@@ -15,6 +15,7 @@ public:
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
     IOReturn clientClose() override;
+    IOReturn clientDied() override;
     void free() override;
     IOReturn externalMethod(uint32_t selector,
                             IOExternalMethodArguments *args,
