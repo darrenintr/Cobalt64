@@ -169,3 +169,49 @@ Do **not** use a single display GPU for the first destructive MMIO
 write without an independent headless/remote recovery console and a
 known rollback environment. CI and software host tests cannot replace
 hardware observations.
+
+## Stage G7: actual SDMA6 MMIO write backend (isolated, NOT run on GPU)
+
+`src/Navi33Sdma6MmioQueue.h` implements the **write-capable** SDMA6
+GC11 Queue0 register protocol, as opposed to the earlier CPU ring
+simulator and software readiness gate. It has a checked
+`configure → submit → waitAndVerify → stopAfterCompleted` path:
+
+1. Require separately proven firmware, exclusive queue ownership,
+   device-installed GMC11 VMID0, TLB synchronization, GPU-accessible
+   addresses, DMA pin lifetime, cache maintenance and independent
+   GPU recovery. None of these is inferred from a mock test.
+2. Validate a full 4KiB source pattern, poisoned 4KiB destination,
+   16-DWORD COPY+FENCE+NOP ring, zero-initialized fence memory, and
+   exact ring/source/destination/fence GPU VA relationships.
+3. Refuse a busy/doorbell-enabled ring or nonzero RPTR/WPTR. Snapshot
+   Queue0 register state, program `RB_BASE[_HI]`, RPTR/WPTR,
+   RB size 1024 DWORDS (4KiB), VMID0, privileged ring, then
+   verify disabled-state readback.
+4. After a device-specific cache-sync callback succeeds, enable RB
+   and write `RB_WPTR=64` **bytes** through GC MMIO (not a made-up
+   16-DWORD pointer). The tail is a UC `SDMA_OP_FENCE` packet.
+5. Poll CPU-visible fence under cache invalidation, compare **all
+   4096 destination bytes** against their source and expected pattern,
+   then verify RPTR/WPTR have reached 64 bytes. Only then disable RB
+   and permit its IOMMU mapping to be reclaimed.
+6. On a failed readback/timeout after submission, require external
+   recovery; **never release pinned buffers** simply because a
+   host-side timeout has elapsed. A queue configured but not kicked
+   may use `abortBeforeSubmit`.
+
+The hardware write implementation is under
+`COBALT_NAVI33_ENABLE_UNSAFE_MMIO`. **The shipping Kext does not
+define it, import this module, or expose its callbacks to N33N.**
+Host tests compile with this macro and use a fake MMIO bus and
+synthetic GPU response, plus a separate default-disabled test.
+No physical RX7600 instruction has been submitted or retired by this PR.
+
+**Why it remains isolated:** The existing `Navi33DarwinStage`
+holds OS-IOMMU IOVAs and constructs an offline GART PTE image. The
+GPU addresses in that image are candidate addresses, not proven
+installed GC VM mappings. A real macOS GMC11 MMHUB/GFXHUB root page
+table, TLB flush, firmware queue ownership and recovery path are
+still needed before the backend may receive a real MMIO callback.
+Never simply pass an OS DMA IOVA into `ringGpuVa` or turn on the
+compile gate on your only display GPU.
