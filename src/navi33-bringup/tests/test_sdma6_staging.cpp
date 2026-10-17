@@ -15,6 +15,7 @@ int main() {
     const Report valid=prepare(fragments,2u,buffer.data(),buffer.size());
     assert(valid.code==Code::Pass);
     assert(valid.pages==kPages && valid.packetDwords==16u);
+    assert(valid.candidatePageTableDmaIova==0x2000000ull);
     assert(verifyInitial(buffer.data(),buffer.size(),valid));
     assert(!gpuCompleted(valid));
     const uint8_t *ring=buffer.data()+kRingPage*kBytePage;
