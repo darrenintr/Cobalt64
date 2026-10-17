@@ -15,6 +15,7 @@ public:
     void stop(IOService *provider) override;
     IOReturn newUserClient(task_t owningTask, void *securityID, UInt32 type,
                            OSDictionary *properties, IOUserClient **handler) override;
+    n33_psp_status pspStatus(); // opt-in, read-only MP0 sOS observation
     n33_capabilities nativeCapabilities() const {
         n33_capabilities result{};
         result.abi_version = N33_ABI_VERSION;
