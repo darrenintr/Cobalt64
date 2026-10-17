@@ -106,6 +106,24 @@ Until real Navi33 hardware tests and an installation/recovery strategy have
 been demonstrated, the framebuffer remains experimental and should not
 be installed on a single-GPU production machine.
 
+## Stage 3: bootstrapping and recovery tooling (implemented offline)
+
+Source: [bootstrap/README.md](bootstrap/README.md).
+
+- `boot_profiles.py` creates **separate** OpenCore recovery,
+  WhateverGreen `-radvesa` baseline, and GOP framebuffer trial configurations.
+  It does not edit your active `config.plist` or any EFI partition.
+- `auxkc_preflight.py` inspects the RX 7600 framebuffer Kext's Info.plist,
+  x86_64 Mach-O and System KC dependency before any possible AuxKC staging.
+- The GOP bridge now validates that firmware scanout lies within PCI BAR0
+  and registers doze-only power states without touching DCN3.2.1 registers.
+- macOS CI compiles and signs both independent Kexts and stores build
+  artifacts for download. CI does **not** install, boot, or exercise RX 7600.
+
+**Unsolved:** getting this IOGraphics-dependent Kext into the target macOS
+AuxKC before a bare-metal first boot, and ensuring Tahoe's firmware/installer
+keeps GOP pixels visible. Real GFX11, RADV and Metal are still pending.
+
 ## Next milestones (not implemented yet)
 
 1. Provide safe runtime IP Discovery acquisition from real Navi33 TMR/flash,

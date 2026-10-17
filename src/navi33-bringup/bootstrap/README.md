@@ -16,28 +16,28 @@ python3 src/navi33-bringup/bootstrap/boot_profiles.py \
 ~~~
 
 Outputs:
-- \`recovery.plist\`: original boot-args except experimental Navi33 flags,
-  with \`navi33-fb-off=1\`. This disables the custom framebuffer if it has been
+- `recovery.plist`: original boot-args except experimental Navi33 flags,
+  with `navi33-fb-off=1`. This disables the custom framebuffer if it has been
   installed. It **cannot** recover a screen that died before the Kext loaded.
-- \`vesa-baseline.plist\`: adds \`-radvesa\` and \`navi33-fb-off=1\`. It is a
+- `vesa-baseline.plist`: adds `-radvesa` and `navi33-fb-off=1`. It is a
   diagnostic for the WhateverGreen software-display path, **not** evidence
   that RX 7600 will show the installer or WindowServer.
-- \`fb-trial.plist\`: adds \`-radvesa navi33-fb=1\`. It can only do anything
-  after the separate \`Navi33GOPFB.kext\` has been added to the **target
+- `fb-trial.plist`: adds `-radvesa navi33-fb=1`. It can only do anything
+  after the separate `Navi33GOPFB.kext` has been added to the **target
   macOS** Auxiliary Kernel Collection (AuxKC).
 
 The tool **never overwrites the input** and refuses output-name collisions.
 Profiles preserve SMBIOS, AMD kernel patches, DeviceProperties, and existing
-SIP settings. They also ensure OpenCore NVRAM/Delete includes \`boot-args\`,
+SIP settings. They also ensure OpenCore NVRAM/Delete includes `boot-args`,
 so old persisted boot flags do not silently supersede profile flags.
 
 **Important:** These three files are not three entries in the OpenCore picker.
-OpenCore reads one \`EFI/OC/config.plist\` at a time. To use alternatives,
+OpenCore reads one `EFI/OC/config.plist` at a time. To use alternatives,
 prepare genuinely independent bootable EFI environments (or a way to restore
 the previous configuration) first. Do not copy multiple named plists into
 one EFI and expect the picker to switch between them.
 
-The \`-radvesa\` boot arg comes from [WhateverGreen](https://github.com/
+The `-radvesa` boot arg comes from [WhateverGreen](https://github.com/
 acidanthera/WhateverGreen); its effect requires an active compatible
 WhateverGreen Kext. It disables AMD acceleration; it does not magically
 create an RX 7600 graphics driver.
@@ -55,8 +55,8 @@ the macOS Tahoe installer will display a UI.
 
 Apple's post-Big-Sur model prelinks third-party Kexts in an Auxiliary Kernel
 Collection and ordinarily involves approval + rebuilding + restarting.
-\`Navi33GOPFB\` depends on \`IOGraphicsFamily\` in the **System** KC and is
-not safely OpenCore-injectable in \`Kernel/Add\`. The installer framebuffer
+`Navi33GOPFB` depends on `IOGraphicsFamily` in the **System** KC and is
+not safely OpenCore-injectable in `Kernel/Add`. The installer framebuffer
 handoff will remain unresolved until a **target macOS installation** can
 load the AuxKC. A Kext built inside the user's existing macOS QEMU guest
 will NOT appear automatically in a separate bare-metal installation.
@@ -69,8 +69,8 @@ no proven Navi33 display path yet.
 
 - Linux/macOS CI: unit tests of NVRAM boot profiles, configuration
   preservation, profile file writes, Kext Info.plist and Mach-O preflight.
-- macOS CI: compile both Kexts and run \`auxkc_preflight.py\` on
-  \`Navi33GOPFB.kext\` **without installation**.
+- macOS CI: compile both Kexts and run `auxkc_preflight.py` on
+  `Navi33GOPFB.kext` **without installation**.
 - No CI can validate an AMD DCN3.2.1 scanout, a GPU command submission or
   whether the black-screen Tahoe installer is fixed.
 

@@ -54,3 +54,12 @@ jobs:
         run: python3 src/navi33-bringup/bootstrap/auxkc_preflight.py --kext src/navi33-bringup/display/build/Navi33GOPFB.kext
       - name: Verify Kext signing
         run: codesign --verify --verbose=2 src/navi33-bringup/display/build/Navi33GOPFB.kext
+      - name: Preserve compiled Kexts as CI artifacts (NOT boot-tested)
+        uses: actions/upload-artifact@v4
+        with:
+          name: navi33-prototype-kexts-macos-x86_64
+          path: |
+            src/navi33-bringup/build/Navi33Probe.kext
+            src/navi33-bringup/display/build/Navi33GOPFB.kext
+          if-no-files-found: error
+          retention-days: 30
