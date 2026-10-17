@@ -30,3 +30,21 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic \
 ```
 
 Linux reference: `drivers/gpu/drm/amd/display/dc/resource/dcn321/dcn321_resource.c`, `optc/dcn10/dcn10_optc.c`, `hubp/dcn20/dcn20_hubp.c`. The Linux source is not linked into this library.
+
+## Stage 2: linear primary-plane preflight (mock-tested, not hardware-ready)
+
+- Read-only `dcn321_snapshot_pipe`: reports OTG enabled, clock-on, update locks, pending flips, frame counter, primary address, pitch, and DCC/format state. Reports internal register state only.
+- Read-only `dcn321_wait_frame_progress`: checks for frame counter changes with wraparound awareness and an explicit bounded delay callback. Frame-counter movement **does not prove light from a DP/HDMI connector**.
+- Opt-in `dcn321_prepare_linear_plane`: stages a 32bpp ARGB8888/ABGR8888 linear, non-DCC primary surface on a **disabled but clocked** OTG; checks 256-byte address alignment, VRAM bounds, pitch/viewport dimensions, update locks, and pending flips. Programs format, swizzle, pitch, viewport, VMID0, crossbar and MC address in high-then-low order. Does **not** enable OTG or transmit pixels. `DCN321_ROLLBACK` reports incomplete register compensation on MMIO failure.
+- The transaction snapshots all affected registers before writing, then performs best-effort compensation on write error; this does not replace a hardware-safe rollback of clocks, link, pipe-routing, firmware or VM state. Caller must synchronize MMIO and guarantee GPU VRAM pinning and correct VMID0 address mapping.
+- New host test `tests/test_dcn321_plane.c` covers guards, register values, read/write failures, compensation failures and 24-bit frame-counter wrap. No real hardware is exercised.
+
+`dcn321_prepare_linear_plane` is still dangerous to call on an active/sole display GPU. Do not attach it to any boot or IOKit probe flow; `dcn321_device.armed` remains false after init. It is not a complete DCN321 native modesetting implementation.
+
+To run the new test locally:
+
+```sh
+cc -std=c11 -Wall -Wextra -Werror -pedantic src/dcn321/dcn321.c \
+    src/dcn321/tests/test_dcn321_plane.c -o /tmp/test-dcn321-plane
+/tmp/test-dcn321-plane
+```
