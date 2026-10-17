@@ -174,6 +174,19 @@ int main() {
         assert(f.lease.phase()==queue_owner::Phase::Available);
     }
     {
+        Fake f{};
+        // The queue is not owned if Context0 was already enabled. Even
+        // though zero test MMIO writes occur, this transaction poisoned
+        // its software lease before attempting the hardware protocol.
+        f.regs[f.mm.offsets[0u]/4u]=h::kContextEnable;
+        const auto r=run(f);
+        assert(r.verdict==p::Verdict::MmhubPrepareFailed);
+        assert(f.writes==0u && !r.ringWasSubmitted);
+        assert(!r.stagingMayBeReleased && r.physicalResetBeforeRelease);
+        assert(f.rootArena.isQuarantined());
+        assert(!f.rootArena.release(&f,f.rootToken));
+    }
+    {
         Fake f;f.failQueue=true;auto r=run(f);
         assert(r.verdict==p::Verdict::FenceOrCopyFailed);
         assert(r.ringWasSubmitted && !r.fourKiBCopyVerified);
