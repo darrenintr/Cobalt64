@@ -36,6 +36,7 @@ struct Isolation {
     bool dmaIommuMappingHeld=false;
     bool deviceCacheMaintenanceAvailable=false;
     bool exclusiveSdma0Queue=false;
+    bool exclusiveSdma0Queue1=false;
     bool independentPowerCycleAndRecovery=false;
 };
 constexpr bool isolated(const Isolation &g) {
@@ -80,6 +81,7 @@ inline bool boundPlans(const mmhub11::Plan &mm,
        gfx.hub!=mmhub11::Hub::Gfxhub ||
        mm.barBytes!=gfx.barBytes || !mmhub11::validTable(table) ||
        !sdma6_mmio::validRequest(copy) ||
+       mm.vmid!=gfx.vmid || mm.vmid!=copy.vmid ||
        copy.sourceGpuVa!=table.gpuVirtualBase ||
        copy.sourceGpuVa>UINT64_MAX-table.mappedBytes ||
        copy.sourceGpuVa+table.mappedBytes> (1ull<<48u))
@@ -121,6 +123,7 @@ inline Report run(const Isolation &e,
     // All validation is done BEFORE any MMIO write. The booleans below
     // are NOT a substitute for a hardware-derived proof on real silicon.
     if(!isolated(e) || !boundPlans(mmPlan,gfxPlan,table,copy) ||
+       (copy.queueIndex==1u && !e.exclusiveSdma0Queue1) ||
        !hubPolls || hubPolls>100000u ||
        !fencePolls || fencePolls>100000u ||
        !mmIo.read || !mmIo.write || !mmIo.syncTableForDevice ||
@@ -213,16 +216,23 @@ inline Report run(const Isolation &e,
         r.verdict=Verdict::GfxhubActivateFailed;
         r.physicalResetBeforeRelease=true;return r;
     }
-    r.physicalResetBeforeRelease=true; // no verified VMID0 teardown
+    r.physicalResetBeforeRelease=true; // no verified VMID0/1 teardown
     if(!mmhub11::dualHubReady(mm,gfx)) {
         r.verdict=Verdict::DualHubMismatch;return r;
     }
 
     sdma6_mmio::Preconditions sdmaGate{};
     sdmaGate.firmwareVerified=e.pspAndSdmaFirmwareVerified;
-    sdmaGate.queueExclusivelyOwned=e.exclusiveSdma0Queue;
-    sdmaGate.vmid0MappedByThisDriver=mmhub11::dualHubReady(mm,gfx);
-    sdmaGate.tlbFlushedAfterMap=mmhub11::dualHubReady(mm,gfx);
+    const bool bothVmHubsReady=mmhub11::dualHubReady(mm,gfx);
+    sdmaGate.queueExclusivelyOwned=copy.queueIndex==1u ?
+        e.exclusiveSdma0Queue1 : e.exclusiveSdma0Queue;
+    sdmaGate.vmid0MappedByThisDriver=bothVmHubsReady && copy.vmid==0u;
+    sdmaGate.vmid1MappedByThisDriver=bothVmHubsReady && copy.vmid==1u;
+    sdmaGate.vmid1ExclusivelyOwned=e.exclusiveGpuAndBothVmHubs &&
+                                   copy.vmid==1u;
+    sdmaGate.queue1ExclusivelyOwned=e.exclusiveSdma0Queue1 &&
+                                    copy.queueIndex==1u;
+    sdmaGate.tlbFlushedAfterMap=bothVmHubsReady;
     sdmaGate.ringGpuVaResolved=sdma6_mmio::validRequest(copy);
     sdmaGate.dmaOwnershipHeld=e.dmaIommuMappingHeld;
     sdmaGate.independentGpuRecovery=e.independentPowerCycleAndRecovery;
