@@ -23,6 +23,7 @@
 #include "Navi33Psp13Status.h"
 #include "Navi33Sdma6Status.h"
 #include "Navi33HwProbeLogic.h"
+#include "Navi33Gmc11VramLive.h"
 #include <libkern/c++/OSData.h>
 
 
@@ -487,6 +488,76 @@ n33_hw_preflight Navi33Probe::hardwarePreflight(
     IOLog("Navi33Probe: RX7600 physical HW preflight reason %u, reads %u, PSP %u, SDMA %u; no GPU copy submitted\n",
           result.reason,result.mmio_reads,result.psp_state,result.sdma_state);
     return result;
+}
+
+// Live read-only MMHUB/GFXHUB FB registers; this does not claim VRAM,
+// change PCI configuration, program GART/VMID, or write the graphics card.
+n33_vram_geometry_status Navi33Probe::vramGeometryStatus() {
+    navi33::vram_live::Sample sample{};
+    uint32_t enabled=0u,kill=0u;
+    const bool on=PE_parse_boot_argn("navi33-vram-read",
+                                    &enabled,sizeof(enabled)) &&
+                  enabled==1u;
+    const bool off=PE_parse_boot_argn("navi33-vram-off",
+                                     &kill,sizeof(kill)) && kill!=0u;
+    if(!on || off)
+        return navi33::vram_live::report(sample,0u,0u,0xffffffffu);
+    auto *pci=OSDynamicCast(IOPCIDevice,getProvider());
+    if(!pci) {
+        sample.state=N33_VRAM_NO_BAR5;
+        return navi33::vram_live::report(sample,0u,0u,0xffffffffu);
+    }
+    const auto id=navi33::inspectPci(
+        pci->configRead32(kIOPCIConfigVendorID),
+        pci->configRead32(kIOPCIConfigRevisionID));
+    if(!navi33::isSupported(id)) {
+        sample.state=N33_VRAM_BAD_DISCOVERY;
+        return navi33::vram_live::report(sample,0u,0u,0xffffffffu);
+    }
+    auto *blob=OSDynamicCast(OSData,pci->getProperty("ATY,bin_image"));
+    if(!blob || blob->getLength()<64u ||
+       blob->getLength()>navi33::IPDiscovery::kMaxBlob) {
+        sample.state=N33_VRAM_NO_ROM;
+        return navi33::vram_live::report(sample,0u,0u,0xffffffffu);
+    }
+    navi33::IPDiscovery disc;
+    if(!disc.parse(static_cast<const uint8_t *>(blob->getBytesNoCopy()),
+                   blob->getLength()) ||
+       navi33::inventory(disc).code!=navi33::InventoryCode::Pass) {
+        sample.state=N33_VRAM_BAD_DISCOVERY;
+        return navi33::vram_live::report(sample,0u,0u,0xffffffffu);
+    }
+    IODeviceMemory *bar5=pci->getDeviceMemoryWithRegister(
+        kIOPCIConfigBaseAddress5);
+    IODeviceMemory *bar0=pci->getDeviceMemoryWithRegister(
+        kIOPCIConfigBaseAddress0);
+    const uint64_t bar5Bytes=bar5?static_cast<uint64_t>(bar5->getLength()):0u;
+    const uint64_t bar0Bytes=bar0?static_cast<uint64_t>(bar0->getLength()):0u;
+    if(!bar5 || bar5Bytes<4u) {
+        sample.state=N33_VRAM_NO_BAR5;
+        return navi33::vram_live::report(sample,bar0Bytes,bar5Bytes,0xffffffffu);
+    }
+    const auto plan=navi33::vram_live::fromDiscovery(disc,bar5Bytes);
+    if(plan.code!=navi33::vram_live::PlanCode::Pass) {
+        sample.state=N33_VRAM_BAD_OFFSETS;
+        return navi33::vram_live::report(sample,bar0Bytes,bar5Bytes,0xffffffffu);
+    }
+    IOMemoryMap *mapped=bar5->map();
+    if(!mapped) {
+        sample.state=N33_VRAM_MAP_FAILED;
+    } else {
+        if(static_cast<uint64_t>(mapped->getLength())<bar5Bytes)
+            sample.state=N33_VRAM_MAP_FAILED;
+        else
+            sample=navi33::vram_live::inspect(
+                plan,navi33ReadStatusDword,mapped);
+        mapped->release();
+    }
+    const auto output=navi33::vram_live::report(
+        sample,bar0Bytes,bar5Bytes,plan.mmRevision);
+    IOLog("Navi33Probe: read-only paired FB geometry state %u; %u BAR5 reads; NO VRAM/GPU writes\n",
+          output.state,output.read_count);
+    return output;
 }
 
 uint64_t Navi33Probe::claimStageOwner(const void *client) {
