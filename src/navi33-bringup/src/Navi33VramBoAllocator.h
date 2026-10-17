@@ -138,6 +138,20 @@ public:
         a.address=address;
         return a;
     }
+    // Never accept user-supplied Allocation metadata when binding a
+    // hardware page-table root. Always reconstruct it from the live lease.
+    Allocation describe(const void *client,Token token) const {
+        Allocation out{};
+        out.code=Code::InvalidToken;
+        if(!holds(client,token))return out;
+        const Entry &entry=leases_[token.slot];
+        out.token=token;
+        out.range=entry.range;
+        out.address=vram_geometry::locate(
+            geo_,entry.range.offset,entry.range.bytes);
+        out.code=out.address.valid?Code::Pass:Code::InvalidGeometry;
+        return out;
+    }
     bool holds(const void *client,Token token) const {
         if(!configured_ || quarantined_ || !client ||
            token.generation==0u || token.slot>=kMaxLeases)
