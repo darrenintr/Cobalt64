@@ -79,6 +79,13 @@ for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
         assert forbidden not in code, f"{filename} gained hardware I/O: {forbidden}"
+queue_code=(root/"src/Navi33Sdma6MmioQueue.h").read_text()
+assert "#ifdef COBALT_NAVI33_ENABLE_UNSAFE_MMIO" in queue_code
+assert "kDeviceSubmissionImplemented=false" in (root/"src/Navi33Sdma6HardwareGate.h").read_text()
+assert "kGpuRingSubmissionEnabled=false" in (root/"src/Navi33Sdma6Staging.h").read_text()
+assert "#include \"Navi33Sdma6MmioQueue.h\"" not in source
+assert "#include \"Navi33Sdma6MmioQueue.h\"" not in client
+assert "N33_CAP_HW_SDMA" not in client
 assert "kCanProgramGfxhub = false" in (root/"src/Navi33Gmc11Gart.h").read_text()
 assert "kCanSubmitToHardware = false" in (root/"src/Navi33Sdma6Ring.h").read_text()
 assert "kCanRingDoorbell = false" in (root/"src/Navi33Sdma6Ring.h").read_text()
