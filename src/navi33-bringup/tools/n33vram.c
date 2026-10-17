@@ -90,12 +90,12 @@ int main(int argc,char **argv) {
            status.bar0_mib,status.bar5_kib,status.read_count);
     printf("Candidate GPU physical FB base: 0x%llx\n",
            (unsigned long long)status.candidate_physical_fb_base);
-    printf("NBIO4.3 capacity state: %u (%s); revision=%08x; reads=%u\\n",
+    printf("NBIO4.3 capacity state: %u (%s); revision=%08x; reads=%u\n",
            status.nbio_state,capacityState(status.nbio_state),
            status.nbio_revision,status.nbio_reads);
-    printf("Observed NBIO capacity: %u MiB\\n",status.nbio_memsize_mib);
+    printf("Observed NBIO capacity: %u MiB\n",status.nbio_memsize_mib);
     if((status.flags&N33_VRAM_FLAG_MC_GEOMETRY_VALID)!=0u) {
-        printf("Cross-checked GPU MC start: 0x%llx; VRAM bytes: %llu\\n",
+        printf("Cross-checked GPU MC start: 0x%llx; VRAM bytes: %llu\n",
                (unsigned long long)status.verified_mc_start,
                (unsigned long long)status.verified_vram_bytes);
     } else {
