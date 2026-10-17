@@ -12,6 +12,7 @@ struct Fake {
     unsigned writes=0u, polls=0u, syncs=0u, hdps=0u;
     unsigned failAtWrite=0u, failAgainAtWrite=0u;
     bool ackOnInvalidate=true, acquireSemaphore=true, badSync=false;
+    uint32_t vmidMask=kInvalidateVmid0;
     uint64_t sem=0u,req=0u,ack=0u;
     Fake():words(65536u/4u,0u){}
 };
@@ -33,7 +34,7 @@ static bool write(void *ctx,uint64_t off,uint32_t value) {
         return false;
     f->words[off/4u]=value;
     if(off==f->req && f->ackOnInvalidate)
-        f->words[f->ack/4u]|=kInvalidateVmid0;
+        f->words[f->ack/4u]|=f->vmidMask;
     return true;
 }
 static bool sync(void *ctx) {
@@ -72,12 +73,12 @@ static Table table() {
     }
     return t;
 }
-static Plan makePlan(uint8_t revision=2u) {
+static Plan makePlan(uint8_t revision=2u,uint8_t vmid=0u) {
     IPEntry mmhub{};
     mmhub.hwId=ipid::MMHUB;
     mmhub.major=3u;mmhub.minor=0u;mmhub.revision=revision;
     mmhub.numBases=1u;mmhub.bases[0]=0x100u;
-    return planFromEntry(mmhub,true,65536u);
+    return planFromEntry(mmhub,true,65536u,vmid);
 }
 static Fake fakeFor(const Plan &p) {
     Fake f{};
@@ -192,6 +193,63 @@ static void gfxhubMockFlush() {
     assert(mm.verifiedTableAddress()==0x400000ull);
     assert(vm.verifiedTableAddress()==0x400000ull);
 }
+static void vmid1RegisterBank() {
+    const auto mm0=makePlan();
+    const auto mm1=makePlan(2u,1u);
+    const auto mm300=makePlan(0u,1u);
+    assert(mm1.code==Code::Prepared && mm1.vmid==1u && validPlan(mm1));
+    assert(mm1.offsets[0u]==(0x100ull+0x06c1ull)*4ull);
+    assert(mm1.offsets[1u]==(0x100ull+0x072dull)*4ull);
+    assert(mm1.offsets[3u]==(0x100ull+0x074dull)*4ull);
+    assert(mm1.offsets[5u]==(0x100ull+0x076dull)*4ull);
+    assert(mm300.offsets[0u]==(0x100ull+0x0741ull)*4ull);
+    assert(mm300.offsets[1u]==(0x100ull+0x07adull)*4ull);
+    for(size_t i=0u;i<7u;++i)
+        assert(mm1.offsets[i]!=mm0.offsets[i]);
+    for(size_t i=7u;i<kCount;++i)
+        assert(mm1.offsets[i]==mm0.offsets[i]); // invalidate registers shared
+    assert(makePlan(2u,2u).code==Code::InvalidPlan);
+    auto spoof=mm1;spoof.vmid=0u;
+    assert(!validPlan(spoof));
+
+    Fake mf=fakeFor(mm1);
+    mf.vmidMask=2u;
+    Controller mm{};
+    assert(mm.prepare(mm1,gate(),table(),callbacks(mf)).code==Code::Prepared);
+    assert(mf.words[mm0.offsets[0u]/4u]==0u);
+    assert(mf.words[mm0.offsets[1u]/4u]==0u);
+    const auto ma=mm.invalidateAndActivate(5u,10u);
+    assert(ma.code==Code::Flushed && ma.acknowledgement==2u);
+    assert(mf.words[mf.req/4u]==invalidateForVmid(1u));
+    assert(mm.currentVmid()==1u);
+
+    IPEntry gc{};
+    gc.hwId=ipid::GC;gc.major=11u;gc.minor=0u;gc.revision=2u;
+    gc.numBases=1u;gc.bases[0u]=0x100u;
+    const auto gc0=planGfxFromEntry(gc,true,65536u);
+    const auto gc1=planGfxFromEntry(gc,true,65536u,1u);
+    assert(validPlan(gc1) && gc1.vmid==1u);
+    assert(gc1.offsets[0u]==(0x100ull+0x1689ull)*4ull);
+    assert(gc1.offsets[1u]==(0x100ull+0x16f5ull)*4ull);
+    assert(gc1.offsets[3u]==(0x100ull+0x1715ull)*4ull);
+    assert(gc1.offsets[5u]==(0x100ull+0x1735ull)*4ull);
+    assert(gc1.offsets[8u]==gc0.offsets[8u]); // invalidation is shared
+    assert(planGfxFromEntry(gc,true,65536u,3u).code==Code::InvalidPlan);
+    Fake gf=fakeFor(gc1);
+    gf.vmidMask=2u;
+    Controller gfx{};
+    assert(gfx.prepare(gc1,gate(),table(),callbacks(gf)).code==Code::Prepared);
+    assert(gf.words[gc0.offsets[0u]/4u]==0u);
+    assert(gfx.invalidateAndActivate(5u,10u).code==Code::Flushed);
+    assert(gf.words[gf.req/4u]==invalidateForVmid(1u));
+    assert(dualHubReady(mm,gfx));
+
+    Fake f0=fakeFor(gc0);
+    Controller gfx0{};
+    assert(gfx0.prepare(gc0,gate(),table(),callbacks(f0)).code==Code::Prepared);
+    assert(gfx0.invalidateAndActivate(5u,10u).code==Code::Flushed);
+    assert(!dualHubReady(mm,gfx0)); // distinct VMIDs must not share a proof
+}
 static void cancellationAndFaults() {
     {
         auto p=makePlan();Fake f=fakeFor(p);Controller vm{};
@@ -258,6 +316,7 @@ int main() {
     offsetTests();
     successfulMockFlush();
     gfxhubMockFlush();
+    vmid1RegisterBank();
     cancellationAndFaults();
     std::puts("GMC11 MMHUB3 VMID0 MMIO programming / TLB ACK tested on FAKE registers only");
 }
