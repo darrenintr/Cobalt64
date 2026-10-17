@@ -310,3 +310,9 @@ requires `navi33-probe=1 navi33-client=1 navi33-dma-stage=1` and a
 root client. `navi33-dma-stage-off=1` overrides allocation. Both
 explicit release and client death revoke the IOVA before unpinning.
 **No GPU page-table programming or SDMA execution is enabled.**
+
+The diagnostic `tools/n33dma.c` is **only compiled** in CI. After a
+dedicated recovery path is validated, `sudo n33dma --status` queries
+cached state, and `sudo n33dma --stage` requests IOMMU staging.
+The latter always calls `DMA_RELEASE` and verifies teardown before
+closing the N33N session. No GPU packets are ever submitted.
