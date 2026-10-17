@@ -3,6 +3,7 @@
 #pragma once
 #include <IOKit/IOService.h>
 #include <IOKit/IOUserClient.h>
+#include <stddef.h>
 #include "Navi33NativeABI.h"
 
 class Navi33Probe : public IOService {
@@ -17,7 +18,8 @@ public:
                            OSDictionary *properties, IOUserClient **handler) override;
     n33_psp_status pspStatus(); // opt-in, read-only MP0 sOS observation
     n33_sdma_status sdmaStatus(); // opt-in, read-only SDMA6 ring observation
-    n33_hw_preflight hardwarePreflight(); // physical PCI BAR5 reads, no writes
+    n33_hw_preflight hardwarePreflight(const uint8_t *romBytes=nullptr,
+                                     size_t romLength=0u); // no writes
     n33_capabilities nativeCapabilities() const {
         n33_capabilities result{};
         result.abi_version = N33_ABI_VERSION;
