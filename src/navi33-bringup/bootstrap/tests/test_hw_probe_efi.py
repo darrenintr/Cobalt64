@@ -25,7 +25,8 @@ def fixture(root):
     (source/"OC"/"config.plist").write_bytes(plistlib.dumps(config))
     kext=root/"compiled"/"Navi33Probe.kext"
     (kext/"Contents"/"MacOS").mkdir(parents=True)
-    info={"CFBundleIdentifier":"com.cobalt64.navi33probe",
+    info={"CFBundleVersion":"0.0.2",
+          "CFBundleIdentifier":"com.cobalt64.navi33probe",
           "CFBundleExecutable":"Navi33Probe",
           "IOKitPersonalities":{"Navi33Probe":{
               "IOPCIPrimaryMatch":"0x74801002",
