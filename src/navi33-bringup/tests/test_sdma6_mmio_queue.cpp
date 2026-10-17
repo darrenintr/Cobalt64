@@ -166,7 +166,17 @@ static void refusalAndFaults() {
         Queue q{};
         assert(q.configure(ready(),request(),io(&f)).status==Code::Ready);
         assert(q.submit().status==Code::ReadFailed);
-        assert(q.stopAfterCompleted().status==Code::Denied);
+        assert(q.abortBeforeSubmit().status==Code::Completed);
+        assert(q.mayUnmapGpuMemory());
+    }
+    {
+        Fake f{};
+        Queue q{};
+        assert(q.configure(ready(),request(),io(&f)).status==Code::Ready);
+        assert(q.abortBeforeSubmit().status==Code::Completed);
+        assert(q.mayUnmapGpuMemory());
+        assert((f.regs[kRbCntl]&kEnable)==0u);
+        assert(q.submit().status==Code::Denied);
     }
 }
 int main() {
