@@ -87,4 +87,67 @@ inline Frame makeFrame(uint64_t cmdMc,uint32_t cmdBytes,uint64_t fenceMc,
     f.fence_value=fenceValue;
     return f;
 }
+
+// --- Command buffer (psp_gfx_cmd_resp, 1024 B) ---------------------------
+// Kept as raw offsets: the command union's size depends on members this
+// kext never builds. Linux zeroes the buffer and fills only cmd_id and the
+// command body; buf_size and buf_version stay 0 for ring (GPCOM) commands.
+constexpr uint32_t kCmdBytes=1024u;               // PSP_CMD_BUFFER_SIZE is 4 KiB
+constexpr uint32_t kCmdIdOff=8u, kCmdBodyOff=28u;
+constexpr uint32_t kRespOff=864u;                  // psp_gfx_resp, 96 B
+constexpr uint32_t kRespStatusOff=kRespOff+0u;
+constexpr uint32_t kRespTmrSizeOff=kRespOff+16u;
+constexpr uint32_t kCmdSetupTmr=0x00000005u;       // GFX_CMD_ID_SETUP_TMR
+constexpr uint32_t kCmdLoadToc=0x00000020u;        // GFX_CMD_ID_LOAD_TOC
+constexpr uint64_t kTmrAlignment=0x100000u;        // PSP_TMR_ALIGNMENT
+constexpr uint64_t kTmrDefaultBytes=0x400000u;     // PSP_TMR_SIZE (non-Aldebaran)
+
+inline void put32(uint8_t *buf,uint32_t off,uint32_t v) {
+    for(unsigned i=0;i<4u;++i)buf[off+i]=static_cast<uint8_t>(v>>(8u*i));
+}
+inline uint32_t get32(const uint8_t *buf,uint32_t off) {
+    return static_cast<uint32_t>(buf[off])|static_cast<uint32_t>(buf[off+1])<<8u|
+           static_cast<uint32_t>(buf[off+2])<<16u|
+           static_cast<uint32_t>(buf[off+3])<<24u;
+}
+inline void clear(uint8_t (&buf)[kCmdBytes]) {
+    for(uint8_t &b:buf)b=0u;
+}
+// psp_prep_load_toc_cmd_buf(): toc address (the fw_pri MC address), size.
+inline bool prepLoadToc(uint8_t (&buf)[kCmdBytes],uint64_t fwPriMc,
+                        uint32_t tocBytes) {
+    if(!tocBytes || (fwPriMc&0xfffull))return false;
+    clear(buf);
+    put32(buf,kCmdIdOff,kCmdLoadToc);
+    put32(buf,kCmdBodyOff+0u,static_cast<uint32_t>(fwPriMc));
+    put32(buf,kCmdBodyOff+4u,static_cast<uint32_t>(fwPriMc>>32u));
+    put32(buf,kCmdBodyOff+8u,tocBytes);
+    return true;
+}
+// TMR "naturally aligned": the start is a multiple of the size (a power of
+// two here) and of PSP_TMR_ALIGNMENT; the size is a multiple of 4 KiB.
+inline bool tmrValid(uint64_t mc,uint64_t bytes) {
+    return bytes && !(bytes&0xfffull) && !(bytes&(bytes-1u)) &&
+           !(mc&(kTmrAlignment-1u)) && !(mc&(bytes-1u)) && mc+bytes>mc;
+}
+// psp_prep_tmr_cmd_buf(), non-SR-IOV: virt_phy_addr = 1 (bit 1 of tmr_flags),
+// and the "system physical" address is the VRAM physical address (the
+// TMR's offset in the aperture, filled by the caller).
+inline bool prepSetupTmr(uint8_t (&buf)[kCmdBytes],uint64_t tmrMc,
+                         uint64_t tmrBytes,uint64_t tmrVramPa) {
+    if(!tmrValid(tmrMc,tmrBytes) || tmrBytes>0xffffffffull)return false;
+    clear(buf);
+    put32(buf,kCmdIdOff,kCmdSetupTmr);
+    put32(buf,kCmdBodyOff+0u,static_cast<uint32_t>(tmrMc));
+    put32(buf,kCmdBodyOff+4u,static_cast<uint32_t>(tmrMc>>32u));
+    put32(buf,kCmdBodyOff+8u,static_cast<uint32_t>(tmrBytes));
+    put32(buf,kCmdBodyOff+12u,2u);                  // tmr_flags: virt_phy_addr
+    put32(buf,kCmdBodyOff+16u,static_cast<uint32_t>(tmrVramPa));
+    put32(buf,kCmdBodyOff+20u,static_cast<uint32_t>(tmrVramPa>>32u));
+    return true;
+}
+// The fence the PSP writes when the frame is done must equal the frame's
+// fence_value (the running index); the response status must then be 0.
+inline bool fenceDone(uint32_t fence,uint32_t index) { return fence==index; }
+inline bool cmdOk(const uint8_t *buf) { return get32(buf,kRespStatusOff)==0u; }
 } } // namespace navi33::psp13ring

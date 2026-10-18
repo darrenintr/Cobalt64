@@ -48,6 +48,36 @@ int main() {
     assert(w[6]==0u && w[7]==0u && f.vmid==0u && f.frame_type==0u);
     for(unsigned i=9;i<16;++i) assert(w[i]==0u);
 
+    // --- command buffers (upstream psp_gfx_if.h layout) ---
+    uint8_t cmd[pr::kCmdBytes];
+    assert(pr::prepLoadToc(cmd,0x80'00f0'0000ull,2304u));
+    assert(pr::get32(cmd,0)==0u && pr::get32(cmd,4)==0u);   // buf_size/version unset
+    assert(pr::get32(cmd,8)==0x20u && pr::get32(cmd,28)==0x00f00000u &&
+           pr::get32(cmd,32)==0x80u && pr::get32(cmd,36)==2304u);
+    assert(pr::get32(cmd,40)==0u && pr::get32(cmd,pr::kRespOff)==0u);
+    assert(!pr::prepLoadToc(cmd,0x80'00f0'0800ull,2304u));  // not 4 KiB aligned
+    assert(!pr::prepLoadToc(cmd,0x80'00f0'0000ull,0u));
+    // TMR: 4 MiB, naturally aligned; offsets +28.. in the command body.
+    assert(pr::tmrValid(0x80'0040'0000ull,0x400000u));
+    assert(!pr::tmrValid(0x80'0010'0000ull,0x400000u));      // not size-aligned
+    assert(!pr::tmrValid(0x80'0040'0000ull,0x401000u));      // not a power of 2
+    assert(!pr::tmrValid(0x80'0040'0000ull,0xc00u));         // not 4 KiB multiple
+    assert(pr::prepSetupTmr(cmd,0x80'0040'0000ull,0x400000u,0x40'0000ull));
+    assert(pr::get32(cmd,8)==5u && pr::get32(cmd,28)==0x00400000u &&
+           pr::get32(cmd,32)==0x80u && pr::get32(cmd,36)==0x400000u &&
+           pr::get32(cmd,40)==2u && pr::get32(cmd,44)==0x400000u &&
+           pr::get32(cmd,48)==0u);
+    assert(!pr::prepSetupTmr(cmd,0x80'0040'0000ull,0u,0u));
+    assert(!pr::prepSetupTmr(cmd,0x80'0040'0000ull,1ull<<32u,0u));
+    // Fence and status.
+    assert(pr::fenceDone(3u,3u) && !pr::fenceDone(2u,3u));
+    pr::put32(cmd,pr::kRespStatusOff,0u);
+    assert(pr::cmdOk(cmd));
+    pr::put32(cmd,pr::kRespStatusOff,0xffff000cu);
+    assert(!pr::cmdOk(cmd));
+    pr::put32(cmd,pr::kRespTmrSizeOff,0x400000u);
+    assert(pr::get32(cmd,880)==0x400000u);                  // resp.tmr_size
+
     puts("PSP13 KM ring protocol tests passed");
     return 0;
 }
