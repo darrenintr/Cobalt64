@@ -345,3 +345,26 @@ Not done: the RS64 microcode load (`gfx_v11_0_cp_compute_load_microcode_rs64`),
 the MQD and HQD programming (`gfx_v11_0_compute_mqd_init`,
 `gfx_v11_0_kiq_init_queue`), and any ownership of the queue itself. Those
 remain behind the Queue0/PCI owner and the physical approvals above.
+
+## Stage G18: offline GFX11 KIQ HQD init register plan
+
+`Navi33Gfx11KiqHqd.h` turns the KIQ's queue inputs into the ordered register
+writes of `gfx_v11_0_kiq_init_register()`, with the mqd-derived values from
+`gfx_v11_0_compute_mqd_init()`. The `_DEFAULT` values come from
+`gc_11_0_0_default.h`, the masks and shifts from `gc_11_0_0_sh_mask.h`, and
+the offsets from `gc_11_0_0_offset.h`. All of them are on torvalds/linux
+master, fetched 2026-10-18. `amdgpu_ring.c` sets `hqd_active` only for the
+KIQ and `kernel_queue` for every ring. The planner checks alignment, sizes,
+address width, doorbell range and `hqd_active`. It refuses a queue that is
+already active, because the dequeue path is not modelled. It does no I/O.
+`test_gfx11_kiq_hqd` checks golden values derived by hand and the refusal
+cases. A mutant that clears UNORD_DISPATCH fails it.
+
+On the PSP load path, upstream does not run the driver-side RS64 MEC
+microcode load (`gfx_v11_0_cp_compute_load_microcode_rs64`), because
+`cp_resume` takes that branch only for `AMDGPU_FW_LOAD_DIRECT`. The PSP loads
+MEC through the IP firmware records, so the load is not planned here.
+
+Not done: the MQD memory image (the `v11_compute_mqd` layout), the KIQ
+MAP_QUEUES packets that bring up the KCQs, and any GPU memory the
+MQD/EOP/ring/rptr buffers live in. All of these need the GPU VM from G16.
