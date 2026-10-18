@@ -669,6 +669,30 @@ parser got two of them wrong:
     and the rest) and the SMU/IMU/RLC power-up that follows; each of those
     is a new write stage that needs the user's approval and its own gate
     (hard rule 2).
+- **2026-10-18, kext 0.0.10 (N33N ABI 11) in the VM: the IP firmware stage's
+  first plans, read-only.** Run `runs/20261018-113125` (`ipfw-plan-*.txt`, `serial.log`;
+  host read in `navi33/host/ringregs-after-fwplan.txt`).
+  - Build: CI run 39093804518, commit `770e160`. Loaded UUID
+    `527282A6-5B3B-39CE-8DA8-CFB8249F55D4` matches the artifact (cached in
+    `navi33/cache/artifact-0.0.10`). All gates closed (`navi33-psp-off=1`).
+    `guest-run.sh` put the eight decompressed firmware files in the guest's
+    `~/navi33/fw`.
+  - `n33psp --ip-fw-plan` for `0 2`, `2 25`, `25 26`, `0 26`, `26 27` and
+    `0 27`: **state 14, flags `0x0f`** every time. So the kext's SHA-256 pins
+    accept the real files in the guest, the 26-record list builds, our ring
+    is found (`resumed`, `C2PMSG_67` `0x30`), and the staging area is at MC
+    `0x800f400000` (2,539,520 B). The kext's IOLog line reached `serial.log`.
+  - With the gate closed `n33psp --ip-fw 0 2 ... --i-have-ssh` and `--ip-fw 0
+    27 ...` both refused ("Write gate closed", exit 6) before any run call.
+  - Host reads afterwards: `C2PMSG_67` `0x30`, `C2PMSG_64` `0x80020000`, ring
+    registers unchanged, sOS heartbeat counting. Nothing was written.
+  - Known cosmetic issue: the tool's last line says "GPU writes: ... (see
+    flags)" even when the gate refused the run; the flags are what count.
+    To fix with the next build.
+  - **Next:** the user's explicit yes for `--ip-fw 0 2` (the two SDMA images:
+    2 register writes, 2 staged pages-sets, 2 `LOAD_IP_FW` commands), which
+    needs an OpenCore disk built with `--psp-fw`. `AUTOLOAD_RLC` (stop 27) is a
+    separate approval and needs `--psp-autoload` as well.
 
 ## Adding a register read
 
