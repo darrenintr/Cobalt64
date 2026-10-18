@@ -37,6 +37,14 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      read-only plan on 2026-10-18; its first real run needs a separate
      explicit yes (rule 2).
    No other register write, firmware load or command submission.
+5. **Never touch the VBIOS, under any circumstances (user's rule,
+   2026-10-18).** No flashing, no writing, and also no reading of the
+   expansion ROM from our code: no `rom` sysfs file, no ROM-enable bit, no
+   ROM BAR passthrough to a guest, no firmware-update tools. Linux's own
+   amdgpu reading the VBIOS at boot is outside our code. Before this rule,
+   `prepare-card.sh` copied the ROM image (read-only) at each VM boot; that
+   code and the copies are removed, and `tests/test_manifest.py` pins it.
+   If a task seems to need the VBIOS, stop and ask the user.
    `Navi33HardwarePlan.h` and `tests/test_manifest.py` enforce this; do
    not weaken them.
 2. **The RX 7600 is the only display GPU in the test Mac.** Every new

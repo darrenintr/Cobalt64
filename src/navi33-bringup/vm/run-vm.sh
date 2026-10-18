@@ -19,10 +19,8 @@ set -euo pipefail
 VM_DIR="${VM_DIR:-$HOME/macos tahoe}"
 QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
 GPU="${GPU:-0000:09:00.0}"; GPU_AUDIO="${GPU_AUDIO:-0000:09:00.1}"
-# ROMBAR=1 lets the guest firmware run the card's AMD GOP from its ROM. Off by
-# default: on 2026-10-18 that GOP switched DCN off and lit no output.
-ROMBAR="${ROMBAR:-0}"
-ROMFILE="${ROMFILE:-}"        # with ROMBAR=1, only if QEMU cannot read the card's own ROM
+# The card's ROM is always hidden from the guest (rombar=0): the VBIOS is never
+# touched (hard rule 5, AGENTS.md), and the guest's AMD GOP switched DCN off.
 VFIO_OPTS="${VFIO_OPTS:-}"    # extra vfio-pci options for 09:00.0, e.g. ,x-vga=on
 RAM="${RAM:-8G}"; SSH_PORT="${SSH_PORT:-2222}"; GDB_PORT="${GDB_PORT:-1234}"
 USE_GPU=1; SNAPSHOT=0; CHECK=0
@@ -65,7 +63,6 @@ if [ "$USE_GPU" = 1 ]; then
   [ "$bar0" = 256 ] || echo "run-vm: BAR0 is $bar0 MiB; macOS cannot place it (gave it
   0x8012400000000000 at 8 GiB). sudo systemctl restart cobalt64-navi33-card" >&2
   rom=",rombar=0"
-  if [ "$ROMBAR" = 1 ]; then rom=""; [ -n "$ROMFILE" ] && rom=",romfile=$ROMFILE"; fi
   # Kext 0.0.8's navi33-hostfb-* boot-args must be this boot's console record.
   fb="$(sed -n 's/^hostfb //p' "$N/OpenCore-navi33.txt" 2>/dev/null || true)"
   if [ -n "$fb" ]; then

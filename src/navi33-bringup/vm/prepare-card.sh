@@ -5,8 +5,9 @@
 # - BAR0 to 256 MiB. The firmware gives the card 8 GiB, which macOS cannot
 #   place (on 2026-10-18 the guest moved it to 0x8012400000000000).
 #   Bare-metal macOS saw 256 MiB as well.
-# - Saves the ROM image the guest firmware is given to
-#   /var/lib/cobalt64-navi33/rx7600-rom.bin (on 2026-10-18 it found no GOP).
+# NEVER touches the VBIOS / expansion ROM (hard rule 5, AGENTS.md): no read of
+# the `rom` file, no ROM-enable bit, nothing. An earlier version copied the ROM
+# image; that code is gone on the user's instruction (2026-10-18).
 # - Records the firmware console as a BAR0 offset in hostfb.txt there.
 # - Stops VFIO resetting the card, so the guest gets it as the PC firmware
 #   set it up. After VFIO's bus reset the guest's AMD GOP loaded but lit no
@@ -47,11 +48,6 @@ open(sys.argv[2], "w").write(
 print(f"host console: BAR0+{phys - bar0_start:#x}, {nbytes:#x} bytes, {w}x{h}x{depth}")
 EOF
 [ -f "$OUT/hostfb.txt" ] && chmod 644 "$OUT/hostfb.txt"
-if echo 1 > "$D/rom" 2>/dev/null; then
-    cat "$D/rom" > "$OUT/rx7600-rom.bin" 2>/dev/null || echo "ROM read failed" >&2
-    echo 0 > "$D/rom"
-    chmod 644 "$OUT/rx7600-rom.bin" 2>/dev/null || true
-fi
 bar0() { set -- $(sed -n 1p "$D/resource"); echo $(( ($2 - $1 + 1) >> 20 )); }
 size=$(bar0)
 if [ "$size" -ne 256 ]; then

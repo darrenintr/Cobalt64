@@ -348,6 +348,14 @@ for filename in ("Navi33Psp13Loader.h", "Navi33Sha256.h"):
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
         assert forbidden not in code, f"{filename} gained hardware I/O: {forbidden}"
+# Hard rule 5: our scripts and sources never touch the VBIOS / expansion ROM.
+for rel in ("vm/prepare-card.sh","vm/run-vm.sh","vm/host-setup.sh","vm/reboot-to-vm.sh",
+            "vm/guest-run.sh","vm/make-opencore.sh","vm/host-peek.py"):
+    code=(root/rel).read_text()
+    for forbidden in ('/rom"','/rom ','romfile','rombar=1','flashrom','amdvbflash','atiflash'):
+        assert forbidden not in code, f"{rel} touches the VBIOS/ROM: {forbidden}"
+assert 'rombar=0' in (root/"vm/run-vm.sh").read_text()
+assert not (root/"vm/make-gop-diag.sh").exists()
 tool=(root/"tools/n33psp.c").read_text()
 assert "N33_SEL_PSP_LOAD" in tool and "--i-have-ssh" in tool
 assert "N33_PSP_LOAD_RING_RUN" in tool and "(writes && !ssh)" in tool
