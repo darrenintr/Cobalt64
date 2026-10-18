@@ -828,6 +828,32 @@ parser got two of them wrong:
     (b) first collect more read-only evidence (SMU mailbox state, what the VBIOS
     SMU reports) and decide after. Re-sending `AUTOLOAD_RLC` alone is not
     expected to help and is not proposed.
+- **2026-10-18, option 2 (read-only evidence), part 1.** The user chose to
+  collect read-only evidence before deciding whether to re-run the sequence
+  with the SMU image (option (a) above). No card access beyond reads.
+  - **The SMU mailbox block (`SMU_C2PMSG`, MP1 seg0 `0x260` x72) is
+    byte-identical** in the guest snapshots taken after the first VM run, after
+    the sOS load and after `AUTOLOAD_RLC`. Nothing we sent reached the SMU, and
+    the autoload did not visibly involve it. (We never write the SMU mailbox.)
+  - **Linux reference timeline** (kernel journal of a normal amdgpu boot of this
+    card, 2026-10-18 08:24:54): TMR reserved at `0x81fc000000` (+0.134 s), then
+    SMU `hw_init` reports `smu fw version = 0x00526100 (82.97.0)`, `smu driver
+    if 0x35, fw if 0x40` (+0.240 s), `SMU is initialized successfully` (+0.285
+    s), display core (+0.285 s), and the GFX/ring summary at +0.816 s. 82.97.0
+    equals the `ucode_version` of the `smu_13_0_7.bin` Linux loads, so the SMU
+    Linux talks to is running the PSP-loaded copy; what the VBIOS ran before
+    that is not known to us (it cannot be read passively).
+  - Open question the evidence cannot settle: why `RLC_RLCS_BOOTLOAD_STATUS`
+    stays 0. The SMU image (hypothesis in the entry above) is only one
+    candidate; the working end state of these registers on this very card is
+    not yet recorded.
+  - **Proposed next read-only step (needs the user's physical action):** a
+    reference boot. Full power-off, then a normal Ubuntu boot where amdgpu
+    brings the card up itself; dump the same registers from the host
+    (`IMU_*`, `RLC_*`, `GRBM_STATUS`, `CP_STAT`, `SMU_C2PMSG`, `PSP_C2PMSG`) and
+    the amdgpu debugfs firmware/pm info, then power off again. That gives the
+    exact target values to compare with. A warm restart is not enough: our sOS
+    and ring are still in the PSP, which amdgpu does not expect.
 
 ## Adding a register read
 
