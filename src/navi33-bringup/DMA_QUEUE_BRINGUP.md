@@ -24,6 +24,15 @@ hardware reset path.
    lease before invoking MMHUB, GFXHUB, and SDMA6. It is not linked into
    Navi33Probe.kext. All tested GPU behavior is simulated.
 
+The 2026-10-18 15:01 RX7600 VM run with Kext 0.0.14 exercised only the
+read-only no-mapper fallback: it pinned 64 KiB of physically contiguous
+system RAM, validated 1 segment / 16 pages in a CPU shadow PTE array, then
+released it. The result was `PhysicalAddressOnly`, not a device IOVA or a
+proof that VFIO/GPU can reach the pages. It did not change any of the
+ownership or real-VRAM-root prerequisites below. macOS still exposed no
+`IOAccelerator` service or Metal device, so no Metal command was attempted.
+Full run evidence: `AGENTS.md`, run `~/macos tahoe/navi33/runs/20261018-150123/`.
+
 ## Three addresses must not be mixed up
 
 - CPU virtual pointer: host address of the pinned staging image.
@@ -70,7 +79,8 @@ do not program VM_CONTEXT0_PAGE_TABLE_BASE_ADDR with it.
 ## Acceptance checks
 
 - Real macOS root N33N device IOVA with cache synchronize: code ready;
-  physical RX7600 staging not exercised.
+  the no-mapper CPU-physical candidate path was exercised, but actual
+  device-IOMMU staging and GPU reachability remain unproven.
 - Provider-wide DMA staging exclusivity: code ready; host-tested.
 - Readback of a genuinely owned GPU VRAM page-table BO: helper ready;
   no allocator or BAR0 hardware readback yet.
