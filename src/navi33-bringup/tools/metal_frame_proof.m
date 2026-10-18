@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../src/Navi33NativeABI.h"
+#include "../src/Navi33Gfx11Formats.h"
 
 static BOOL nativeNavi33Capabilities(struct n33_capabilities *out) {
     if (!out) return NO;
@@ -147,6 +148,25 @@ int main(int argc,const char *argv[]) {
                     caps.capabilities);
             return 2;
         }
+        const Navi33Gfx11RenderTargetFormat *outputFormat=
+            navi33Gfx11RenderTargetFormatForMetal(
+                (uint32_t)MTLPixelFormatBGRA8Unorm);
+        if(!outputFormat ||
+           outputFormat->metalPixelFormat!=N33_MTL_BGRA8_UNORM ||
+           outputFormat->vkFormat!=N33_VK_B8G8R8A8_UNORM ||
+           outputFormat->cbFormat!=N33_GFX11_CB_FMT_8_8_8_8 ||
+           outputFormat->cbNumberType!=N33_GFX11_CB_NUMBER_UNORM ||
+           outputFormat->cbSwap!=N33_GFX11_CB_SWAP_ALT ||
+           outputFormat->imageFormat!=N33_GFX11_IMG_FMT_8_8_8_8_UNORM ||
+           outputFormat->bytesPerTexel!=4u ||
+           outputFormat->imageDstSelect[0]!=N33_GFX11_SEL_Z ||
+           outputFormat->imageDstSelect[1]!=N33_GFX11_SEL_Y ||
+           outputFormat->imageDstSelect[2]!=N33_GFX11_SEL_X ||
+           outputFormat->imageDstSelect[3]!=N33_GFX11_SEL_W) {
+            fprintf(stderr,"Navi33 BGRA8Unorm GFX11 output mapping is incomplete\n");
+            return 13;
+        }
+        printf("Navi33 output mapping: Metal BGRA8Unorm -> Vulkan B8G8R8A8_UNORM, GFX11 SWAP_ALT\n");
         NSArray<id<MTLDevice>> *devices=MTLCopyAllDevices();
         id<MTLDevice> dev=nil;
         for(id<MTLDevice> d in devices) {
