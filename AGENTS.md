@@ -583,6 +583,31 @@ parser got two of them wrong:
   - **Next:** the user's explicit yes for `--ring 1` (create the KM ring and
     nothing else): needs an OpenCore disk with `navi33-psp-ring=1` and no
     `navi33-psp-off`, then restore the closed disk afterwards.
+- **2026-10-18, kext 0.0.9 in the VM: the PSP KM ring was created.
+  Second GPU write stage, step 1 only.** Run `runs/20261018-110538` (`ring-*.txt`,
+  `serial.log`; host reads in `navi33/host/ringregs-after-ring.txt`). The
+  user approved it ("yes, create the ring") after the read-only plan.
+  - Setup: OpenCore disk built with `--psp-ring` (`navi33-psp-ring=1`, no
+    `navi33-psp-off`, the sOS-load gate still closed, other kill switches
+    unchanged). The plan was rerun with the gate open: state 14, flags
+    `0x0f`, ring flags `0x10` (gate open), ring registers fresh.
+  - `n33psp --ring 1`: state 28 (`ring stage DONE`), flags `0x6f`, **4
+    register writes** (`C2PMSG_69`, `70`, `71`, then `64`), 20 ms, the
+    fence and command status unused (0). `C2PMSG_64` went from
+    `0x80000000` to `0x80020000`: the response flag with a zero status and
+    the KM ring type echoed. The kext logged `RUN starts` and `RUN state
+    28`.
+  - Read from the host after the VM stopped: `C2PMSG_69` `0x0f100000`,
+    `C2PMSG_70` `0x80`, `C2PMSG_71` `0x1000` (our ring at MC
+    `0x80_0F10_0000`), `C2PMSG_67` 0 (no frame yet), `C2PMSG_58`
+    `0x00330024`, and the sOS heartbeat still counting. DCN kept scanning.
+  - The gate was closed again afterwards (`navi33-psp-off=1` is back in
+    `OpenCore-navi33.qcow2`). The ring lives in the PSP until a full
+    power-off, so the next ring step resumes it: the plan sees the ring
+    registers equal to our ring and sets "resume".
+  - **Next:** `--ring 2` (copy the TOC, send LOAD_TOC through the ring,
+    read the TMR size from the response). It is the first command through
+    the ring and the first use of the fence; it needs its own yes.
 
 ## Adding a register read
 
@@ -706,9 +731,10 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      +864; Linux leaves `buf_size`/`buf_version` 0 for ring commands).
      TMR rule: size a non-zero 4 KiB multiple up to 32 MiB, address 1 MiB
      aligned.
-   - **Next for this stage:** run `n33psp --ring-plan 3` in the VM (reads
-     only), show the user the plan, and only then ask for the first real
-     `--ring 1` (create the ring and nothing else).
+   - **Status:** `--ring-plan 3` passed and `--ring 1` (create the KM ring)
+     succeeded in the VM on 2026-10-18 (findings log). **Next:** `--ring 2`
+     (LOAD_TOC through the ring), then `--ring 3` (SETUP_TMR); each needs
+     the user's explicit yes.
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
    GPU work.
 5. PM4 fence and compute dispatch (stages 16–17).
