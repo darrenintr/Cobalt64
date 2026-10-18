@@ -1483,6 +1483,32 @@ parser got two of them wrong:
   - Gap: the ACPI-table grep printed nothing (the property is probably on another
     class), so IVRS/DMAR presence was not captured.
   - PSP plan state 11 (`NO_CONSOLE`) as before; no write of any kind.
+- **2026-10-18 21:21, kext 0.0.20 on bare-metal macOS, boot autorun, unmapped
+  owner mode** (stick file `navi33/results-20261018-212142-boot.txt`). Loaded
+  UUID `8AB407DE-B3E6-3D94-BF59-17D59D0601CD` matches the 0.0.20 artifact (LC_UUID
+  checked). Boot-args: `navi33-owner-probe=1 navi33-owner-physical=1
+  navi33-dma-preflight=1`, with the PSP/SMU/SDMA/FB/DMA-stage kill switches set.
+  Write gates closed. The stick was staged at 21:15, before this boot.
+  - **Owner decision: `code 1 mask 0x10` (`NoRecovery`)**, evidence gate,
+    identity and open 1, display 0, mapper 0, recovery 0, domain 0,
+    `OwnerDmaMode` 0. The `NoDmaMapper` bit (0x20) from the 20:10 run is gone, so
+    the unmapped path accepted the missing mapper. The only refusal left is the
+    missing recovery attestation, because `navi33-owner-recovery=1` was not set.
+    The decision never reached Owned, so `PhysicalUnverified` was not exercised.
+    Its result is still unproven for GPU reachability.
+  - DMA preflight ran: status 16 (`PhysicalAddressOnly`), 1 segment, 16 pages.
+    CPU-physical candidate only.
+  - Still 0 IOMapper and 0 AppleVTD instances. `.Display_boot` (IONDRVFramebuffer)
+    is attached under GFX0 in ioreg, while the probe reported display 0, so the
+    display check remains racy as noted at 20:10.
+  - Hardware: PSP bootloader-ready (`C2PMSG_35` `80000000`), sOS not loaded,
+    PSP plan state 11 (`NO_CONSOLE`, flags `0x09`). GC still in reset:
+    `IMU_GFX_RESET_CTRL` `0x10`, RLC, SDMA, GRBM, CP and GCVM all 0. MMHUB
+    `FB_LOCATION` `0x8000-0x81ff`. `IOAccelerator` instances 0. No write of any
+    kind.
+  - **Policy conflict to resolve:** the "Unmapped DMA owner mode" entry above says
+    `navi33-owner-physical=1` is "never on the stick", but this stick now carries
+    it. Decide whether the policy or the stick changes.
 
 ## Adding a register read
 
