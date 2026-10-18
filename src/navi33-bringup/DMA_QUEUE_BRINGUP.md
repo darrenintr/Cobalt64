@@ -579,3 +579,23 @@ the stick is the only way to check it. The stick was not plugged in, and it
 needs a physical reboot, so the check is pending. If the bare-metal run also
 refuses with `NoDmaMapper`, the production owner's mapper gate cannot be met on
 this hardware, and the SDMA Queue1 proof is blocked for this board.
+
+## Kext 0.0.19 and the one-boot evidence run
+
+The 0.0.18 stick run lost the owner decision. The kext's IOLog lines reach only
+`dmesg`, the stick had no `msgbuf=` boot-arg, and the small default buffer had
+rolled past the boot lines before `run.sh` ran. The VM disks set
+`msgbuf=1048576` for this reason.
+
+- 0.0.19 publishes the owner verdict as ioreg properties: `Navi33,OwnerProbe`
+  (text), `OwnerDecision`, `OwnerRefusalMask`, `OwnerEvidence` (one bit per
+  input, `pci_owner::evidenceBits`, host-tested) and `OwnerDmaDomain`.
+- `run.sh` prints the owner and DMA-preflight properties, the IOMapper and
+  AppleVTD instance counts, the ACPI table names (IVRS or DMAR), the
+  framebuffer and accelerator instances, `system_profiler SPDisplaysDataType`,
+  and 200 lines of kernel log. The manifest test keeps `run.sh` free of every
+  write command.
+- Boot-args for the one-boot evidence run on the stick: add `msgbuf=1048576`,
+  swap `navi33-dma-off=1` for `navi33-dma-preflight=1` (the read-only mapper
+  check, no GPU DMA), and keep `navi33-owner-probe=1` and every PSP, SMU, SDMA,
+  FB and DMA-stage kill switch.

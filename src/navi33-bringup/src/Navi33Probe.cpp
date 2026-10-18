@@ -126,12 +126,15 @@ bool Navi33Probe::start(IOService *provider) {
     uint32_t holdOn=0u;
     const bool holdGate=PE_parse_boot_argn("navi33-owner-hold",&holdOn,sizeof(holdOn)) && holdOn==1u;
     if(holdGate) {
-        const bool held=navi33::darwin_owner::holdOwner(pci,this,ownerKill,recovery,pciOwner_,pciOwnerTicket_);
+        navi33::darwin_owner::ProbeReport report{};
+        const bool held=navi33::darwin_owner::holdOwner(pci,this,ownerKill,recovery,pciOwner_,pciOwnerTicket_,&report);
+        publishOwnerReport(report);
         setProperty("Navi33,OwnerHeld", static_cast<uint64_t>(held ? 1 : 0), 8);
         setProperty("Navi33,OwnerEpoch", static_cast<uint64_t>(pciOwnerTicket_.epoch), 32);
         setProperty("Navi33,OwnerPhase", static_cast<uint64_t>(pciOwner_.phase()), 8);
-    } else if(ownerGate)
-        navi33::darwin_owner::runOwnerProbe(pci,this,true,ownerKill,recovery);
+    } else if(ownerGate) {
+        publishOwnerReport(navi33::darwin_owner::runOwnerProbe(pci,this,true,ownerKill,recovery));
+    }
     // Report any explicitly enabled PSP or SMU write stage.
     uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u, smuOn=0u, smuOff=0u;
     const bool pspKilled=PE_parse_boot_argn("navi33-psp-off", &pspOff,
@@ -862,6 +865,25 @@ void Navi33Probe::releaseStageOwner(const void *client,uint64_t epoch) {
     IOLockLock(stageOwnerLock_);
     (void)stageOwner_.release(client,{epoch});
     IOLockUnlock(stageOwnerLock_);
+}
+
+// The owner probe's inputs and verdict as ioreg properties: a results file keeps
+// them even after the kernel message buffer has rolled past the boot IOLog line.
+void Navi33Probe::publishOwnerReport(const navi33::darwin_owner::ProbeReport &r) {
+    const uint32_t bits=navi33::pci_owner::evidenceBits(r.evidence);
+    setProperty("Navi33,OwnerDecision", static_cast<uint64_t>(r.decision.code), 8);
+    setProperty("Navi33,OwnerRefusalMask", static_cast<uint64_t>(r.decision.refusalMask), 32);
+    setProperty("Navi33,OwnerEvidence", static_cast<uint64_t>(bits), 32);
+    setProperty("Navi33,OwnerDmaDomain", r.dmaDomain, 64);
+    char text[160];
+    snprintf(text,sizeof(text),
+             "code %u mask 0x%x gate %d kill %d identity %d open %d display %d mapper %d recovery %d domain 0x%llx",
+             static_cast<unsigned>(r.decision.code), r.decision.refusalMask,
+             int(r.evidence.gateOn), int(r.evidence.killOn), int(r.evidence.identityOk),
+             int(r.evidence.openSucceeded), int(r.evidence.displayClientAttached),
+             int(r.evidence.dmaMapperPresent), int(r.evidence.recoveryAttested),
+             static_cast<unsigned long long>(r.dmaDomain));
+    setProperty("Navi33,OwnerProbe", text);
 }
 
 void Navi33Probe::releaseHeldOwner(IOService *provider) {

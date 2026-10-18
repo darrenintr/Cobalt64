@@ -65,9 +65,8 @@ static pci_owner::Evidence gather(IOPCIDevice *pci,IOService *self,bool gateOn,
     return e;
 }
 
-pci_owner::Decision runOwnerProbe(IOPCIDevice *pci,IOService *self,
-                                  bool gateOn,bool killOn,
-                                  bool recoveryAttested) {
+ProbeReport runOwnerProbe(IOPCIDevice *pci,IOService *self,bool gateOn,bool killOn,
+                          bool recoveryAttested) {
     uint64_t domain=0u;
     const pci_owner::Evidence e=gather(pci,self,gateOn,killOn,recoveryAttested,false,nullptr,&domain);
     const pci_owner::Decision d=pci_owner::decide(e);
@@ -75,15 +74,21 @@ pci_owner::Decision runOwnerProbe(IOPCIDevice *pci,IOService *self,
           int(e.gateOn), int(e.killOn), int(e.identityOk), int(e.openSucceeded),
           int(e.displayClientAttached), int(e.recoveryAttested),
           static_cast<unsigned>(d.code), d.refusalMask);
-    return d;
+    ProbeReport r{};
+    r.evidence=e;
+    r.decision=d;
+    r.dmaDomain=domain;
+    return r;
 }
 
 bool holdOwner(IOPCIDevice *pci,IOService *self,bool killOn,bool recoveryAttested,
-               production_owner::Owner &owner,production_owner::Ticket &ticket) {
+               production_owner::Owner &owner,production_owner::Ticket &ticket,
+               ProbeReport *report) {
     navi33::Identity id{};
     uint64_t domain=0u;
     const pci_owner::Evidence e=gather(pci,self,true,killOn,recoveryAttested,true,&id,&domain);
     const pci_owner::Decision d=pci_owner::decide(e);
+    if(report) { report->evidence=e; report->decision=d; report->dmaDomain=domain; }
     IOLog("Navi33Probe: owner hold gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x\n",
           int(e.gateOn), int(e.killOn), int(e.identityOk), int(e.openSucceeded),
           int(e.displayClientAttached), int(e.recoveryAttested),

@@ -67,6 +67,21 @@ static void emptyEvidenceRefusesWithGateOpen() {
     assert(d.refusalMask==(po::WrongDevice|po::OpenFailed|po::NoRecovery|po::NoDmaMapper));
 }
 
+static void evidenceBitsNameEveryInput() {
+    po::Evidence e{};
+    assert(po::evidenceBits(e)==0u);
+    e.gateOn=true;                 assert(po::evidenceBits(e)==po::kEvGate);
+    e=po::Evidence{}; e.killOn=true;            assert(po::evidenceBits(e)==po::kEvKill);
+    e=po::Evidence{}; e.identityOk=true;        assert(po::evidenceBits(e)==po::kEvIdentity);
+    e=po::Evidence{}; e.openSucceeded=true;     assert(po::evidenceBits(e)==po::kEvOpen);
+    e=po::Evidence{}; e.displayClientAttached=true; assert(po::evidenceBits(e)==po::kEvDisplay);
+    e=po::Evidence{}; e.dmaMapperPresent=true;  assert(po::evidenceBits(e)==po::kEvMapper);
+    e=po::Evidence{}; e.recoveryAttested=true;  assert(po::evidenceBits(e)==po::kEvRecovery);
+    // The good evidence has every bit but kill and display.
+    assert(po::evidenceBits(good())==(po::kEvGate|po::kEvIdentity|po::kEvOpen|
+                                       po::kEvMapper|po::kEvRecovery));
+}
+
 static void ownedNeverGrantsWrites() {
     static_assert(!po::kCanWriteGpu && !po::kCanWriteConfig,
                   "owner probe must not write");
@@ -80,5 +95,6 @@ int main() {
     killSwitchWinsOverEverything();
     emptyEvidenceRefusesWithGateOpen();
     ownedNeverGrantsWrites();
+    evidenceBitsNameEveryInput();
     puts("Navi33 PCI owner probe decision: PASS (offline)");
 }

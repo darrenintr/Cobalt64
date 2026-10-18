@@ -33,11 +33,29 @@ run() { "$@"; echo "exit=$?"; }
         echo "psp_13_0_7_sos.bin is not on the stick; plan skipped"
     fi
     step ioreg; ioreg -l -w0 -r -c Navi33Probe
+    # Owner probe and DMA preflight verdicts survive as ioreg properties even
+    # when the kernel message buffer has rolled past the boot IOLog lines.
+    step "owner probe and DMA preflight (ioreg properties)"
+    ioreg -l -w0 -r -c Navi33Probe | grep -E '"Navi33,(Owner|DmaPreflight)' ||
+        echo "no owner/DMA properties (gates off?)"
+    step "IOMMU and DMA mappers (read-only)"
+    echo "IOMapper instances: $(ioreg -w0 -r -c IOMapper | grep -c '+-o')"
+    ioreg -w0 -r -c IOMapper | head -20
+    echo "AppleVTD instances: $(ioreg -w0 -r -c AppleVTD | grep -c '+-o')"
+    ioreg -l -w0 -r -c AppleACPIPlatformExpert |
+        grep -o '"ACPI Tables" = {[^}]*}' | tr ',' '\n' | cut -d= -f1 | head -60
+    step "display stack on the card (read-only)"
+    echo "IOFramebuffer instances: $(ioreg -w0 -r -c IOFramebuffer | grep -c '+-o')"
+    ioreg -w0 -r -c IOFramebuffer | head -20
+    echo "IOAccelerator instances: $(ioreg -w0 -r -c IOAccelerator | grep -c '+-o')"
+    ioreg -w0 -r -c IOAccelerator | head -20
+    system_profiler SPDisplaysDataType 2>/dev/null | head -60
     step "kernel log, this boot"
-    # The Kext's own IOLog lines reach dmesg but not this log query.
-    dmesg | grep -i navi33 | tail -80
+    # IOLog lines reach dmesg, not this log query; the stick sets msgbuf= so
+    # the boot-time lines are still in the buffer when this runs.
+    dmesg | grep -i navi33 | tail -200
     log show --last boot --style compact \
-        --predicate 'eventMessage CONTAINS "Navi33"' 2>&1 | tail -80
+        --predicate 'eventMessage CONTAINS[c] "navi33"' 2>&1 | tail -200
     step done
 } > "$out" 2>&1
 sync

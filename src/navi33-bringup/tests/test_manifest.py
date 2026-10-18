@@ -304,6 +304,12 @@ assert 'PE_parse_boot_argn("navi33-owner-hold"' in source
 assert 'releaseOwner(' in source, 'stop() must release a held owner'
 assert 'Navi33Probe::systemWillShutdown' in source, 'shutdown must release a held owner'
 assert 'Navi33Probe::willTerminate' in source, 'termination must release a held owner'
+# The owner verdict must survive a rolled-over kernel log: ioreg properties.
+assert '"Navi33,OwnerProbe"' in source and '"Navi33,OwnerEvidence"' in source
+runsh=(root/"usb"/"run.sh").read_text()
+assert 'Navi33,(Owner|DmaPreflight)' in runsh, 'run.sh must print the owner and DMA verdicts'
+for forbidden in ("n33psp --load", "--i-have-ssh", "--ring ", "--ip-fw ", "--smu-"):
+    assert forbidden not in runsh, f"run.sh must stay read-only: {forbidden}"
 wfn=writer[writer.index("bool write32("):]
 wfn=wfn[:wfn.index("\n}\n")]
 assert "off!=io->allowed[0] && off!=io->allowed[1]" in wfn

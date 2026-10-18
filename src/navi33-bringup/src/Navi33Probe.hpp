@@ -10,6 +10,8 @@
 #include "Navi33ProductionOwner.h"
 #include <IOKit/IOLib.h>
 
+namespace navi33 { namespace darwin_owner { struct ProbeReport; } }
+
 class Navi33Probe : public IOService {
     OSDeclareDefaultStructors(Navi33Probe)
     using super = IOService;
@@ -58,6 +60,7 @@ public:
 
 private:
     void releaseHeldOwner(IOService *provider);
+    void publishOwnerReport(const navi33::darwin_owner::ProbeReport &r);
     // Written in start() before registerService(), read thereafter.
     uint32_t nativeFlags_ = N33_CAP_PCI_INVENTORY;
     IOLock *stageOwnerLock_ = nullptr;

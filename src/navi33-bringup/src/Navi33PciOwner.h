@@ -37,6 +37,19 @@ struct Evidence {
     bool recoveryAttested=false;     // navi33-owner-recovery=1
 };
 
+// One bit per Evidence field, for the Navi33,OwnerEvidence ioreg property, so a
+// results file shows every input even when the kernel log has rolled over.
+constexpr uint32_t kEvGate=1u<<0, kEvKill=1u<<1, kEvIdentity=1u<<2, kEvOpen=1u<<3,
+                   kEvDisplay=1u<<4, kEvMapper=1u<<5, kEvRecovery=1u<<6;
+
+inline uint32_t evidenceBits(const Evidence &e) {
+    return (e.gateOn ? kEvGate : 0u) | (e.killOn ? kEvKill : 0u) |
+           (e.identityOk ? kEvIdentity : 0u) | (e.openSucceeded ? kEvOpen : 0u) |
+           (e.displayClientAttached ? kEvDisplay : 0u) |
+           (e.dmaMapperPresent ? kEvMapper : 0u) |
+           (e.recoveryAttested ? kEvRecovery : 0u);
+}
+
 struct Decision {
     Code code=Code::Disabled;
     uint32_t refusalMask=0u;
