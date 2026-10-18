@@ -178,7 +178,10 @@ Kext 0.0.14 now adds a separate pinned CPU-physical candidate check for the
 no-mapper case. It returns `PhysicalAddressOnly` only after the 64-KiB
 physical span and CPU shadow PTE image validate. This does not prove PCI DMA
 reachability and leaves all GPU, GART, queue and Metal capability bits off;
-the macOS CI build and VM run are still pending.
+CI run 39106005328 passed, and the 15:01 VM run returned 1 segment / 16
+pages before releasing the allocation. The frame check still found no Metal
+device and refused before creating resources or submitting GPU work; the
+first rendered frame remains unproven. Full output paths are in `AGENTS.md`.
 
 ## Stage G5: Persistent OS-IOMMU GMC11 / SDMA6 staging (no GPU execution)
 

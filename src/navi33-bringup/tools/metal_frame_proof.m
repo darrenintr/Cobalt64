@@ -168,7 +168,7 @@ int main(int argc,const char *argv[]) {
             @"  float2 p[3]={float2(-0.8,-0.8),float2(0.8,-0.8),float2(0.0,0.8)};\n"
             @"  V v;v.position=float4(p[id],0.0,1.0);return v;\n"
             @"}\n"
-            @"fragment float4 fmain(){return float4(0.15,0.85,0.30,1.0);}\n";
+            @"fragment float4 fmain(){return float4(0.10,0.50,0.90,1.0);}\n";
         id<MTLLibrary> lib=[dev newLibraryWithSource:shader options:nil error:&error];
         if(!lib) {
             fprintf(stderr,"Metal shader compilation failed: %s\n",
@@ -226,11 +226,18 @@ int main(int argc,const char *argv[]) {
         if(!pixels)return 11;
         const NSUInteger center=(32u*bpr+32u*4u);
         const NSUInteger outside=(1u*bpr+1u*4u);
-        if(pixels[center+1u]<150u || pixels[center+3u]<245u ||
+        // BGRA8Unorm readback stores B,G,R,A bytes. Use asymmetric RGB
+        // values so an accidental RGBA/BGRA swap cannot pass on green alone.
+        if(pixels[center+0u]<210u ||
+           pixels[center+1u]<100u || pixels[center+1u]>155u ||
+           pixels[center+2u]>50u || pixels[center+3u]<245u ||
            pixels[outside+0u]>5u || pixels[outside+1u]>5u ||
            pixels[outside+2u]>5u) {
-            fprintf(stderr,"Render readback pixels wrong (center G=%u)\n",
-                    pixels[center+1u]);return 12;
+            fprintf(stderr,"Render readback pixels wrong (BGRA=%u,%u,%u,%u)\n",
+                    (unsigned)pixels[center+0u],
+                    (unsigned)pixels[center+1u],
+                    (unsigned)pixels[center+2u],
+                    (unsigned)pixels[center+3u]);return 12;
         }
         uint64_t hash=1469598103934665603ull;
         for(NSUInteger i=0;i<bpr*height;++i) {

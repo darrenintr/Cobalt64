@@ -1298,13 +1298,33 @@ parser got two of them wrong:
   over SSH. Evidence: `results-20261018-145339-guest.txt` and
   `serial.log` in the run directory.
 
-- **Working tree after the 14:53 result:** kext 0.0.14 adds an opt-in
-  no-mapper check that pins a 64-KiB physically contiguous descriptor with
-  `kIOMemoryMapperNone`, validates CPU-physical page addresses, and builds
+- **2026-10-18 15:01–15:03, kext 0.0.14 read-only physical-address and
+  Metal checks** (run `~/macos tahoe/navi33/runs/20261018-150123/`). CI
+  run 39106005328 passed all host tests and both macOS kext builds; its
+  macOS 26 artifact loaded with UUID
+  `A0D15677-D867-3712-8A80-BA8F50E2ED7D`. The VM used `--intel-iommu`
+  and passed the RX 7600 through as `vfio-pci`; it did not use `--no-gpu`.
+  The read-only no-mapper preflight returned status 16
+  (`PhysicalAddressOnly`), 1 segment and 16 pages, then released the pinned
+  64-KiB allocation. Its addresses are CPU-physical candidates only; the
+  result does not establish PCIe/GPU reachability. The full diagnostic was
+  still reason 11, with PSP sOS `0x00330024` alive, SDMA Queue0/Queue1
+  pointers zero, MMHUB/GFXHUB Context0 `0x01fffe00`, and GPU write/queue
+  capabilities disabled. The macOS Metal enum check passed (RGBA8 70,
+  BGRA8 80); the root-run census found zero `IOAccelerator` services and
+  zero Metal devices. `metal_frame_proof` exited 2 at caps `0x00000001`,
+  before creating Metal resources or submitting work. No GPU DMA, command,
+  shader or register write occurred. The guest shut down cleanly. Evidence:
+  `results-20261018-150147-guest.txt`, `metal-proof-checks.txt`, and
+  `serial.log` in the run directory.
+
+- **Kext 0.0.14 CPU-physical candidate path:** the opt-in no-mapper check
+  pins a 64-KiB physically contiguous descriptor with `kIOMemoryMapperNone`,
+  validates CPU-physical page addresses, and builds
   only a temporary CPU shadow PTE image. The result is `PhysicalAddressOnly`;
-  it is not GPU-DMA reachability evidence and does not satisfy the Queue1
-  write gate's owned-VRAM-root prerequisite. macOS CI compilation and a new
-  read-only VM run are still required before trusting even that candidate.
+  macOS CI compiled it and the 15:01 VM run confirmed the status and page
+  count. It is not GPU-DMA reachability evidence and does not satisfy the
+  Queue1 write gate's owned-VRAM-root prerequisite.
 
 ## Adding a register read
 

@@ -258,8 +258,12 @@ QEMU's virtual Intel VT-d and used VFIO caching mode; macOS logged that
 `AppleVTD` was not installed as the system mapper, and status 2 remained.
 These runs did not bypass the refusal or use CPU physical addresses. Kext
 0.0.14 adds the explicitly non-authoritative `PhysicalAddressOnly` candidate
-check for the no-mapper case; it still requires the macOS CI build and a new
-VM run. Neither result describes the host VFIO IOVA mapping.
+check for the no-mapper case. CI run 39106005328 built the kext, and the
+15:01 RX7600 passthrough run returned 1 segment / 16 pages before releasing
+the 64-KiB allocation. This is only a CPU-physical candidate; it does not
+prove GPU reachability or describe the host VFIO IOVA mapping. The same run
+still found no IOAccelerator service or Metal device, and the frame proof
+refused at the hardware-capability gate. Run evidence is in `AGENTS.md`.
 
 Hardware GART page tables, GPU VMID initialization, TLB invalidations,
 firmware authentication, SDMA queue/doorbell and GFX11 compute remain

@@ -42,14 +42,17 @@ No SDMA copy, GFX command, shader or GPU-rendered frame has been submitted.
    `make physical-io-check`, **never linked, loaded, or installed**.
    Linux GCC/Clang and sanitizer runs test the DMA lifetime policy.
 
-The working tree's Kext 0.0.14 adds an opt-in, read-only no-mapper path to
+Kext 0.0.14 adds an opt-in, read-only no-mapper path to
 `Navi33DarwinDma`: allocate and pin 64 KiB of physically contiguous system
 RAM with `kIOMemoryMapperNone`, validate its CPU-physical pages and build a
-temporary shadow GMC11 PTE image. The report is explicitly
-`PhysicalAddressOnly`; it does not claim that PCIe or the RX 7600 can reach
-those addresses. It performs no BAR mapping, VRAM write, MMIO write, or GPU
-DMA. This path has passed the portable PTE planner regression but has not
-yet been compiled by macOS CI or run in the VM.
+temporary shadow GMC11 PTE image. CI run 39106005328 compiled the kext and
+passed the host tests. In the 15:01 VM run, the path returned
+`PhysicalAddressOnly`, 1 segment and 16 pages, then released the allocation.
+This confirms CPU-physical candidates only; it does not claim that PCIe or
+the RX 7600 can reach those addresses. The path performs no BAR mapping,
+VRAM write, MMIO write or GPU DMA. The same boot still had no
+`IOAccelerator` or Metal device, and the strict frame proof stopped at
+capabilities `0x00000001` before any Metal resource or command submission.
 
 ## Register addresses checked against a physical RX 7600
 
