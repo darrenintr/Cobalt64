@@ -543,3 +543,8 @@ as a power driver so `systemWillShutdown` is called (this changes power
 management on the display card, so it needs a plan and approval), or accept
 that the open lasts until the machine powers off, which is harmless in practice
 but not clean.
+
+**Decision (2026-10-18): option 2 is accepted.** The held open lasts until
+power-off. Registering as a power driver is not being done for now. A restart
+has not been tested, so the hold must not be relied on across a reboot until it
+is.
