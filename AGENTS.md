@@ -1381,6 +1381,15 @@ parser got two of them wrong:
   outcome without attestation. The guest had no GOP, so the child scan says
   nothing about bare-metal macOS. Shut down cleanly over SSH; QEMU exited.
 
+- **2026-10-18 17:11, kext 0.0.15 owner probe with recovery attested in the VM**
+  (run `~/macos tahoe/navi33/runs/20261018-171141`, `OpenCore-navi33-owner.qcow2`
+  built with `--owner-probe --owner-recovery`). Guest kext log: identity ok,
+  exclusive open ok and closed, display child scan found nothing, recovery
+  attested, decision code 2 (Owned) with mask 0. "Owned" is only the probe's
+  own verdict. It grants no GPU, config or queue ownership, and it is not the
+  production owner the SDMA Queue1 proof still needs. Guest shut down cleanly;
+  card back on vfio-pci.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.

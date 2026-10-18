@@ -23,7 +23,7 @@ die() { echo "make-opencore: $*" >&2; exit 1; }
 [ $# -ge 1 ] || die "usage: $0 ARTIFACT_DIR [--oc OPENCORE_RELEASE_DIR] [--hostfb FILE] [--dma-preflight] [--output FILE.qcow2] [--psp-load]"
 ART="$(cd -- "$1" && pwd)"; shift
 PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; SMU_SCPM=0
-DMA_PREFLIGHT=0; OCREL=""; HOSTFB=""; OUT_NAME="OpenCore-navi33.qcow2"
+OWNER_PROBE=0; OWNER_RECOVERY=0; DMA_PREFLIGHT=0; OCREL=""; HOSTFB=""; OUT_NAME="OpenCore-navi33.qcow2"
 while [ $# -gt 0 ]; do
   case "$1" in
     --smu-enable) SMU_ENABLE=1 ;;
@@ -33,6 +33,8 @@ while [ $# -gt 0 ]; do
     --psp-fw) PSP_FW=1 ;;
     --psp-autoload) PSP_AUTOLOAD=1 ;;
     --dma-preflight) DMA_PREFLIGHT=1 ;;
+    --owner-probe) OWNER_PROBE=1 ;;
+    --owner-recovery) OWNER_RECOVERY=1 ;;   # operator attests recovery; needs --owner-probe
     --output) OUT_NAME="${2:?--output needs a filename}"; shift ;;
     --oc) OCREL="$(cd -- "${2:?--oc needs a directory}" && pwd)"; shift ;;
     --hostfb) HOSTFB="${2:?--hostfb needs a file}"; shift ;;
@@ -78,7 +80,7 @@ if [ -n "$OCREL" ]; then
   OCVER="$(basename "$OCREL"), OpenCore.efi sha256 $(sha256sum "$OCREL/X64/EFI/OC/OpenCore.efi" | cut -c1-16)…"
 fi
 python3 -I - "$WORK/config.plist" "$PSP_LOAD" "$KEXT/Contents/MacOS/Navi33Probe" \
-  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" <<'EOF'
+  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" <<'EOF'
 import plistlib,struct,sys,uuid
 path,psp_load,binary,manifest,ocver,hostfb=sys.argv[1],sys.argv[2]=="1",sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6]
 psp_ring=sys.argv[7]=="1"
@@ -86,6 +88,8 @@ psp_fw=sys.argv[8]=="1"; psp_autoload=sys.argv[9]=="1"
 smu_enable=sys.argv[10]=="1"
 smu_scpm=sys.argv[11]=="1"
 dma_preflight=sys.argv[12]=="1"
+owner_probe=sys.argv[13]=="1"
+owner_recovery=sys.argv[14]=="1"
 c=plistlib.load(open(path,"rb"))
 add=[k for k in c["Kernel"]["Add"] if k.get("BundlePath")!="Navi33Probe.kext"]
 add.append({"Arch":"x86_64","BundlePath":"Navi33Probe.kext",
@@ -105,6 +109,8 @@ args+=["-v","debug=0x108","serial=3","msgbuf=1048576",
        "navi33-psp-load=1" if psp_load else "navi33-psp-ring=1" if psp_ring else
        "navi33-psp-fw=1" if psp_fw else "navi33-smu-enable=1" if smu_enable else "navi33-psp-off=1"]
 args.append("navi33-dma-preflight=1" if dma_preflight else "navi33-dma-off=1")
+if owner_probe: args.append("navi33-owner-probe=1")
+if owner_recovery: args.append("navi33-owner-recovery=1")
 if not smu_enable: args.append("navi33-smu-off=1")
 if smu_scpm: args.append("navi33-smu-scpm=1")
 if psp_autoload: args.append("navi33-psp-autoload=1")   # AUTOLOAD_RLC: its own gate
@@ -128,6 +134,7 @@ for _ in range(struct.unpack_from("<I",d,16)[0]):
     off+=size
 info=f"kext UUID {kuuid}\nOpenCore {ocver}\nboot-args {nv['boot-args']}\n"
 info+=f"DMA preflight {'enabled (read-only, unmaps before return)' if dma_preflight else 'disabled'}\n"
+info+=f"owner probe {'enabled (open/close only)' if owner_probe else 'disabled'}, recovery {'attested by operator' if owner_recovery else 'not attested'}\n"
 if fb: info+=f"hostfb boot_id={fb['boot_id']} offset={fb['offset']} bytes={fb['bytes']}\n"
 open(manifest,"w").write(info); print(info,end="")
 EOF
