@@ -608,6 +608,31 @@ parser got two of them wrong:
   - **Next:** `--ring 2` (copy the TOC, send LOAD_TOC through the ring,
     read the TMR size from the response). It is the first command through
     the ring and the first use of the fence; it needs its own yes.
+- **2026-10-18, kext 0.0.9 in the VM: LOAD_TOC went through the PSP ring.
+  First command through the ring.** Run `runs/20261018-110734` (`ring2-*.txt`,
+  `serial.log`; host reads in `navi33/host/ringregs-after-toc.txt`). The
+  user approved it ("yes, load the TOC") after the read-only plan.
+  - The plan (`--ring-plan 2`) was OK and said `resumed`: the registers
+    held our ring from the earlier step (`80020000`, `_67` 0, `_69/70/71`
+    `0f100000/80/1000`).
+  - `n33psp --ring 2`: state 28, flags `0x6f`, ring flags `0x15` (resumed,
+    toc-loaded, gate open), **1 register write** (`C2PMSG_67` 0 -> 16), 2
+    ms. The 2304 B TOC was copied into `fw_pri` and read back; the frame,
+    command buffer and fence were written and read back. **The fence
+    arrived (value 1) on the first poll and the response status was 0**,
+    so the feared stale-HDP-read problem did not appear on this card.
+  - **The PSP asked for a TMR of 19,922,944 B = 0x1300000 (19 MiB)**,
+    exactly the size in this card's Linux journal. The runner accepted it
+    (4 KiB multiple, within 32 MiB, address 1 MiB aligned at MC
+    `0x81_FC00_0000`). The TMR itself is not set up yet.
+  - Host reads afterwards: `C2PMSG_67` `0x10` (one frame consumed),
+    `C2PMSG_64` `0x80020000`, ring registers unchanged, sOS heartbeat
+    counting, DCN scanning. The gate was closed again.
+  - Known reporting quirk (to fix with the next kext build): a resumed run
+    never re-reads `C2PMSG_64`, so `ring regs: C2PMSG_64` in the run
+    summary prints 0; the host read shows the real `80020000`.
+  - **Next:** `--ring 3`: SETUP_TMR with MC `0x81_FC00_0000` and 19 MiB.
+    After it the PSP owns that VRAM region. It needs its own yes.
 
 ## Adding a register read
 
@@ -732,9 +757,9 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      TMR rule: size a non-zero 4 KiB multiple up to 32 MiB, address 1 MiB
      aligned.
    - **Status:** `--ring-plan 3` passed and `--ring 1` (create the KM ring)
-     succeeded in the VM on 2026-10-18 (findings log). **Next:** `--ring 2`
-     (LOAD_TOC through the ring), then `--ring 3` (SETUP_TMR); each needs
-     the user's explicit yes.
+     succeeded in the VM on 2026-10-18, then `--ring 2` (LOAD_TOC) too
+     (findings log). **Next:** `--ring 3` (SETUP_TMR), which needs the
+     user's explicit yes.
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
    GPU work.
 5. PM4 fence and compute dispatch (stages 16–17).
