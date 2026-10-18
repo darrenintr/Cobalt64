@@ -1405,6 +1405,15 @@ parser got two of them wrong:
   shutdown is therefore not proven, and needs a `willTerminate` path or a
   test that exercises `stop()`. Card back on vfio-pci. No GPU write.
 
+- **2026-10-18 18:08, kext 0.0.17 owner hold, shutdown release test in the VM**
+  (run `~/macos tahoe/navi33/runs/20261018-180855`, CI artifact of `adfa455`,
+  kext UUID `525FAAC3-DFC5-3EC9-BA7B-CA77C9947650`, `navi33-owner-hold=1`). The
+  hold acquired epoch 1 again. The guest was shut down over SSH, and **still no
+  `owner release` line**, so `systemWillShutdown` and `willTerminate` did not run
+  on this shutdown path either. The kext is probably not in the power plane, and
+  `stop()` is not called at shutdown. Release on shutdown is therefore still not
+  proven. Card back on vfio-pci. No GPU write.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.

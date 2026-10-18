@@ -535,3 +535,11 @@ overrides that call the same `releaseHeldOwner()` helper, which is idempotent.
 Both are IOService notifications. `systemWillShutdown` reaches only power-plane
 members, and this kext may not be one, so the VM run decides whether this works.
 A new power-driver registration would be the next step if it does not.
+
+**Result (0.0.17, VM run 2026-10-18 18:08):** the release line is still
+absent after a clean guest shutdown, so neither override runs on this path.
+The open is therefore held until the device goes away. The options are: register
+as a power driver so `systemWillShutdown` is called (this changes power
+management on the display card, so it needs a plan and approval), or accept
+that the open lasts until the machine powers off, which is harmless in practice
+but not clean.
