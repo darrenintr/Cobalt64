@@ -198,13 +198,13 @@ output survives a hang and Linux can inspect a stuck guest.
     second run matched bare metal in every `n33peek` value.
   - The guest's AMD GOP switches DCN off (fourth run), so the VM runs
     with `rombar=0`. The PSP plan then reaches `NO_CONSOLE`, exactly as
-    on bare metal. Kext 0.0.8 (host console) is the fix; it needs a CI
-    build.
+    on bare metal. Kext 0.0.8 (host console) fixed that: PLAN_OK, then
+    the PSP sOS load succeeded in the VM on 2026-10-18.
   - `run-vm.sh` takes `BOOT_DISK=` (for example `navi33/gop-diag.qcow2`),
     `VFIO_OPTS=` (for example `,x-vga=on`), and `OVMF_CODE=` with
     `OVMF_VARS=` (a writable copy).
-  - Every run stays read-only (`navi33-psp-off=1`) until the VM matches
-    bare metal.
+  - Every run is read-only (`navi33-psp-off=1`) unless the user approves
+    a write stage. The PSP load was approved and done on 2026-10-18.
 
 ## RX 7600 hardware facts
 
@@ -510,6 +510,55 @@ parser got two of them wrong:
   - This boot's record is BAR0+0x0, 3 MiB, 1024×768×32. It was made by
     hand from the boot-time BAR0 (`0x7c00000000`) after the service had
     already resized it.
+- **2026-10-18, kext 0.0.8 (N33N ABI 9) in the VM: the first `PLAN_OK`**
+  (`runs/20261018-103317`, `results-20261018-103339-guest.txt`).
+  - Build: CI run 39090397732, commit `0877148`. The loaded UUID
+    `6E159736-37E7-3574-9EAE-7BB2324806BA` matches the artifact (cached
+    in `navi33/cache/artifact-0.0.8`).
+  - The gate was closed (`navi33-psp-off=1`). The boot-args had
+    `navi33-hostfb-offset=0x0 navi33-hostfb-bytes=0x300000`, and the VM
+    ran with `rombar=0`.
+  - `n33psp --plan`: state 14, flags `0x0f` (fw-pinned, console-found,
+    aperture-match, dcn-fb-match), `LastPspPlan` ... `console host`.
+    - PSP: `C2PMSG_35` `80000000`, `C2PMSG_81` 0.
+    - MMHUB FB `8000-81ff`, DCN FB base `8000`.
+    - HUBP0 surface MC `0x80_0000_0000` (active, the only pipe).
+    - BAR0 is at guest `0xa0000000` + 256 MiB. The console is
+      `0xa0000000` (3072 KiB) = vram+0x0.
+    - `fw_pri` is vram+0xf000000 = MC `0x80_0F00_0000` (`C2PMSG_36`
+      `0x800f0`), exactly the values to check before a load.
+  - The kext's IOLog line (`Navi33Probe: psp: plan state 14 ...`)
+    reached `serial.log`.
+- **2026-10-18 10:37, kext 0.0.8 in the VM: the PSP sOS load
+  succeeded. This was the first GPU write.** Run `runs/20261018-103646`
+  (`psp-load-20261018-103729.txt`, `results-20261018-103756-guest.txt`,
+  host reads in `navi33/host/`). The user approved it after the PLAN_OK
+  run.
+  - Setup: the gate was open (`navi33-psp-load=1`, no `navi33-psp-off`),
+    with the host console boot-args and `rombar=0`. The firmware's
+    SHA-256 was `94db505f…a26fa8`. The plan rerun just before the load
+    gave state 14, flags `0x1f`.
+  - The load gave state 20 (`sOS ALIVE`), flags `0x7f`: 4 parts (KDB,
+    SPL, SYS_DRV, sOS), **8 register writes**, 25 ms. `C2PMSG_35` was
+    `0x80000000` after every part, `C2PMSG_81` = `433bbc95`, and the sOS
+    version is `00330024`, matching the firmware file. The kext logged
+    `LOAD starts` and `LOAD state 20` to `serial.log`.
+  - After the load:
+    - `C2PMSG_81` keeps counting (`433bcb6a`, `433bcbb7`, ... `433bd6d9`
+      read from the host after the VM stopped), so it is a live
+      heartbeat.
+    - `C2PMSG_58` = `00330024`, and `C2PMSG_64` = `0x80000000`, the bit
+      Linux waits for before it creates the KM ring.
+    - `C2PMSG_33` went from `0x80000000` to 0, and `C2PMSG_60..63` =
+      `0 0 0 2`.
+    - The preflight now gives PSP state 6 (running), and its reason
+      moved from 8 to 9 (GC not answering). GC is still in reset
+      (`IMU_GFX_RESET_CTRL` = `0x10`), as expected.
+    - `n33psp --plan` now refuses with state 8 (sOS already alive).
+    - DCN kept scanning out the whole time (OTG0 at 60 Hz).
+  - The gate was closed again right after (`navi33-psp-off=1` is back in
+    `OpenCore-navi33.qcow2`). The sOS stays loaded until a full
+    power-off, so every later run starts with the sOS alive.
 
 ## Adding a register read
 
@@ -571,8 +620,10 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
 
 1. IP discovery and read-only probe (done).
 2. PSP: load sOS (stages 4–8). This is the **first GPU write**.
-   Implemented in kext 0.0.6 (N33N ABI 9). Its plan refused on hardware
-   (console address was virtual, see the log); fixed in 0.0.7.
+   **Done on 2026-10-18, in the VM with kext 0.0.8:** sOS `00330024`
+   alive, 8 register writes (see the findings log). Implemented in
+   kext 0.0.6 (N33N ABI 9). Its plan refused on bare metal (console
+   address was virtual, see the log); fixed in 0.0.7.
    - **To be run in the VM** (user's choice, 2026-10-18). The guest has
      no GOP console (see "VM test loop"), so kext 0.0.8 can take the
      console from the host: `navi33-hostfb-offset`/`-bytes`, recorded by
@@ -598,7 +649,10 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      VBIOS asks), TOC/TMR, the KM ring.
    - Recovery if the PSP wedges: a full power-off (a warm restart may
      leave the PSP state in place).
-3. SMU, IMU, RLC: power the GC block up (stages 9–11).
+3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Next.** This
+   needs its own approval and its own boot-arg (hard rule 2). The KM ring
+   (`C2PMSG_64` is already `0x80000000`) and TMR come first, as in
+   upstream `psp_hw_start`.
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
    GPU work.
 5. PM4 fence and compute dispatch (stages 16–17).

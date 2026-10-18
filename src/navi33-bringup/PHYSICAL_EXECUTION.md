@@ -110,7 +110,13 @@ decoded against upstream `psp_v13_0.c`, `smu_v13_0.c`, `imu_v11_0.c`,
   (`FB_LOCATION` `0x8000/0x81ff`), with the system aperture over the same
   range. NBIO memsize reads 8176 MiB.
 
-### PSP13 sOS load stage (Navi33Probe 0.0.8, N33N ABI 9; not yet run)
+### PSP13 sOS load stage (Navi33Probe 0.0.8, N33N ABI 9; proven 2026-10-18)
+
+Proven in the Tahoe VM on 2026-10-18 at 10:37 (see the AGENTS.md
+findings log). The plan gave state 14 with a host console. The load gave
+state 20 (`sOS ALIVE`): 4 parts, 8 register writes, 25 ms. `C2PMSG_81`
+then runs as a heartbeat, and `C2PMSG_58` holds `0x00330024`. DCN kept
+scanning out throughout.
 
 The first GPU write, approved by the user on 2026-10-18 with SSH as the
 recovery path. `N33_SEL_PSP_LOAD` has two modes:
