@@ -88,8 +88,9 @@ psp_fw=sys.argv[8]=="1"; psp_autoload=sys.argv[9]=="1"
 smu_enable=sys.argv[10]=="1"
 smu_scpm=sys.argv[11]=="1"
 dma_preflight=sys.argv[12]=="1"
-owner_probe=sys.argv[13]=="1"
-owner_recovery=sys.argv[14]=="1"
+# Optional so older callers (bootstrap tests) keep working: owner flags default off.
+owner_probe=len(sys.argv)>13 and sys.argv[13]=="1"
+owner_recovery=len(sys.argv)>14 and sys.argv[14]=="1"
 c=plistlib.load(open(path,"rb"))
 add=[k for k in c["Kernel"]["Add"] if k.get("BundlePath")!="Navi33Probe.kext"]
 add.append({"Arch":"x86_64","BundlePath":"Navi33Probe.kext",
