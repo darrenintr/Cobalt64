@@ -693,6 +693,31 @@ parser got two of them wrong:
     2 register writes, 2 staged pages-sets, 2 `LOAD_IP_FW` commands), which
     needs an OpenCore disk built with `--psp-fw`. `AUTOLOAD_RLC` (stop 27) is a
     separate approval and needs `--psp-autoload` as well.
+- **2026-10-18, kext 0.0.10 in the VM: the first IP firmware was loaded - the
+  two SDMA images (records 0 and 1).** Third GPU write stage, first run.
+  Run `runs/20261018-113712` (`ipfw-run-0-2-*.txt`, `serial.log`; host reads in
+  `navi33/host/ringregs-before-fw.txt`, `ringregs-after-sdma-fw.txt`,
+  `gcregs-after-sdma-fw.txt`). The user approved it ("yes, load the SDMA
+  firmware") after the read-only plan.
+  - Setup: OpenCore disk built with `--psp-fw` (`navi33-psp-fw=1`, no
+    `navi33-psp-off`, no `navi33-psp-autoload`, other switches unchanged).
+    The plan rerun with the gate open: state 14, ring flags `0x11`.
+  - `n33psp --ip-fw 0 2`: state 32 (`firmware stage DONE`), flags `0x6f`,
+    ring flags `0x31` (resumed, fw-loaded, gate open), **2 register writes**
+    (`C2PMSG_67` `0x30` -> `0x40` -> `0x50`), 4 ms, response status 0 and
+    fence 2. The PSP returned TMR address `0x81_FC93_2100` for the last
+    record, inside the TMR (`0x81_FC00_0000`..`0x81_FD30_0000`).
+  - Host reads afterwards: `C2PMSG_67` `0x50`, `C2PMSG_64` `0x80020000`, ring
+    registers unchanged, sOS heartbeat counting, DCN scanning at 60 Hz. GC is
+    **unchanged**: `IMU_GFX_RESET_CTRL` `0x10`, `RLC_CNTL`,
+    `RLC_BOOTLOAD_STATUS`, `SDMA0_ID` and `GRBM_STATUS` all 0. The images are
+    only stored; nothing starts them until `AUTOLOAD_RLC`.
+  - The gate was closed again (`navi33-psp-off=1` is back in
+    `OpenCore-navi33.qcow2`).
+  - **Next:** records 2..25 (CP, MES, IMU, RLC except RLC_G), in ranges the
+    user approves, then `RLC_G` and `AUTOLOAD_RLC` (stop 27, needs
+    `--psp-autoload` and its own approval). Re-sending records 0-1 is not
+    needed: the PSP keeps them until a full power-off.
 
 ## Adding a register read
 
