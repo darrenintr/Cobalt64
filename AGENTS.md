@@ -15,6 +15,11 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
   stages and the opt-in SMU enable experiment, with its own user-client ABI ("N33N"). No
   shared Navi48 sources. Never reuse RDNA4 constants (GC12, PSP14, DCN4);
   Navi33 is GC 11.0.2, PSP 13.0.7, DCN 3.2.1.
+- `tools/native/navi33accel` and `tools/native/navi33metal`: separate Navi33
+  readiness policy and unregistered Metal bundle scaffold. Neither currently
+  publishes an IOAccelerator or hardware capabilities. The Queue1 memory/VM
+  configurator in `src/navi33-bringup/src/Navi33Sdma6Queue1ConfigPlan.h` is
+  an offline manifest only.
 - `src/dcn321`, `src/dcn41`: display-engine helpers per generation.
 - Key Navi33 docs: `src/navi33-bringup/PHYSICAL_EXECUTION.md` (what is
   proven on hardware, what is still blocked), `ACCELERATION.md`,
@@ -100,6 +105,11 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
 4. **Never rely on a result you have not verified.** A zero read from a
    GC register is not "idle": the GC block reads 0 when powered down.
    All-ones means the block is not answering.
+6. **Do not register or advertise Navi33 Metal acceleration until the
+   complete per-device owner, memory/VM, SDMA and GFX queue, per-client
+   submit/wait, shader translation, rendered-output readback and recovery
+   path have matching live hardware evidence for one owner epoch.** Host
+   policy tests, offline manifests and a buildable bundle do not count.
 
 ## Physical test loop
 
