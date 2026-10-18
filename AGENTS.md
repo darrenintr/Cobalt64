@@ -567,6 +567,22 @@ parser got two of them wrong:
   - The gate was closed again right after (`navi33-psp-off=1` is back in
     `OpenCore-navi33.qcow2`). The sOS stays loaded until a full
     power-off, so every later run starts with the sOS alive.
+- **2026-10-18, kext 0.0.9 (N33N ABI 10) in the VM: the ring stage's
+  first plan, read-only** (`runs/` latest at 11:0x, `ring-plan-{1,2,3}.txt`).
+  - Build: CI run 39092196781, commit `36e8ede`. Loaded UUID
+    `780E89DB-2315-3D25-A407-A205947F5AE4` matches the artifact (cached in
+    `navi33/cache/artifact-0.0.9`). Gates closed (`navi33-psp-off=1`, no
+    `navi33-psp-ring`); the sOS from the earlier load was still alive.
+  - `n33psp --ring-plan 1`, `2` and `3`: state 14, flags `0x0f`, console
+    from the host, `C2PMSG_64` `80000000`, `C2PMSG_67/69/70/71` all 0
+    ("fresh", not resumed). Layout: fw_pri MC `0x800f000000`, ring
+    `0x800f100000`, command page `0x800f101000`, fence `0x800f102000`,
+    TMR MC `0x81fc000000`. The kext's IOLog line reached `serial.log`.
+  - Afterwards the host read the card: sOS heartbeat still counting, ring
+    registers still 0, DCN scanning. Nothing was written.
+  - **Next:** the user's explicit yes for `--ring 1` (create the KM ring and
+    nothing else): needs an OpenCore disk with `navi33-psp-ring=1` and no
+    `navi33-psp-off`, then restore the closed disk afterwards.
 
 ## Adding a register read
 
