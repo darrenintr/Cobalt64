@@ -277,8 +277,12 @@ IOReturn Navi33NativeClient::externalMethod(
         bcopy(copied,&req,sizeof(req));
         const uint64_t payload=static_cast<uint64_t>(req.rom_bytes)+req.fw_bytes;
         if (req.abi_version!=N33_ABI_VERSION || req.size!=sizeof(req) ||
-            req.reserved0 || req.reserved1 ||
-            (req.mode!=N33_PSP_LOAD_PLAN && req.mode!=N33_PSP_LOAD_RUN) ||
+            req.reserved1 ||
+            (req.mode!=N33_PSP_LOAD_PLAN && req.mode!=N33_PSP_LOAD_RUN &&
+             req.mode!=N33_PSP_LOAD_RING_PLAN && req.mode!=N33_PSP_LOAD_RING_RUN) ||
+            ((req.mode==N33_PSP_LOAD_RING_PLAN || req.mode==N33_PSP_LOAD_RING_RUN) ?
+                 (req.stop_after<N33_PSP_RING_STOP_RING ||
+                  req.stop_after>N33_PSP_RING_STOP_TMR) : req.stop_after!=0u) ||
             req.rom_bytes<64u || !req.fw_bytes ||
             payload!=inputBytes-sizeof(req)) {
             IOFree(copied,len);
@@ -292,7 +296,8 @@ IOReturn Navi33NativeClient::externalMethod(
         }
         const uint8_t *rom=static_cast<const uint8_t *>(copied)+sizeof(req);
         const n33_psp_load_result result=owner_->pspLoad(
-            req.mode,rom,req.rom_bytes,rom+req.rom_bytes,req.fw_bytes);
+            req.mode,rom,req.rom_bytes,rom+req.rom_bytes,req.fw_bytes,
+            req.stop_after);
         bcopy(&result,args->structureOutput,sizeof(result));
         args->structureOutputSize=sizeof(result);
         IOLockUnlock(dmaLock_);

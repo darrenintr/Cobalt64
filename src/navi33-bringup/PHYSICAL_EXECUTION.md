@@ -156,6 +156,10 @@ The plan refuses unless all of these hold:
    and of every active surface (each counted as at least 32 MiB). It
    must also lie inside VRAM.
 
+A second write stage, the PSP KM ring (kext 0.0.9, N33N ABI 10), follows
+this one; see "PSP13 KM ring stage" below. It is built and host-tested but
+has not been run on the card.
+
 RUN maps only the 1 MiB `fw_pri` sub-range of BAR0, uncached. It then
 follows `psp_v13_0.c` step by step:
 
@@ -228,3 +232,28 @@ CI bug and must not be bypassed by advertising `N33_CAP_HW_SDMA`,
 **Do not load unsafe MMIO implementations into the only RX7600 that
 currently drives the display.** Compile success is not macOS Metal
 support and does not make any OpenCore Kext safe to install.
+
+### PSP13 KM ring stage (Navi33Probe 0.0.9, N33N ABI 10; not yet run)
+
+Runs after the sOS is alive. Modes `RING_PLAN` and `RING_RUN` of
+`N33_SEL_PSP_LOAD`; `n33psp --ring-plan N` / `--ring N --i-have-ssh`.
+`stop_after` N: 1 creates the KM ring, 2 also sends `LOAD_TOC`, 3 also
+`SETUP_TMR`. Gate: `navi33-psp-ring=1`, no `navi33-psp-off`, once per boot;
+`navi33-psp-off` kills both PSP stages.
+
+The plan refuses unless the sOS is alive (`C2PMSG_81` != 0), `C2PMSG_64`
+shows the response flag with a zero status, the ring registers
+(`C2PMSG_67/69/70/71`) are all zero or already hold this ring (then the run
+resumes it), and everything the sOS-load plan checks still holds: FB
+location, console inside BAR0, a live HUBP scanout at the console's offset,
+a window clear of the console and every surface by 16 MiB. The window is
+2 MiB wide here: `fw_pri` at 240 MiB, then the 4 KiB ring, 4 KiB command
+page and fence word at 241 MiB. The TMR address (FB base + 8128 MiB) must
+fit in the framebuffer.
+
+RUN zeroes the ring pages and reads them back before any register write,
+then follows `psp_v13_0_ring_create()` (69, 70, 71, then 64, 20 ms, wait for
+the response), then for each command writes the command buffer and a ring
+frame, reads both back, advances `C2PMSG_67` and waits for the fence. A
+non-zero response status or a missing fence stops the run. The register
+writer accepts only `C2PMSG_64/67/69/70/71`.

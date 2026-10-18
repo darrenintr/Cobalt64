@@ -273,7 +273,9 @@ load_fn=load_fn[:load_fn.index("\n}\n")]
 assert 'PE_parse_boot_argn("navi33-hw-probe"' in load_fn
 assert 'PE_parse_boot_argn("navi33-psp-load"' in load_fn
 assert 'PE_parse_boot_argn("navi33-psp-off"' in load_fn
-assert "req.attempted=&pspLoadAttempted_;" in load_fn
+# The sOS load keeps its own one-shot flag; only the ring modes use the other.
+assert "req.attempted=ringMode ? &pspRingAttempted_ : &pspLoadAttempted_;" in load_fn
+assert load_fn.count("&pspLoadAttempted_")==1
 assert "IOLockLock(pspLock_)" in load_fn
 assert "navi33::darwin_psp::execute(pci,req)" in load_fn
 # getConsoleInfo() returned a kernel virtual address on hardware (0.0.6);
@@ -289,7 +291,7 @@ assert "const pl::Range console=boot.phys ? boot :" in writer
 assert "pl::hostConsole(boot,req.hostConsole," in writer
 assert "pl::plan(snap,console,bar0Range)" in writer
 assert "req.consolePhys,req.consoleBytes},bar0Range" not in writer
-assert "$(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
+assert "$(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
 wfn=writer[writer.index("bool write32("):]
 wfn=wfn[:wfn.index("\n}\n")]
 assert "off!=io->allowed[0] && off!=io->allowed[1]" in wfn
@@ -308,6 +310,39 @@ for forbidden in ("->configWrite", "->setMemoryEnable", "->setBusMasterEnable",
 loader=(root/"src/Navi33Psp13Loader.h").read_text()
 assert "{N33_PSPL_STEP_SPL,&fw.kdb,kLoadSpl}" in loader  # upstream quirk kept
 assert "kWritableRegisters[2]={kC2pmsg36,kC2pmsg35}" in loader
+# PSP13 KM ring stage (kext 0.0.9+): its own boot-arg, its own one-shot flag and
+# its own writer. Not approved to run until the user says so (AGENTS.md).
+assert 'PE_parse_boot_argn("navi33-psp-ring"' in load_fn
+assert "req.attempted=ringMode ? &pspRingAttempted_ : &pspLoadAttempted_;" in load_fn
+assert "const bool killed=PE_parse_boot_argn(\"navi33-psp-off\"" in load_fn
+assert "!killed && (ringMode ?" in load_fn     # psp-off kills both stages
+assert "bool pspRingAttempted_ = false;" in (root/"src/Navi33Probe.hpp").read_text()
+ring=(root/"src/Navi33DarwinPspRing.cpp").read_text()
+assert "return executeRing(pci,req);" in writer
+assert "$(BUILD)/Navi33DarwinPspRing.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
+rwfn=ring[ring.index("bool write32("):]
+rwfn=rwfn[:rwfn.index("\n}\n")]
+assert "ok=ok || off==a" in rwfn and "uint64_t allowed[5]{}" in ring
+assert ("io.allowed[0]=rregs.c64;io.allowed[1]=rregs.c67;io.allowed[2]=rregs.c69;"
+        "\n    io.allowed[3]=rregs.c70;io.allowed[4]=rregs.c71;") in ring
+assert "pl::pinned(req.fw,req.fwBytes)" in ring
+assert "IODeviceMemory::withSubRange(bar0,plan.win.fwPriOffset," in ring
+assert "bar0->map(" not in ring, "the whole of BAR0 must never be mapped"
+rorder=[ring.index(x) for x in (
+    "if(plan.state!=N33_PSPL_PLAN_OK || req.mode==N33_PSP_LOAD_RING_PLAN)",
+    "if(!req.writeGate)", "if(*req.attempted)", "withSubRange(",
+    "*req.attempted=true;", "rg::run(plan,rregs,fw.toc,hw)")]
+assert rorder==sorted(rorder), "PSP ring gates are out of order"
+for forbidden in ("->configWrite", "->setMemoryEnable", "->setBusMasterEnable",
+                  "mapDeviceMemory", "IOConnectCallMethod(", "setPowerState(",
+                  "WREG32("):
+    assert forbidden not in ring, f"PSP ring writer gained {forbidden}"
+ringh=(root/"src/Navi33Psp13Ring.h").read_text()
+assert "kWritableRegisters[5]={kC2pmsg64,kC2pmsg67,kC2pmsg69," in ringh
+assert "tmrValid" in ringh and "kTmrVramOffset=8128ull<<20u" in ringh
+for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
+                  "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
+    assert forbidden not in ringh, f"Navi33Psp13Ring.h gained hardware I/O: {forbidden}"
 for filename in ("Navi33Psp13Loader.h", "Navi33Sha256.h"):
     code=(root/"src"/filename).read_text()
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
@@ -315,9 +350,12 @@ for filename in ("Navi33Psp13Loader.h", "Navi33Sha256.h"):
         assert forbidden not in code, f"{filename} gained hardware I/O: {forbidden}"
 tool=(root/"tools/n33psp.c").read_text()
 assert "N33_SEL_PSP_LOAD" in tool and "--i-have-ssh" in tool
+assert "N33_PSP_LOAD_RING_RUN" in tool and "(writes && !ssh)" in tool
 # Never write the GPU from anything that runs unattended.
 for unattended in ("usb/run.sh", "usb/navi33-autorun.sh", "tools/n33autorun.c"):
     code=(root/unattended).read_text()
     assert "--load" not in code, f"{unattended} must never run the PSP load"
     assert "N33_PSP_LOAD_RUN" not in code
+    assert "--ring" not in code, f"{unattended} must never run the ring stage"
+    assert "N33_PSP_LOAD_RING_RUN" not in code
 print("Navi33 device IOMMU staging and GPU submission boundaries: static checks passed")

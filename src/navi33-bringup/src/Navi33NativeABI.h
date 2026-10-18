@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 9u /* adds PSP_LOAD (plan read-only; load gated) */
+#define N33_ABI_VERSION 10u /* 9: PSP_LOAD; 10: PSP ring modes + wider result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -190,6 +190,15 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
  * by rom_bytes of IP Discovery, then fw_bytes of psp_13_0_7_sos.bin. */
 #define N33_PSP_LOAD_PLAN 1u
 #define N33_PSP_LOAD_RUN 2u
+/* Ring stage (after the sOS is alive): KM ring, then LOAD_TOC, then SETUP_TMR.
+ * RING_PLAN reads and checks only. RING_RUN also needs navi33-psp-ring=1 with
+ * no navi33-psp-off, runs at most once per boot, and stops after the step in
+ * the request's stop_after (1 ring, 2 +TOC, 3 +TMR). */
+#define N33_PSP_LOAD_RING_PLAN 3u
+#define N33_PSP_LOAD_RING_RUN 4u
+#define N33_PSP_RING_STOP_RING 1u
+#define N33_PSP_RING_STOP_TOC 2u
+#define N33_PSP_RING_STOP_TMR 3u
 #define N33_PSP_LOAD_MAX_INPUT (2u*1024u*1024u)
 enum n33_psp_load_state {
   N33_PSPL_DISABLED=0, N33_PSPL_BAD_REQUEST=1, N33_PSPL_NO_PROVIDER=2,
@@ -201,12 +210,19 @@ enum n33_psp_load_state {
   N33_PSPL_PLAN_OK=14, N33_PSPL_WRITE_DISABLED=15,
   N33_PSPL_ALREADY_ATTEMPTED=16, N33_PSPL_STAGE_VERIFY_FAILED=17,
   N33_PSPL_BOOTLOADER_TIMEOUT=18, N33_PSPL_SOS_TIMEOUT=19,
-  N33_PSPL_SOS_ALIVE=20
+  N33_PSPL_SOS_ALIVE=20,
+  /* ring stage */
+  N33_PSPL_SOS_NOT_ALIVE=21, N33_PSPL_RING_NOT_READY=22,
+  N33_PSPL_RING_REGS_UNEXPECTED=23, N33_PSPL_RING_CREATE_TIMEOUT=24,
+  N33_PSPL_CMD_TIMEOUT=25, N33_PSPL_CMD_FAILED=26, N33_PSPL_TOC_BAD=27,
+  N33_PSPL_RING_DONE=28
 };
 /* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
 enum n33_psp_load_step {
   N33_PSPL_STEP_NONE=0, N33_PSPL_STEP_KDB=1, N33_PSPL_STEP_SPL=2,
-  N33_PSPL_STEP_SYS_DRV=3, N33_PSPL_STEP_SOS=4
+  N33_PSPL_STEP_SYS_DRV=3, N33_PSPL_STEP_SOS=4,
+  N33_PSPL_STEP_RING_CREATE=5, N33_PSPL_STEP_LOAD_TOC=6,
+  N33_PSPL_STEP_SETUP_TMR=7
 };
 #define N33_PSPL_FLAG_FW_PINNED (1u<<0)
 #define N33_PSPL_FLAG_CONSOLE_FOUND (1u<<1)
@@ -217,7 +233,7 @@ enum n33_psp_load_step {
 #define N33_PSPL_FLAG_WROTE_REGISTERS (1u<<6)
 struct n33_psp_load_request {
   uint32_t abi_version, size, mode, rom_bytes;
-  uint32_t fw_bytes, reserved0;
+  uint32_t fw_bytes, stop_after; /* stop_after: ring modes only, else 0 */
   uint64_t reserved1;
 };
 N33_STATIC_ASSERT(sizeof(struct n33_psp_load_request)==32,
@@ -232,9 +248,18 @@ struct n33_psp_load_result {
   uint64_t console_vram_offset, fw_pri_vram_offset, fw_pri_mc, reserved0;
   uint32_t fw_sos_version, fw_kdb_bytes, fw_spl_bytes, fw_sys_bytes;
   uint32_t fw_sos_bytes, elapsed_ms, reserved1, reserved2;
+  /* ring stage (zero for the sOS load modes) */
+  uint64_t ring_mc, cmd_mc, fence_mc, tmr_mc;
+  uint32_t tmr_bytes, toc_bytes, c2pmsg64_last, c2pmsg67_last;
+  uint32_t cmd_status, fence_seen, ring_flags, reserved3;
 };
-N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==192,
-                  "N33 PSP load result must be 192 bytes");
+N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==256,
+                  "N33 PSP load result must be 256 bytes");
+#define N33_PSPR_FLAG_RESUMED (1u<<0) /* ring already existed, not recreated */
+#define N33_PSPR_FLAG_RING_CREATED (1u<<1)
+#define N33_PSPR_FLAG_TOC_LOADED (1u<<2)
+#define N33_PSPR_FLAG_TMR_SET (1u<<3)
+#define N33_PSPR_FLAG_GATE_OPEN (1u<<4)
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;

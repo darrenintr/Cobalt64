@@ -57,11 +57,13 @@ int main() {
     assert(pr::get32(cmd,40)==0u && pr::get32(cmd,pr::kRespOff)==0u);
     assert(!pr::prepLoadToc(cmd,0x80'00f0'0800ull,2304u));  // not 4 KiB aligned
     assert(!pr::prepLoadToc(cmd,0x80'00f0'0000ull,0u));
-    // TMR: 4 MiB, naturally aligned; offsets +28.. in the command body.
+    // TMR: size from the TOC response, 1 MiB aligned. 19 MiB is this card's.
+    assert(pr::tmrValid(0x81'fc00'0000ull,0x1300000u));
     assert(pr::tmrValid(0x80'0040'0000ull,0x400000u));
-    assert(!pr::tmrValid(0x80'0010'0000ull,0x400000u));      // not size-aligned
-    assert(!pr::tmrValid(0x80'0040'0000ull,0x401000u));      // not a power of 2
-    assert(!pr::tmrValid(0x80'0040'0000ull,0xc00u));         // not 4 KiB multiple
+    assert(!pr::tmrValid(0x80'0040'0800ull,0x400000u));      // not 1 MiB aligned
+    assert(!pr::tmrValid(0x80'0040'0000ull,0x401800u));      // not a 4 KiB multiple
+    assert(!pr::tmrValid(0x80'0040'0000ull,0u));
+    assert(!pr::tmrValid(0x80'0040'0000ull,0x2100000u));     // over the 32 MiB cap
     assert(pr::prepSetupTmr(cmd,0x80'0040'0000ull,0x400000u,0x40'0000ull));
     assert(pr::get32(cmd,8)==5u && pr::get32(cmd,28)==0x00400000u &&
            pr::get32(cmd,32)==0x80u && pr::get32(cmd,36)==0x400000u &&

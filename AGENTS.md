@@ -25,12 +25,20 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
 
 ## Navi33 hard rules
 
-1. **The kext is read-only except the PSP sOS load.** That one stage
-   (approved 2026-10-18) may write only `C2PMSG_35`/`C2PMSG_36` and its
-   1 MiB `fw_pri` window in VRAM. It needs `navi33-psp-load=1`, is killed
-   by `navi33-psp-off`, and runs at most once per boot. No other register
-   write, firmware load or command submission. `Navi33HardwarePlan.h` and
-   `tests/test_manifest.py` enforce this; do not weaken them.
+1. **The kext is read-only except two gated PSP stages.**
+   - The sOS load (approved and run 2026-10-18) may write only
+     `C2PMSG_35`/`C2PMSG_36` and its 1 MiB `fw_pri` window in VRAM. It
+     needs `navi33-psp-load=1`, is killed by `navi33-psp-off`, and runs at
+     most once per boot.
+   - The ring stage (code since kext 0.0.9; **not yet approved to run**)
+     may write only `C2PMSG_64/67/69/70/71` and a 2 MiB window in VRAM.
+     It needs `navi33-psp-ring=1`, is killed by `navi33-psp-off`, and runs
+     at most once per boot. The user approved writing it and running its
+     read-only plan on 2026-10-18; its first real run needs a separate
+     explicit yes (rule 2).
+   No other register write, firmware load or command submission.
+   `Navi33HardwarePlan.h` and `tests/test_manifest.py` enforce this; do
+   not weaken them.
 2. **The RX 7600 is the only display GPU in the test Mac.** Every new
    write stage (SMU, IMU, RLC, and so on) needs the user's explicit
    approval to write to that card, plus a recovery path (SSH into the
@@ -653,15 +661,38 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
    needs its own approval and its own boot-arg (hard rule 2). The KM ring
    (`C2PMSG_64` is already `0x80000000`) and TMR come first, as in
    upstream `psp_hw_start`.
-   - Started 2026-10-18, host-only: `src/Navi33Psp13Ring.h` (KM ring
-     create values, response check, write-pointer and frame layout, from
-     `psp_v13_0.c` and `psp_ring_cmd_submit`) with
-     `tests/test_psp13_ring.cpp`, which also covers the LOAD_TOC and
-     SETUP_TMR command buffers (raw offsets: cmd id +8, body +28,
-     response +864; Linux leaves `buf_size`/`buf_version` 0 for ring
-     commands) and the 4 MiB naturally-aligned TMR rule. It is not linked into the kext and
-     writes nothing; the ring stage still needs the user's approval, its
-     own writer, its own boot-arg and a plan, like the sOS load had.
+   - **Built 2026-10-18 (kext 0.0.9, N33N ABI 10), not yet run on the
+     card.** Pure protocol, planner and runner: `src/Navi33Psp13Ring.h`
+     (tests `test_psp13_ring.cpp` and `test_psp13_ring_run.cpp`, a fake
+     PSP with failure paths and mutation checks). Writer:
+     `src/Navi33DarwinPspRing.cpp`. Modes `N33_PSP_LOAD_RING_PLAN` (3) and
+     `RING_RUN` (4) of the existing `N33_SEL_PSP_LOAD` selector, with
+     `stop_after` 1 (create the KM ring), 2 (+LOAD_TOC) or 3 (+SETUP_TMR).
+     Tool: `n33psp --ring-plan N` and `n33psp --ring N --i-have-ssh`.
+     Layout (VRAM offsets): fw_pri at 240 MiB holds the TOC copy; the ring
+     (4 KiB), command page and fence word sit at 241 MiB; only that 2 MiB
+     window is mapped writable. The TMR is written by the PSP alone, at
+     FB base + 8128 MiB (the address Linux used on this card), sized by
+     the PSP's own LOAD_TOC answer (19 MiB here, not 4 MiB, and not a
+     power of two; an earlier `tmrValid` assumed otherwise and was
+     corrected before any run). Sequence from upstream: wait
+     `C2PMSG_64` ready, write 69, 70, 71, then 64 = KM type << 16, wait
+     20 ms and the response flag, then frames through `C2PMSG_67`.
+     `psp_update_fw_reservation` does nothing for MP0 13.0.7.
+   - The plan needs the sOS alive, `C2PMSG_64` ready, and the ring
+     registers either all zero (fresh) or already holding our ring
+     (resume). The run refuses to write a register unless the ring pages
+     read back as zero first. Open risk: the fence is polled through the
+     uncached BAR0 map, and Linux invalidates the HDP read cache there; if
+     a fence ever looks stale the symptom is `CMD_TIMEOUT` after the PSP
+     did run the command (a rerun then resumes the ring).
+   - Command buffers are raw offsets (cmd id +8, body +28, response
+     +864; Linux leaves `buf_size`/`buf_version` 0 for ring commands).
+     TMR rule: size a non-zero 4 KiB multiple up to 32 MiB, address 1 MiB
+     aligned.
+   - **Next for this stage:** run `n33psp --ring-plan 3` in the VM (reads
+     only), show the user the plan, and only then ask for the first real
+     `--ring 1` (create the ring and nothing else).
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
    GPU work.
 5. PM4 fence and compute dispatch (stages 16–17).

@@ -19,9 +19,12 @@ struct Request {
     // navi33-hostfb-offset/-bytes: the host's view, used only without the above.
     bool hostConsole=false;
     uint64_t hostConsoleOffset=0u, hostConsoleBytes=0u;
-    bool writeGate=false;         // navi33-psp-load=1 and no navi33-psp-off
+    bool writeGate=false;         // this mode's boot-arg is 1 and no navi33-psp-off
+    uint32_t stopAfter=0u;        // ring modes: 1 ring, 2 +LOAD_TOC, 3 +SETUP_TMR
     bool *attempted=nullptr;      // provider-wide, one load per boot
 };
 // Caller holds the provider's PSP lock and has checked the PCI identity.
 n33_psp_load_result execute(IOPCIDevice *pci,const Request &req);
+// Ring stage (modes RING_PLAN / RING_RUN), Navi33DarwinPspRing.cpp.
+n33_psp_load_result executeRing(IOPCIDevice *pci,const Request &req);
 } } // namespace navi33::darwin_psp

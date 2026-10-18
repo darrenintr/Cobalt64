@@ -12,6 +12,8 @@
 //   wait C2PMSG_64 & 0x8000FFFF == 0x80000000 again.
 // A frame is a 64 byte psp_gfx_rb_frame; wptr (C2PMSG_67) counts dwords.
 #pragma once
+#include "Navi33NativeABI.h"
+#include "Navi33Psp13Loader.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -100,7 +102,12 @@ constexpr uint32_t kRespTmrSizeOff=kRespOff+16u;
 constexpr uint32_t kCmdSetupTmr=0x00000005u;       // GFX_CMD_ID_SETUP_TMR
 constexpr uint32_t kCmdLoadToc=0x00000020u;        // GFX_CMD_ID_LOAD_TOC
 constexpr uint64_t kTmrAlignment=0x100000u;        // PSP_TMR_ALIGNMENT
-constexpr uint64_t kTmrDefaultBytes=0x400000u;     // PSP_TMR_SIZE (non-Aldebaran)
+// MP0 13.0.7 has boot_time_tmr = false, so Linux runs LOAD_TOC, takes the
+// TMR size from resp.tmr_size (this card, 2026-10-18 journal: 0x1300000 =
+// 19 MiB, placed at MC 0x81fc000000 = FB base + 8128 MiB) and SETUP_TMR with
+// the buffer. PSP_TMR_SIZE (4 MiB) is only the fallback without a TOC.
+constexpr uint64_t kTmrVramOffset=8128ull<<20u;
+constexpr uint64_t kTmrMaxBytes=32ull<<20u;        // refuse anything larger
 
 inline void put32(uint8_t *buf,uint32_t off,uint32_t v) {
     for(unsigned i=0;i<4u;++i)buf[off+i]=static_cast<uint8_t>(v>>(8u*i));
@@ -124,11 +131,11 @@ inline bool prepLoadToc(uint8_t (&buf)[kCmdBytes],uint64_t fwPriMc,
     put32(buf,kCmdBodyOff+8u,tocBytes);
     return true;
 }
-// TMR "naturally aligned": the start is a multiple of the size (a power of
-// two here) and of PSP_TMR_ALIGNMENT; the size is a multiple of 4 KiB.
+// Size: non-zero 4 KiB multiple, at most kTmrMaxBytes. Start: PSP_TMR_ALIGNMENT.
+// (The TMR is not a power of two: 19 MiB on this card.)
 inline bool tmrValid(uint64_t mc,uint64_t bytes) {
-    return bytes && !(bytes&0xfffull) && !(bytes&(bytes-1u)) &&
-           !(mc&(kTmrAlignment-1u)) && !(mc&(bytes-1u)) && mc+bytes>mc;
+    return bytes && !(bytes&0xfffull) && bytes<=kTmrMaxBytes &&
+           !(mc&(kTmrAlignment-1u)) && mc+bytes>mc;
 }
 // psp_prep_tmr_cmd_buf(), non-SR-IOV: virt_phy_addr = 1 (bit 1 of tmr_flags),
 // and the "system physical" address is the VRAM physical address (the
@@ -150,4 +157,269 @@ inline bool prepSetupTmr(uint8_t (&buf)[kCmdBytes],uint64_t tmrMc,
 // fence_value (the running index); the response status must then be 0.
 inline bool fenceDone(uint32_t fence,uint32_t index) { return fence==index; }
 inline bool cmdOk(const uint8_t *buf) { return get32(buf,kRespStatusOff)==0u; }
+
+// --- Memory layout (offsets in VRAM; all inside BAR0 except the TMR) -------
+// [fw_pri, +1 MiB)      TOC copy (psp_copy_fw), as in the sOS load
+// [fw_pri+1 MiB, +4 KiB) ring   |  +4 KiB cmd buffer  |  +8 KiB fence word
+// Only the 2 MiB window is ever mapped writable. The TMR is written by the
+// PSP alone; we only send its address.
+constexpr uint64_t kWindowBytes=2u*psp13load::kFwPriBytes;
+constexpr uint32_t kRingOff=static_cast<uint32_t>(psp13load::kFwPriBytes);
+constexpr uint32_t kCmdOff=kRingOff+0x1000u;
+constexpr uint32_t kFenceOff=kRingOff+0x2000u;
+constexpr uint32_t kPagesBytes=0x3000u;
+constexpr uint32_t kCmdWaitMs=2000u;               // Linux: psp_timeout polls
+constexpr uint32_t kRingWaitMs=2000u;
+
+// BAR5 byte offsets, resolved through checksum-valid IP Discovery.
+struct Regs {
+    bool valid=false;
+    uint64_t c64=0u, c67=0u, c69=0u, c70=0u, c71=0u;
+};
+inline Regs resolve(const IPDiscovery &disc,uint64_t bar5Bytes) {
+    Regs r{};
+    const uint32_t reg[5]={kC2pmsg64,kC2pmsg67,kC2pmsg69,kC2pmsg70,kC2pmsg71};
+    uint64_t *out[5]={&r.c64,&r.c67,&r.c69,&r.c70,&r.c71};
+    for(unsigned i=0;i<5u;++i) {
+        const RegisterAddress a=resolveDword(disc,Engine::PSP13,0u,reg[i],bar5Bytes);
+        if(a.code!=AddressCode::Pass)return Regs{};
+        *out[i]=a.bar5ByteOffset;
+    }
+    r.valid=true;
+    return r;
+}
+struct Snapshot {
+    psp13load::Snapshot base;
+    uint32_t c64=0u, c67=0u, c69=0u, c70=0u, c71=0u;
+};
+// The ring registers may legitimately read zero, so only all-ones is a
+// failed read.
+inline bool readSnapshot(const psp13load::Registers &pr,const Regs &r,
+                         psp13load::Read read,void *ctx,Snapshot &s) {
+    s=Snapshot{};
+    if(!r.valid || !read || !psp13load::readSnapshot(pr,read,ctx,s.base))
+        return false;
+    struct Item { uint64_t off; uint32_t *dst; };
+    const Item items[]={{r.c64,&s.c64},{r.c67,&s.c67},{r.c69,&s.c69},
+                        {r.c70,&s.c70},{r.c71,&s.c71}};
+    for(const Item &it:items)
+        if(!read(ctx,it.off,it.dst) || *it.dst==UINT32_MAX)return false;
+    return true;
+}
+
+struct Plan {
+    n33_psp_load_state state=N33_PSPL_BAD_REQUEST;
+    psp13load::Plan win;           // fw_pri window and the console/aperture proof
+    bool resume=false;             // ring already exists at our address
+    uint32_t stopAfter=0u;
+    uint64_t ringMc=0u, cmdMc=0u, fenceMc=0u, tmrMc=0u;
+};
+inline Plan plan(const Snapshot &s,const psp13load::Range &console,
+                 const psp13load::Range &bar0,uint32_t stopAfter) {
+    Plan p{};
+    if(stopAfter<N33_PSP_RING_STOP_RING || stopAfter>N33_PSP_RING_STOP_TMR)return p;
+    p.stopAfter=stopAfter;
+    if(!s.base.c2p81) {p.state=N33_PSPL_SOS_NOT_ALIVE;return p;}
+    if(!respOk(s.c64)) {p.state=N33_PSPL_RING_NOT_READY;return p;}
+    p.win=psp13load::planWindow(s.base,console,bar0,true,kWindowBytes);
+    if(p.win.state!=N33_PSPL_PLAN_OK) {p.state=p.win.state;return p;}
+    p.ringMc=p.win.fwPriMc+kRingOff;
+    p.cmdMc=p.win.fwPriMc+kCmdOff;
+    p.fenceMc=p.win.fwPriMc+kFenceOff;
+    p.tmrMc=p.win.fbBaseMc+kTmrVramOffset;
+    if(p.tmrMc+kTmrMaxBytes-1u>p.win.fbTopMc) {p.state=N33_PSPL_NO_WINDOW;return p;}
+    const bool fresh=!s.c67 && !s.c69 && !s.c70 && !s.c71;
+    const bool exists=s.c69==static_cast<uint32_t>(p.ringMc) &&
+                      s.c70==static_cast<uint32_t>(p.ringMc>>32u) &&
+                      s.c71==kRingBytes &&
+                      (s.c67%(kFrameBytes/4u))==0u && s.c67<kRingBytes/4u;
+    if(!fresh && !exists) {p.state=N33_PSPL_RING_REGS_UNEXPECTED;return p;}
+    p.resume=exists;
+    p.state=N33_PSPL_PLAN_OK;
+    return p;
+}
+
+struct Hw {
+    void *ctx=nullptr;
+    psp13load::Read read32=nullptr;
+    bool (*write32)(void *ctx,uint64_t bar5Offset,uint32_t value)=nullptr;
+    // Offsets are relative to the start of the 2 MiB window.
+    bool (*vramZero)(void *ctx,uint32_t off,uint32_t len)=nullptr;
+    bool (*vramWrite)(void *ctx,uint32_t off,const uint8_t *src,uint32_t len)=nullptr;
+    bool (*vramRead)(void *ctx,uint32_t off,uint8_t *dst,uint32_t len)=nullptr;
+    void (*sleepMs)(void *ctx,uint32_t ms)=nullptr;
+};
+struct Outcome {
+    n33_psp_load_state state=N33_PSPL_BAD_REQUEST;
+    n33_psp_load_step step=N33_PSPL_STEP_NONE;
+    uint32_t stepsDone=0u, writes=0u, elapsedMs=0u;
+    uint32_t c64Last=0u, c67Last=0u, cmdStatus=0u, fenceSeen=0u;
+    uint32_t tocBytes=0u, tmrBytes=0u, flags=0u, fenceIndex=0u;
+    bool wroteVram=false;
+};
+inline bool vramEquals(const Hw &hw,uint32_t off,const uint8_t *want,uint32_t len) {
+    uint8_t chunk[256];
+    for(uint32_t at=0;at<len;at+=sizeof(chunk)) {
+        const uint32_t n=len-at<sizeof(chunk) ? len-at : sizeof(chunk);
+        if(!hw.vramRead(hw.ctx,off+at,chunk,n))return false;
+        for(uint32_t i=0;i<n;++i)
+            if(chunk[i]!=(want ? want[at+i] : 0u))return false;
+    }
+    return true;
+}
+// Poll C2PMSG_64 for the response flag, as psp_wait_for(MBOX_TOS_RESP_*).
+inline bool waitResp(const Regs &r,const Hw &hw,Outcome &o,uint32_t ms) {
+    for(uint32_t t=0;;++t) {
+        uint32_t v=0u;
+        if(!hw.read32(hw.ctx,r.c64,&v) || v==UINT32_MAX)return false;
+        o.c64Last=v;
+        if(respOk(v))return true;
+        if(t>=ms)return false;
+        hw.sleepMs(hw.ctx,1u);++o.elapsedMs;
+    }
+}
+// psp_cmd_submit_buf(): command buffer, frame, write pointer, then the fence.
+// The command stays in the cmd page afterwards so its response can be read.
+inline bool submit(const Regs &r,const Hw &hw,const Plan &p,Outcome &o,
+                   const uint8_t (&cmd)[kCmdBytes]) {
+    uint32_t wptr=0u;
+    if(!hw.read32(hw.ctx,r.c67,&wptr) || wptr==UINT32_MAX) {
+        o.state=N33_PSPL_READ_FAILED;return false;
+    }
+    Slot slot{};
+    if(!nextSlot(wptr,kRingBytes,slot)) {
+        o.state=N33_PSPL_RING_REGS_UNEXPECTED;return false;
+    }
+    ++o.fenceIndex;
+    const Frame f=makeFrame(p.cmdMc,kCmdBytes,p.fenceMc,o.fenceIndex);
+    uint8_t fb[kFrameBytes];
+    const uint8_t *src=reinterpret_cast<const uint8_t *>(&f);
+    for(uint32_t i=0;i<kFrameBytes;++i)fb[i]=src[i];
+    const uint8_t zero4[4]={0,0,0,0};
+    o.wroteVram=true;
+    if(!hw.vramZero(hw.ctx,kCmdOff,0x1000u) ||
+       !hw.vramWrite(hw.ctx,kCmdOff,cmd,kCmdBytes) ||
+       !vramEquals(hw,kCmdOff,cmd,kCmdBytes) ||
+       !hw.vramWrite(hw.ctx,kFenceOff,zero4,4u) ||
+       !hw.vramWrite(hw.ctx,kRingOff+slot.offsetBytes,fb,kFrameBytes) ||
+       !vramEquals(hw,kRingOff+slot.offsetBytes,fb,kFrameBytes)) {
+        o.state=N33_PSPL_STAGE_VERIFY_FAILED;return false;
+    }
+    if(!hw.write32(hw.ctx,r.c67,slot.nextWptr)) {
+        o.state=N33_PSPL_MAP_FAILED;return false;
+    }
+    ++o.writes;o.c67Last=slot.nextWptr;
+    for(uint32_t t=0;;++t) {
+        uint8_t w[4];
+        if(!hw.vramRead(hw.ctx,kFenceOff,w,4u)) {
+            o.state=N33_PSPL_READ_FAILED;return false;
+        }
+        o.fenceSeen=get32(w,0u);
+        if(fenceDone(o.fenceSeen,o.fenceIndex))break;
+        if(t>=kCmdWaitMs) {o.state=N33_PSPL_CMD_TIMEOUT;return false;}
+        hw.sleepMs(hw.ctx,1u);++o.elapsedMs;
+    }
+    uint8_t resp[kCmdBytes];
+    if(!hw.vramRead(hw.ctx,kCmdOff,resp,kCmdBytes)) {
+        o.state=N33_PSPL_READ_FAILED;return false;
+    }
+    o.cmdStatus=get32(resp,kRespStatusOff);
+    if(!cmdOk(resp)) {o.state=N33_PSPL_CMD_FAILED;return false;}
+    o.tmrBytes=get32(resp,kRespTmrSizeOff);   // only meaningful after LOAD_TOC
+    return true;
+}
+inline Outcome run(const Plan &p,const Regs &r,const psp13load::Part &toc,
+                   const Hw &hw) {
+    Outcome o{};
+    if(p.state!=N33_PSPL_PLAN_OK || !r.valid || !hw.read32 || !hw.write32 ||
+       !hw.vramZero || !hw.vramWrite || !hw.vramRead || !hw.sleepMs ||
+       !p.win.fwPriMc || (p.win.fwPriMc&(psp13load::kFwPriBytes-1u)) ||
+       p.stopAfter<N33_PSP_RING_STOP_RING || p.stopAfter>N33_PSP_RING_STOP_TMR ||
+       (p.stopAfter>=N33_PSP_RING_STOP_TOC && (!toc.data || !toc.size)))
+        return o;
+    // Fresh, verified-zero ring pages before the PSP is told about them.
+    o.wroteVram=true;
+    if(!hw.vramZero(hw.ctx,kRingOff,kPagesBytes) ||
+       !vramEquals(hw,kRingOff,nullptr,kPagesBytes)) {
+        o.state=N33_PSPL_STAGE_VERIFY_FAILED;return o;
+    }
+    o.step=N33_PSPL_STEP_RING_CREATE;
+    if(p.resume) {
+        o.flags|=N33_PSPR_FLAG_RESUMED;
+    } else {
+        const Ring ring{p.ringMc,kRingBytes};
+        const CreatePlan c=planCreate(ring);
+        if(!c.ok)return o;
+        uint32_t v=0u;
+        if(!hw.read32(hw.ctx,r.c64,&v) || v==UINT32_MAX) {
+            o.state=N33_PSPL_READ_FAILED;return o;
+        }
+        o.c64Last=v;
+        if(!respOk(v)) {o.state=N33_PSPL_RING_NOT_READY;return o;}
+        // psp_v13_0_ring_create(): 69, 70, 71, then the command into 64.
+        const struct { uint64_t reg; uint32_t val; } w[4]={
+            {r.c69,c.r69},{r.c70,c.r70},{r.c71,c.r71},{r.c64,c.r64}};
+        for(const auto &x:w) {
+            if(!hw.write32(hw.ctx,x.reg,x.val)) {
+                o.state=N33_PSPL_MAP_FAILED;return o;
+            }
+            ++o.writes;
+        }
+        hw.sleepMs(hw.ctx,kCreateSettleMs);o.elapsedMs+=kCreateSettleMs;
+        if(!waitResp(r,hw,o,kRingWaitMs)) {
+            o.state=N33_PSPL_RING_CREATE_TIMEOUT;return o;
+        }
+        o.flags|=N33_PSPR_FLAG_RING_CREATED;
+    }
+    ++o.stepsDone;
+    if(p.stopAfter==N33_PSP_RING_STOP_RING) {o.state=N33_PSPL_RING_DONE;return o;}
+
+    // LOAD_TOC: copy the TOC into fw_pri (zeroed first), then ask for the TMR size.
+    o.step=N33_PSPL_STEP_LOAD_TOC;
+    o.tocBytes=toc.size;
+    uint8_t cmd[kCmdBytes];
+    if(!prepLoadToc(cmd,p.win.fwPriMc,toc.size)) {o.state=N33_PSPL_TOC_BAD;return o;}
+    if(!hw.vramZero(hw.ctx,0u,static_cast<uint32_t>(psp13load::kFwPriBytes)) ||
+       !hw.vramWrite(hw.ctx,0u,toc.data,toc.size) ||
+       !vramEquals(hw,0u,toc.data,toc.size)) {
+        o.state=N33_PSPL_STAGE_VERIFY_FAILED;return o;
+    }
+    if(!submit(r,hw,p,o,cmd))return o;
+    const uint32_t tmrBytes=o.tmrBytes;
+    if(!tmrValid(p.tmrMc,tmrBytes)) {o.state=N33_PSPL_TOC_BAD;return o;}
+    o.flags|=N33_PSPR_FLAG_TOC_LOADED;++o.stepsDone;
+    if(p.stopAfter==N33_PSP_RING_STOP_TOC) {o.state=N33_PSPL_RING_DONE;return o;}
+
+    // SETUP_TMR at FB base + 8128 MiB with the size the PSP asked for. The
+    // "system physical" address of a dGPU buffer is its VRAM offset.
+    o.step=N33_PSPL_STEP_SETUP_TMR;
+    if(!prepSetupTmr(cmd,p.tmrMc,tmrBytes,p.tmrMc-p.win.fbBaseMc)) {
+        o.state=N33_PSPL_TOC_BAD;return o;
+    }
+    if(!submit(r,hw,p,o,cmd))return o;
+    o.tmrBytes=tmrBytes;
+    o.flags|=N33_PSPR_FLAG_TMR_SET;++o.stepsDone;
+    o.state=N33_PSPL_RING_DONE;
+    return o;
+}
+
+// Result helpers (the load result struct carries both stages).
+inline void report(n33_psp_load_result &out,const Snapshot &s,const Plan &p) {
+    psp13load::report(out,s.base,p.win);
+    out.fw_pri_vram_offset=p.win.fwPriOffset;
+    out.ring_mc=p.ringMc;out.cmd_mc=p.cmdMc;out.fence_mc=p.fenceMc;
+    out.tmr_mc=p.tmrMc;
+    out.c2pmsg64_last=s.c64;out.c2pmsg67_last=s.c67;
+    if(p.resume)out.ring_flags|=N33_PSPR_FLAG_RESUMED;
+}
+inline void report(n33_psp_load_result &out,const Outcome &o) {
+    out.state=o.state;out.step=o.step;out.steps_done=o.stepsDone;
+    out.register_writes=o.writes;out.elapsed_ms=o.elapsedMs;
+    out.c2pmsg64_last=o.c64Last;out.c2pmsg67_last=o.c67Last;
+    out.cmd_status=o.cmdStatus;out.fence_seen=o.fenceSeen;
+    out.toc_bytes=o.tocBytes;out.tmr_bytes=o.tmrBytes;
+    out.ring_flags|=o.flags;
+    if(o.wroteVram)out.flags|=N33_PSPL_FLAG_WROTE_VRAM;
+    if(o.writes)out.flags|=N33_PSPL_FLAG_WROTE_REGISTERS;
+}
 } } // namespace navi33::psp13ring

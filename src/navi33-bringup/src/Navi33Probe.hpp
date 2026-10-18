@@ -32,10 +32,11 @@ public:
     n33_peek_result peekRegisters(uint32_t window,uint32_t first,
                                   uint32_t count,const uint8_t *romBytes,
                                   size_t romLength); // allowlisted reads
-    // PLAN reads only; RUN is the one GPU write (navi33-psp-load=1).
+    // PLAN modes read only. RUN writes the GPU: the sOS load (navi33-psp-load=1)
+    // or the ring stage (navi33-psp-ring=1); stopAfter is for the ring modes.
     n33_psp_load_result pspLoad(uint32_t mode,const uint8_t *romBytes,
                                 size_t romLength,const uint8_t *fwBytes,
-                                size_t fwLength);
+                                size_t fwLength,uint32_t stopAfter=0u);
     n33_capabilities nativeCapabilities() const {
         n33_capabilities result{};
         result.abi_version = N33_ABI_VERSION;
@@ -57,4 +58,5 @@ private:
     navi33::stage_owner::Registry stageOwner_{};
     IOLock *pspLock_ = nullptr; // serializes PSP plans and the one load
     bool pspLoadAttempted_ = false; // set before the first write; never reset
+    bool pspRingAttempted_ = false; // same for the ring stage
 };

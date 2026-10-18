@@ -54,7 +54,7 @@ constexpr sha256::Digest kPinnedSha256={{
 constexpr uint32_t kWritableRegisters[2]={kC2pmsg36,kC2pmsg35};
 
 struct Part { const uint8_t *data=nullptr; uint32_t size=0u, version=0u; };
-struct Firmware { Part kdb, spl, sys, sos; };
+struct Firmware { Part kdb, spl, sys, sos, toc; };
 // Structure only; pinned() decides whether this exact file may be sent.
 inline bool fromContainer(const uint8_t *image,size_t size,Firmware &out) {
     out=Firmware{};
@@ -79,6 +79,9 @@ inline bool fromContainer(const uint8_t *image,size_t size,Firmware &out) {
     out.spl={image+s->offset,s->size,s->version};
     out.sys={image+y->offset,y->size,y->version};
     out.sos={image+o->offset,o->size,o->version};
+    // The TOC is optional here; only the ring stage (LOAD_TOC) uses it.
+    const psp13fw::Component *t=psp13fw::find(inv,psp13fw::kToc);
+    if(t && t->size<=kFwPriBytes)out.toc={image+t->offset,t->size,t->version};
     return true;
 }
 inline bool pinned(const uint8_t *image,size_t size) {
@@ -178,24 +181,31 @@ struct Plan {
     uint64_t fbBaseMc=0u, fbTopMc=0u, surfaceMc[4]{};
     uint64_t consoleOffset=0u, fwPriOffset=0u, fwPriMc=0u;
 };
-inline bool clearOf(uint64_t win,uint64_t start,uint64_t bytes) {
-    // fw_pri keeps kGuardBytes away from [start, start+bytes) on both sides.
+inline bool clearOf(uint64_t win,uint64_t start,uint64_t bytes,
+                    uint64_t width=kFwPriBytes) {
+    // The window keeps kGuardBytes away from [start, start+bytes) on both sides.
     const uint64_t lo=start>kGuardBytes ? start-kGuardBytes : 0u;
     const uint64_t hi=start+bytes+kGuardBytes;
-    return win+kFwPriBytes<=lo || win>=hi;
+    return win+width<=lo || win>=hi;
 }
 // Pure decision: where fw_pri goes, and whether a load may start at all.
 // BAR0 offset == VRAM offset is proven, without a write, by the scanout
 // surface the GOP programmed: surface MC - FB base == console BAR0 offset.
-inline Plan plan(const Snapshot &s,const Range &console,const Range &bar0) {
+// The ring stage reuses every check below for a wider window (fw_pri plus the
+// ring/command/fence pages) and needs the sOS alive instead of absent, so
+// those two preconditions are parameters; plan() keeps the sOS-load meaning.
+inline Plan planWindow(const Snapshot &s,const Range &console,const Range &bar0,
+                       bool sosMustBeAlive,uint64_t windowBytes) {
     Plan p{};
     const uint64_t field=0x00ffffffu;
     p.fbBaseMc=(s.mmFbBase&field)<<24u;
     p.fbTopMc=((s.mmFbTop&field)<<24u)|0xffffffu;
     for(unsigned i=0;i<4u;++i)
         p.surfaceMc[i]=dcn321::combineSurfaceAddress(s.surfLo[i],s.surfHi[i]);
-    if(s.c2p81) {p.state=N33_PSPL_SOS_ALREADY_ALIVE;return p;}
-    if(s.c2p35!=kBootloaderReady) {p.state=N33_PSPL_BOOTLOADER_BUSY;return p;}
+    if(!sosMustBeAlive) {
+        if(s.c2p81) {p.state=N33_PSPL_SOS_ALREADY_ALIVE;return p;}
+        if(s.c2p35!=kBootloaderReady) {p.state=N33_PSPL_BOOTLOADER_BUSY;return p;}
+    }
     if(!(s.mmFbBase&field) || (s.mmFbTop&field)<(s.mmFbBase&field)) {
         p.state=N33_PSPL_BAD_FB_LOCATION;return p;
     }
@@ -231,18 +241,18 @@ inline Plan plan(const Snapshot &s,const Range &console,const Range &bar0) {
     // 16 MiB below the first 256 MiB of VRAM: far from the GOP console at
     // the bottom and from the firmware reservations at the top of VRAM.
     const uint64_t win=kWindowCeiling-kGuardBytes;
-    if(!clearOf(win,p.consoleOffset,console.bytes)) {
+    if(!clearOf(win,p.consoleOffset,console.bytes,windowBytes)) {
         p.state=N33_PSPL_NO_WINDOW;return p;
     }
     for(unsigned i=0;i<4u;++i) {
         if(!(p.activePipes&(1u<<i)))continue;
         const uint64_t bytes=console.bytes>kMinSurfaceBytes ?
             console.bytes : kMinSurfaceBytes;
-        if(!clearOf(win,p.surfaceMc[i]-p.fbBaseMc,bytes)) {
+        if(!clearOf(win,p.surfaceMc[i]-p.fbBaseMc,bytes,windowBytes)) {
             p.state=N33_PSPL_NO_WINDOW;return p;
         }
     }
-    if(p.fbBaseMc+win+kFwPriBytes-1u>p.fbTopMc ||
+    if(p.fbBaseMc+win+windowBytes-1u>p.fbTopMc ||
        ((p.fbBaseMc+win)>>20u)>UINT32_MAX) {
         p.state=N33_PSPL_NO_WINDOW;return p;
     }
@@ -250,6 +260,9 @@ inline Plan plan(const Snapshot &s,const Range &console,const Range &bar0) {
     p.fwPriMc=p.fbBaseMc+win;
     p.state=N33_PSPL_PLAN_OK;
     return p;
+}
+inline Plan plan(const Snapshot &s,const Range &console,const Range &bar0) {
+    return planWindow(s,console,bar0,false,kFwPriBytes);
 }
 
 // Writer callbacks. stage() zeroes the whole fw_pri window then copies the
