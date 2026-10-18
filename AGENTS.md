@@ -892,6 +892,20 @@ parser got two of them wrong:
     (autoload) all state 14, ring found and resumed. Nothing else written.
   - **Next, needs its own yes:** `--ip-fw 26 27` (the SMU image alone,
     261,632 B, 1 register write), then `0 26`, then autoload `27 28`.
+- **2026-10-18, kext 0.0.11 in the VM: the SMU image (record 26) was loaded
+  first and alone, as Linux does.** Run `runs/20261018-121614`
+  (`ipfw-run-26-27-smu-*.txt`; host reads `navi33/host/smuregs-before-smu.txt`
+  and `smuregs-after-smu.txt`). The user approved it ("yes load that SMU").
+  - `--ip-fw 26 27`: state 32, **1 register write** (`C2PMSG_67` `0x20` ->
+    `0x30`), 7 ms, response status 0, fence 1; the PSP returned TMR address 0
+    for it (Linux ignores it for SMC). No flicker: DCN kept scanning at 60 Hz,
+    no MCE/AER lines in the kernel log.
+  - The SMU mailbox block (`0x260..0x2a7`) is **identical** before and after
+    (only the sOS heartbeat differs). So the PSP accepted the SMU image without
+    any visible change to the running SMU; whether it was applied is not
+    shown by these registers.
+  - Gate closed again. **Next, needs a yes:** `--ip-fw 0 26` (the other 26
+    records), then `--ip-fw 27 28` with `--psp-autoload`.
 
 ## Adding a register read
 
