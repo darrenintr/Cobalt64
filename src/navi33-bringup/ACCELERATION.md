@@ -183,6 +183,15 @@ pages before releasing the allocation. The frame check still found no Metal
 device and refused before creating resources or submitting GPU work; the
 first rendered frame remains unproven. Full output paths are in `AGENTS.md`.
 
+At 15:16–15:18, a second actual GPU-passthrough VM run (QEMU `vfio-pci`
+host `0000:09:00.0`, `rombar=0`; no `--no-gpu`) compiled and ran the current
+frame proof on macOS 26.7.1. The VM's existing OpenCore disk had an older
+0.0.13 / ABI 14 kext, while the 15:01 run used 0.0.14. The root census still
+found zero `IOAccelerator` services and zero Metal devices; the proof exited
+at caps `0x00000001`, before the new BGRA/GFX11 guard or any GPU command.
+The full read-only run again reported reason 11 and disabled VM contexts.
+Run files are indexed in `AGENTS.md`.
+
 ## Stage G5: Persistent OS-IOMMU GMC11 / SDMA6 staging (no GPU execution)
 
 A new `Navi33DarwinStage::Session` owns a device-associated macOS

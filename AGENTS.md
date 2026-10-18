@@ -1326,6 +1326,25 @@ parser got two of them wrong:
   count. It is not GPU-DMA reachability evidence and does not satisfy the
   Queue1 write gate's owned-VRAM-root prerequisite.
 
+- **2026-10-18 15:16–15:18, RX7600 GPU-passthrough Metal census**
+  (run `~/macos tahoe/navi33/runs/20261018-151646/`). This run did **not**
+  use `--no-gpu`: `run-vm.sh` reported `gpu=1`, and QEMU's saved command
+  line attaches `0000:09:00.0` as `vfio-pci` with `rombar=0` (only the ROM
+  BAR is hidden to keep the GOP from switching DCN off). The existing
+  OpenCore disk loaded Navi33Probe **0.0.13 / ABI 14**, UUID
+  `EB123CF7-DBF5-3860-9CB7-87B6C597B58A`; this was stale relative to the
+  0.0.14 artifact used at 15:01, and no kext was changed for this run. The
+  proof source at commit `186b82a` compiled in the guest. Root enumeration
+  again found zero `IOAccelerator` services and zero Metal devices; the
+  strict proof exited 2 at caps `0x00000001`, before its BGRA/GFX11 mapping
+  guard, Metal resource creation or GPU submission. The complete read-only
+  `run.sh` result remained reason 11, with live PSP sOS `0x00330024`,
+  `MMHUB_CTX0=GFXHUB_CTX0=0x01fffe00`, Queue0/Queue1 RPTR/WPTR zero and
+  `GpuWritesEnabled=0`. No GPU DMA, command or register write occurred.
+  Evidence: `results-20261018-151818-manual.txt`,
+  `metal-proof-checks.txt`, `cmdline.txt` and `serial.log` in the run
+  directory. The VM was shut down cleanly over SSH.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.

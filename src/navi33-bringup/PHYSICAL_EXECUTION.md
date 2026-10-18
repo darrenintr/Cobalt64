@@ -54,6 +54,18 @@ VRAM write, MMIO write or GPU DMA. The same boot still had no
 `IOAccelerator` or Metal device, and the strict frame proof stopped at
 capabilities `0x00000001` before any Metal resource or command submission.
 
+In a 15:16–15:18 GPU-passthrough VM run, QEMU again attached physical
+`0000:09:00.0` as `vfio-pci` with `rombar=0`; `--no-gpu` was not used. The
+guest booted an older staged Navi33Probe 0.0.13 / ABI 14 build (UUID
+`EB123CF7-DBF5-3860-9CB7-87B6C597B58A`), not the 0.0.14 artifact used at
+15:01. The current Metal proof compiled and ran, but root enumeration still
+found zero `IOAccelerator` services and zero Metal devices. It exited at
+caps `0x00000001` before format mapping, Metal resource creation or GPU work.
+The full read-only diagnostic again found reason 11, a live PSP sOS, disabled
+MMHUB/GFXHUB Context0, and zero Queue0/Queue1 pointers. No GPU write occurred.
+See `results-20261018-151818-manual.txt` and `metal-proof-checks.txt` in the
+run directory indexed by `AGENTS.md`.
+
 ## Register addresses checked against a physical RX 7600
 
 `tests/fixtures/rx7600-linux-ipd.txt` is the IP Discovery table that
