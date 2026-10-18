@@ -246,6 +246,13 @@ parser got two of them wrong:
   - Fixed in 0.0.7: the console comes from `PE_state.bootArgs->Video`,
     which keeps the physical base, through `psp13load::bootConsole()`.
     That helper rejects anything at or above 2^52.
+- **Kext 0.0.7 (N33N ABI 9)** is staged on the stick, from CI run
+  39082377048. Expected UUID: `6CC36689-A8D7-33A4-B0FA-9638079370EA`.
+  - The 0.0.6 kext and tools are in `navi33/backup-0.0.6/`.
+  - The boot-args still have `navi33-psp-load=1`. Restore
+    `config.plist.bak-20261018-psp-off` after the next load attempt.
+  - The plan's console line should now show a physical address inside
+    BAR0 and `= vram+0x0`.
 
 ## Adding a register read
 
