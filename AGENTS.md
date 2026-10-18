@@ -1509,7 +1509,10 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      succeeded in the VM on 2026-10-18, then `--ring 2` (LOAD_TOC) and `--ring
      3` (SETUP_TMR) too (findings log). The ring stage is complete.
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
-   GPU work.
+   GPU work. Upstream Linux drives compute queues through MES on this
+   card (`enable_mes` is set for GC 11.0.2, `amdgpu_discovery.c`), not
+   the legacy KIQ MAP_QUEUES path. Offline KIQ/MQD planners G18/G19 are
+   the fallback. See `DMA_QUEUE_BRINGUP.md` for the MES sequence.
 5. PM4 fence and compute dispatch (stages 16–17).
 
 **Gate before each write stage:** the user's explicit approval for GPU

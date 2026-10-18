@@ -385,3 +385,17 @@ MISC_RESERVED fails it.
 Not done: the KCQ MQDs (they carry CU masks and priorities), the MAP_QUEUES
 packets that the KIQ submits, and the GPU memory the image lives in (G16 is
 SDMA-only).
+
+**Correction (same day, found after G18 and G19):** upstream Linux does not
+use this legacy KIQ path on Navi33. `amdgpu_discovery.c` (torvalds/linux
+master, fetched 2026-10-18) sets `enable_mes` and `enable_mes_kiq` to true
+for GC 11.0.0 through 11.0.4 and 11.5/11.7, which includes 11.0.2. Compute
+queues are therefore scheduled by the MES firmware (`mes_v11_0.c`). The
+legacy KIQ MAP_QUEUES path in `amdgpu_gfx_enable_kcq()` runs only when
+`mes.enable_legacy_queue_map` is set, and that is set only when the MES
+firmware version is at least 0x47. G18 and G19 are therefore the fallback
+path, not the upstream path for this card. The next steps are the MES bring-up
+sequence: `mes_v11_0_enable()`, KIQ-pipe queue init (`mes_v11_0_queue_init()`),
+and then the MES API commands (`set_hw_resources`, `set_hw_resources_1`,
+`query_sched_status`). They run through a ring in GPU memory and need fences,
+so they are blocked on the same GPU memory and VM work as above.
