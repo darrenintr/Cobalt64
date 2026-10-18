@@ -472,3 +472,34 @@ Not done, and not claimed: the real open/close result, whether the child scan
 finds the display stack on this machine, and the display-client detection
 itself. Those are only observable on the card. The IOKit calls are checked by
 the compiler, not by a run. Recovery stays the operator's attestation.
+
+## Stage G22: production PCI/queue owner state machine (software only)
+
+`Navi33ProductionOwner.h` is the software side of the owner that the SDMA
+Queue1 proof needs. It has three phases. **Unowned** means acquire() may
+succeed. **Owned** means one owner in one epoch, with SDMA0 Queue1 claimable
+once. **Poisoned** means a hardware touch may have happened, so release() is
+refused until an independent reset attests a power cycle, PCI function reset
+and discarded firmware state. The next acquire() starts a new epoch, and every
+older ticket goes stale.
+
+- acquire() refuses unless the kext decision is Owned, the providerId and
+  dmaDomainId are nonzero, the identity is 1002:7480 rev cf, and an independent
+  reset path is attested. Each refusal sets its own bit.
+- toDeviceOwner() fills the memory contract's `DeviceOwner` from a live owner
+  only, so the contract's ownership check can use it.
+- `test_production_owner` covers the happy path, each refusal, the poison rule,
+  the reset rule, stale tickets across epochs, the exclusive Queue1 claim, and
+  the device-owner handoff. A mutant that lets a poisoned owner release fails it.
+- kCanWriteGpu, kCanWriteConfig and kCanClaimHardware are false, with
+  static_asserts.
+
+**Not evidence.** The Attestation is built by hand in the host tests, so those
+tests prove the logic, not the card. The production owner is still not a
+hardware owner. The SDMA Queue1 proof stays blocked until a live run shows it.
+
+**Still missing for production (kext side, needs CI and then an on-card run):**
+the kext must hold its `IOService::open` for the whole epoch instead of closing
+it at once (today's 0.0.15 probe closes straight away), and it must feed the
+state machine from real IOKit results. Until then this stays a state machine
+without a live owner.
