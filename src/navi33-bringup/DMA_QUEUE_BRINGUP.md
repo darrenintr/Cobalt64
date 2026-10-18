@@ -570,3 +570,12 @@ the same mapper the staging code already uses (`Navi33DarwinStage.cpp`).
 **Expected in the VM:** the 14:47 VM run found no device mapper for this PCI
 device (`NoDeviceMapper`). So the probe should now refuse with `NoDmaMapper`, not
 report Owned. That is the correct fail-closed result, not a regression. Not run yet.
+
+**Physical check status (2026-10-18):** the VM run has no mapper (`NoDmaMapper`).
+The PC's host IOMMU is AMD-Vi (`ivhd0`, with active Linux IOMMU groups), not
+Intel VT-d. Apple's macOS IOMapper support is for VT-d, so macOS on this board
+probably has no mapper either. That is not verified. A bare-metal macOS run from
+the stick is the only way to check it. The stick was not plugged in, and it
+needs a physical reboot, so the check is pending. If the bare-metal run also
+refuses with `NoDmaMapper`, the production owner's mapper gate cannot be met on
+this hardware, and the SDMA Queue1 proof is blocked for this board.
