@@ -996,9 +996,14 @@ parser got two of them wrong:
     macOS jobs passed. The macos-26-intel artifact is cached in
     `~/macos tahoe/navi33/cache/artifact-0.0.12`; kext UUID
     `95481710-1E06-3B93-AA71-93878A2B209F`, version 0.0.12 / ABI 13.
-    Not installed or booted. The real read-only `--smu-plan` is pending
-    the VFIO/headless boot; this desktop boot currently owns the card with
-    amdgpu. No SMU write has been performed or approved.
+    Staged into our isolated `OpenCore-navi33.qcow2` (not booted), with
+    `navi33-psp-off=1` and `navi33-smu-off=1`. Its previous disk/manifest are
+    in `navi33/backups/pre-0.0.12/`. No hostfb is embedded yet: rebuild with
+    the new boot's `/var/lib/cobalt64-navi33/hostfb.txt` before the next VM
+    run. The user is ready for the headless reboot; host sudo requires an
+    interactive password, so the user must run `vm/reboot-to-vm.sh`.
+    SSH socket is enabled and listening. The real read-only `--smu-plan`
+    awaits that boot. No SMU write has been performed or approved.
 
 ## Adding a register read
 
