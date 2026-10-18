@@ -947,6 +947,31 @@ parser got two of them wrong:
     (e.g. the SMU/IMU handshake) using the kernel source and a
     `drm.debug` boot log; then update the sequence.
 
+- **2026-10-18, upstream study (read-only): what Linux does after
+  AUTOLOAD_RLC.** Sources: `amdgpu_psp.c`, `gfx_v11_0.c`, `amdgpu_smu.c`,
+  `smu_v13_0*.c`, `smu_v13_0_7_ppsmc.h` (torvalds/linux).
+  - Our PSP sequence matches `psp_load_fw()` up to the autoload: sOS, KM ring,
+    TMR, SMU image first, the GC records, `AUTOLOAD_RLC` right after RLC_G
+    (Linux then loads ASD, RL and the TAs, which only touch the PSP).
+  - IP block order is common, gmc, ih, **psp, smu, dm, gfx**. So between the
+    autoload and the driver's wait for `BOOTLOAD_COMPLETE` (in
+    `gfx_v11_0_hw_init`), Linux runs `smu_hw_init()` -> `smu_smc_hw_setup()`.
+    We never did. Its messages, in order: SetDriverDramAddr, SetToolsDramAddr,
+    SetSystemVirtualDramAddr/DramLogSetDramAddr, TransferTableDram2Smu
+    (pptable; skipped when `scpm_enabled`), RunBtc, **SetAllowedFeaturesMask
+    (0x4/0x5), EnableAllSmuFeatures (0x6)**, PCIe parameters, then DPM table,
+    thermal, display-change and deep-sleep messages.
+  - Strong hint in the reference dump: the SMU mailbox's last message there is
+    `0x28` = AllowGfxOff; ours has never carried a driver message.
+  - **Hypothesis (not verified):** the PMFW keeps the GC power domain off until
+    the driver enables its features, so the RLC cannot finish bootload.
+    Candidate minimal test: the SMU mailbox (`MP1 C2PMSG_66` message, `_82`
+    argument, `_90` response; offsets to be taken from `mp_13_0_*_offset.h`)
+    with `SetAllowedFeaturesMask` low/high and `EnableAllSmuFeatures`, maybe
+    preceded by the pptable/driver-table messages. This is a **new write stage**
+    (SMU mailbox, and DPM features on the only display GPU): needs a design, host
+    tests, its own boot-arg and gate, and the user's explicit approval (rule 2).
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
