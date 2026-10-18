@@ -928,6 +928,25 @@ parser got two of them wrong:
     these is tested. The reference boot (declined for now) would show the
     working end state to compare with.
 
+- **2026-10-18 12:41, reference boot (normal Ubuntu, amdgpu, after the full
+  power-off; read-only `tools/ref-dump.py`)**: the working end state of this
+  card, saved as `navi33/host/reference-20261018-124119.txt`.
+  - Same as ours after AUTOLOAD_RLC: `IMU_SCRATCH[0]` `0x0b214700`, `[1]`
+    `0xbabeface`. So our IMU boots exactly as Linux's does.
+  - Different (Linux): `IMU_CORE_STATUS` 3 (ours 2), `IMU_RLC_STATUS` 2,
+    `IMU_GFX_RESET_CTRL` `0x1f`, `RLC_CNTL` 1, `RLC_GPM_STAT` `0x00ac001a`,
+    `RLC_BOOTLOAD_STATUS` `0xc000001f` (bit 31 complete), `GRBM_STATUS`
+    `0x302c`, `CP_STAT` `0x8200`, `SDMA0_ID` 1. IMU_SCRATCH[11] = `0x13`.
+  - Linux's PSP ring registers: `C2PMSG_64` `0x80020000`, `_67` `0x2b0`
+    (nothing odd); amdgpu's firmware list also shows ASD `0x21000118`, TA
+    HDCP/DTM, DMCUB `0x07003300`, TOC `0xc`, MES_KIQ `0x113`, MES `0x92`.
+  - Fix: `ref-dump.py` reads/writes `amdgpu_gfxoff` as a raw u32 (text I/O
+    gave EINVAL) and writes to the sudo user's home.
+  - Conclusion: IMU start is identical, the RLC does not follow. Next:
+    compare what Linux does between AUTOLOAD_RLC and the first GC read
+    (e.g. the SMU/IMU handshake) using the kernel source and a
+    `drm.debug` boot log; then update the sequence.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.

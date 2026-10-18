@@ -20,7 +20,7 @@ import glob, mmap, os, re, struct, subprocess, sys, time
 
 BDF = "0000:09:00.0"
 OUT = sys.argv[1] if len(sys.argv) > 1 else time.strftime(
-    os.path.expanduser("~/macos tahoe/navi33/host/reference-%Y%m%d-%H%M%S.txt"))
+    os.path.expanduser("~" + os.environ.get("SUDO_USER", "") + "/macos tahoe/navi33/host/reference-%Y%m%d-%H%M%S.txt"))
 
 GC0, GC1, MP = 0x1260, 0xA000, 0x16000
 # (name, base, first register, dword count): the same windows as n33peek.
@@ -68,10 +68,11 @@ def main():
     prev = None
     try:
         if drv == "amdgpu" and gfxoff:
-            prev = open(gfxoff[0]).read().strip()
-            lines.append(f"\n# amdgpu_gfxoff was: {prev!r}; disabling it for the GC reads")
-            with open(gfxoff[0], "w") as f:
-                f.write("0")
+            # the debugfs file takes and gives one raw u32 (text reads fail with EINVAL)
+            fd2 = os.open(gfxoff[0], os.O_RDWR)
+            prev = struct.unpack("<I", os.pread(fd2, 4, 0))[0]
+            lines.append(f"\n# amdgpu_gfxoff was: {prev}; disabling it for the GC reads")
+            os.pwrite(fd2, struct.pack("<I", 0), 0)
             time.sleep(0.5)
         elif drv == "amdgpu":
             lines.append("\n# no amdgpu_gfxoff debugfs file: skipping the GC reads (could hang)")
@@ -79,9 +80,8 @@ def main():
             dump("Graphics engine (GFXOFF disabled while reading)", GC)
     finally:
         if prev is not None:
-            with open(gfxoff[0], "w") as f:
-                f.write("1" if prev in ("1", "enabled", "Y") else "0")
-            lines.append(f"# amdgpu_gfxoff restored to {prev!r}")
+            os.pwrite(fd2, struct.pack("<I", prev), 0)
+            lines.append(f"# amdgpu_gfxoff restored to {prev}")
     # amdgpu's own account of what it loaded and what it runs.
     for name in ("amdgpu_firmware_info", "amdgpu_pm_info", "amdgpu_gpu_info"):
         for path in glob.glob(f"/sys/kernel/debug/dri/*/{name}"):
