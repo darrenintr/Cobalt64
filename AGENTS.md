@@ -792,17 +792,42 @@ parser got two of them wrong:
     scratch dword equal to the IMU image's own version strongly suggests the
     IMU core is executing the firmware the PSP installed. The matching
     upstream step is that, after the PSP load, the *driver* runs
-    `imu_v11_0_setup()` (writes `GFX_IMU_C2PMSG_ACCESS_CTRL0/1` and
-    `GFX_IMU_SCRATCH_10`) and `imu_v11_0_start()`, then waits for
-    `GFX_IMU_GFX_RESET_CTRL` & 0x1f == 0x1f (gfx_v11_0.c lines ~1551-1557).
-    That is the next write stage and is not built.
+    `imu_v11_0_setup()` ... **CORRECTED the same day, see the entry
+    "IMU start is not a driver stage in the PSP path": that reading was
+    wrong for this chip.**
   - The gate was closed again (`navi33-psp-off=1` is back in
     `OpenCore-navi33.qcow2`). The firmware stays installed until a full
     power-off.
-  - **Next:** design `setup_imu` + `start_imu` as a new gated stage (IMU
-    registers from `gc_11_0_0_offset.h`, host-tested first), read-only plan
-    first, then the user's yes. After it: RLC bring-up/`wait_for_rlc_autoload`,
-    then CP/MES/GFX/SDMA.
+  - **Next:** superseded by the correction entry below.
+- **2026-10-18, correction: the IMU start is not a driver stage in the PSP
+  path, and the RLC bootload has not progressed.** Found while starting the
+  "IMU start" design from upstream (`gfx_v11_0.c`, `imu_v11_0.c`).
+  - `gfx_v11_0_hw_init()` calls the IMU `load_microcode`/`setup_imu`/`start_imu`
+    functions only for the DIRECT and RLC-backdoor load types. For
+    `AMDGPU_FW_LOAD_PSP` (ours: `amdgpu_ucode_get_load_type` returns PSP for the
+    default) it goes straight to `gfx_v11_0_wait_for_rlc_autoload_complete()`.
+    So the PSP's `AUTOLOAD_RLC` is meant to boot the IMU and RLC by itself, and
+    the driver then only **waits** for `CP_STAT == 0` and
+    `RLC_RLCS_BOOTLOAD_STATUS.BOOTLOAD_COMPLETE` (bit 31; GC seg1 `0x4e82`,
+    the register our windows call `RLC_BOOTLOAD_STATUS`).
+  - Observed, host reads at 11:56 (about 4 minutes after the command, and again
+    unchanged in the guest 1 minute after it): `IMU_SCRATCH[0]` `0x0b214700`
+    (the IMU image's version), `[1]` `0xbabeface`, `IMU_CORE_STATUS` 2, but
+    `RLC_RLCS_BOOTLOAD_STATUS` **0** (not even `GFX_INIT_DONE`),
+    `IMU_GFX_RESET_CTRL` `0x10` (Linux's own IMU start waits for `0x1f`),
+    `RLC_CNTL`/`RLC_STAT`/`GRBM_STATUS` 0. The state did not change with time.
+  - **Hypothesis, not verified:** the RLC autoload depends on the SMU. Linux
+    sends the SMU image (`GFX_FW_TYPE_SMU`, `smu_13_0_7.bin`) *first* in
+    `psp_load_non_psp_fw()` (`psp_load_smu_fw`), and `gfx_v11_0_hw_init` says
+    "for gfx 11, rlc firmware loading relies on smu firmware is loaded
+    firstly". We left the SMU image out by the user's decision (2026-10-18),
+    and our order differs from Linux's in any case (SMU first, autoload last).
+    The earlier `AUTOLOAD_RLC` is therefore not the Linux sequence.
+  - Options (need the user): (a) reproduce Linux's order exactly, including the
+    SMU image, after a full power-off (everything is scripted, about an hour);
+    (b) first collect more read-only evidence (SMU mailbox state, what the VBIOS
+    SMU reports) and decide after. Re-sending `AUTOLOAD_RLC` alone is not
+    expected to help and is not proposed.
 
 ## Adding a register read
 
