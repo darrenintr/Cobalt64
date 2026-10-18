@@ -291,5 +291,39 @@ silicon TLB/cache behavior, a physical fence, or a provable GPU reset.
 Queue1 still shares SDMA0 silicon and firmware with Queue0: using a
 different queue does NOT make the GPU independent of its display owner.
 
+## Stage G15: offline Queue1 configuration manifest
+
+`Navi33Sdma6Queue1ConfigPlan.h` flattens the planned one-page owned-VRAM
+GART root and SDMA0 Queue1 / VMID1 COPY+FENCE sequence into ordered
+register/value and readback steps. It uses the Navi33-only GMC11 and SDMA6
+plans and exact-IP offsets; it has no hardware I/O, writer, Kext wiring or
+capability publication. The manifest includes a descriptive field for the
+already approved one-shot attempt; creating or inspecting it does not
+execute or consume that approval.
+
+Immediate physical blockers remain: no production exclusive PCI, both-hub
+and Queue1 owner; no real pinned 4 KiB VRAM root with BAR0 write/readback;
+no device-associated pinned DMA mapping and cache-maintenance path; and no
+independent recovery proof. The current macOS display-GPU ownership also
+prevents treating synthetic ownership flags as evidence. No physical attempt
+has run. Host tests validate only the offline manifest and its refusal cases.
+
+## Stage G16: proof-specific memory and GPU-VA contract
+
+`Navi33Sdma6Queue1MemoryContract.h` binds a successful G15 manifest to
+opaque owner/object generations, one pinned 64 KiB system staging object,
+its sixteen unique device-DMA pages, the separately owned 4 KiB VRAM root,
+and the exclusive 64 KiB GPU-VA reservation. It labels the source, target,
+ring, fence, GART shadow and remaining mapped pages, and checks every role
+against the planned PTE and Queue1 addresses. It only validates declarations;
+opaque identities and booleans are not physical evidence, and the contract
+cannot allocate, pin, map, access hardware, or publish capabilities.
+
+This is scoped to the existing single COPY/FENCE proof. Its fixed flat GART
+image and whole staging mapping do not define a general Metal BO lifecycle.
+The graphics queue/draw path remains blocked by the unsupported BO/VM/CTX/
+SUBMIT/WAIT ABI and the absence of a production GFX queue owner and verified
+queue initialization path. No additional register offsets are introduced.
+
 Authoritative register references: Linux AMDGPU headers
 gc_11_0_0_offset.h, mmhub_3_0_2_offset.h and mmhub_3_0_0_offset.h.

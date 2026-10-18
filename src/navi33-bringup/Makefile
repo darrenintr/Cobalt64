@@ -242,6 +242,14 @@ $(BUILD)/test-sdma6-proof-run: tests/test_sdma6_proof_run.cpp src/Navi33Sdma6Pro
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_proof_run.cpp -o $@
 
+$(BUILD)/test-sdma6-queue1-config-plan: tests/test_sdma6_queue1_config_plan.cpp src/Navi33Sdma6Queue1ConfigPlan.h src/Navi33Gmc11VramLease.h src/Navi33Gmc11VramGeometry.h src/Navi33Gmc11RootVram.h src/Navi33Gmc11Mmhub.h src/Navi33Sdma6MmioQueue.h src/Navi33HardwarePlan.h tests/rx7600_ipd_fixture.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_queue1_config_plan.cpp -o $@
+
+$(BUILD)/test-sdma6-queue1-memory-contract: tests/test_sdma6_queue1_memory_contract.cpp src/Navi33Sdma6Queue1MemoryContract.h src/Navi33Sdma6Queue1ConfigPlan.h src/Navi33Gmc11VramLease.h src/Navi33Gmc11RootVram.h src/Navi33Gmc11Mmhub.h src/Navi33Sdma6MmioQueue.h src/Navi33HardwarePlan.h tests/rx7600_ipd_fixture.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_sdma6_queue1_memory_contract.cpp -o $@
+
 $(BUILD)/test-dma-lifetime: tests/test_dma_lifetime.cpp src/Navi33DmaLifetime.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_dma_lifetime.cpp -o $@
@@ -298,7 +306,7 @@ $(BUILD)/test-smu13-enable: tests/test_smu13_enable.cpp src/Navi33Smu13Enable.h 
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 
-host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
+host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-sdma6-queue1-config-plan $(BUILD)/test-sdma6-queue1-memory-contract $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
 	$(BUILD)/test-smu13-enable
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
@@ -332,6 +340,8 @@ host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-disco
 	$(BUILD)/test-hw-probe-logic
 	$(BUILD)/test-mmio-peek
 	$(BUILD)/test-sdma6-proof-run
+	$(BUILD)/test-sdma6-queue1-config-plan
+	$(BUILD)/test-sdma6-queue1-memory-contract
 	$(BUILD)/test-dma-lifetime
 	$(BUILD)/test-stage-owner
 	$(BUILD)/test-gmc11-root-vram
