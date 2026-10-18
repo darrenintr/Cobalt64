@@ -1135,6 +1135,30 @@ parser got two of them wrong:
   first, then arrange a full power-off and fresh headless VFIO boot with
   hostfb from that boot. Approval is not yet consumed.
 
+- **2026-10-18, kext 0.0.13 / ABI 14 built and staged, no hardware run yet.**
+  Source commit `8ebbb72` on `feature/navi33-scpm-enable-only`; GitHub Actions
+  run `39100866159` passed host tests and both macOS builds. The macOS 26
+  artifact is cached at `~/macos tahoe/navi33/cache/artifact-0.0.13` (paired
+  tools included), UUID `EB123CF7-DBF5-3860-9CB7-87B6C597B58A`, executable
+  SHA-256 `08e42aae0e1ec6e61de692c91182c47b4c41fdca7168080c480953bb55ff3839`.
+  Local full host tests, SMU Clang ASan/UBSan tests and 31 bootstrap tests
+  passed. Tests prove the three-write SCPM trace, zero-write plans, error
+  stops, the shared latch and the mutually exclusive gates.
+  - Our isolated OpenCore disk now contains the artifact with both kill
+    switches set; no hostfb is embedded until a fresh headless boot. Every
+    extracted kext file matches the artifact. Previous disk and manifest are
+    in `navi33/backups/pre-0.0.13/`. User VM files and the USB stick were not
+    changed.
+  - Host remains on amdgpu at `192.168.100.24`; SSH socket is active and the
+    card-preparation service is enabled. Host sudo requires interactive
+    authentication. The user must run `sudo grub-reboot cobalt64-navi33-vm`
+    followed by `sudo poweroff`, then switch the PC on. This provides a full
+    power-off and a one-time headless VFIO boot. Do not use the warm-reboot
+    helper for this attempt. After that boot, rebuild our OpenCore disk with
+    its new `/var/lib/cobalt64-navi33/hostfb.txt`, verify UUID/plan and execute
+    the already approved stages one gate at a time. The one SCPM enable-only
+    attempt remains approved and unconsumed. No GPU write has occurred.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
