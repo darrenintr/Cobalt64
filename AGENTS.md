@@ -906,6 +906,27 @@ parser got two of them wrong:
     shown by these registers.
   - Gate closed again. **Next, needs a yes:** `--ip-fw 0 26` (the other 26
     records), then `--ip-fw 27 28` with `--psp-autoload`.
+- **2026-10-18, kext 0.0.11 in the VM: Linux's order WITH the SMU image did not
+  change the outcome. The SMU hypothesis is refuted as stated.** Runs on the
+  card power-cycled at 12:00 (sOS, ring, TMR redone; SMU first; then records
+  0..25; then autoload). The user approved ("yes, load the rest and run
+  autoload"). Run `runs/20261018-122534` (`ipfw-run-0-26-*`, `ipfw-run-27-28-*`,
+  `results-20261018-122607-guest.txt`; host `navi33/host/smuregs-*autoload2.txt`).
+  - `--ip-fw 0 26`: state 32, **26 writes**, status 0, fence 26, 68 ms (RLC_G
+    at `0x81_FC90_0000`). `--ip-fw 27 28` (autoload): state 32, 1 write,
+    status 0, fence 1, 1 ms.
+  - After it, identical to the run without the SMU: `IMU_SCRATCH[0]`
+    `0x0b214700`, `[1]` `0xbabeface`, `IMU_CORE_STATUS` 2, but
+    `RLC_BOOTLOAD_STATUS` 0, `IMU_GFX_RESET_CTRL` `0x10`, `RLC_*`, `GRBM_STATUS`,
+    `CP_STAT`, `SDMA0_ID` all 0; unchanged one minute later from the host. The
+    SMU mailbox block did not change either; display fine, no errors.
+  - So the SMU image was not the missing piece (it may still matter, but is not
+    sufficient). Remaining differences from Linux that we know of: Linux also
+    loads ASD, runs `psp_rl_load`, loads `DMCUB` through the PSP in the display
+    init, does SMU `hw_init` (feature enablement, tables) between the PSP and
+    GFX init, and runs with the real driver's HDP/doorbell/NBIO setup; none of
+    these is tested. The reference boot (declined for now) would show the
+    working end state to compare with.
 
 ## Adding a register read
 
