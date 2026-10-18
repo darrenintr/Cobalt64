@@ -665,7 +665,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     req.fw=fwBytes;req.fwBytes=fwLength;
     const bool ringMode=mode==N33_PSP_LOAD_RING_PLAN || mode==N33_PSP_LOAD_RING_RUN;
     const bool fwMode=mode==N33_PSP_LOAD_FW_PLAN || mode==N33_PSP_LOAD_FW_RUN;
-    const bool smuMode=mode==N33_SMU_ENABLE_PLAN || mode==N33_SMU_ENABLE_RUN;
+    const bool smuMode=mode==N33_SMU_ENABLE_PLAN || mode==N33_SMU_ENABLE_RUN ||
+        mode==N33_SMU_SCPM_PLAN || mode==N33_SMU_SCPM_RUN;
     const bool smuKilled=PE_parse_boot_argn("navi33-smu-off",&smuOff,sizeof(smuOff)) && smuOff!=0u;
     const bool killed=PE_parse_boot_argn("navi33-psp-off",&pspOff,
                                          sizeof(pspOff)) && pspOff!=0u;
@@ -677,6 +678,13 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
         (PE_parse_boot_argn("navi33-psp-load",&load,sizeof(load)) && load==1u));
     if(smuMode)req.writeGate=!killed && !smuKilled &&
         PE_parse_boot_argn("navi33-smu-enable",&smuOn,sizeof(smuOn)) && smuOn==1u;
+    if(smuMode) {
+        uint32_t scpm=0u;
+        const bool scpmGate=PE_parse_boot_argn("navi33-smu-scpm",&scpm,sizeof(scpm)) && scpm==1u;
+        const bool scpmMode=mode==N33_SMU_SCPM_PLAN || mode==N33_SMU_SCPM_RUN;
+        // Opening the SCPM experiment must never open the legacy mask sequence.
+        req.writeGate=req.writeGate && (scpmMode ? scpmGate : !scpmGate);
+    }
     // AUTOLOAD_RLC powers up the graphics engine: a second, separate boot-arg.
     req.autoloadGate=!killed && fwMode &&
         PE_parse_boot_argn("navi33-psp-autoload",&autoOn,sizeof(autoOn)) && autoOn==1u;
@@ -722,8 +730,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
         result.smu_responses[0],result.smu_responses[1],result.smu_responses[2],
         result.smu_core_before,result.smu_core_after,result.smu_reset_before,
         result.smu_reset_after,result.smu_rlc_before,result.smu_rlc_after);
-    setProperty(mode==N33_SMU_ENABLE_RUN ? "Navi33,LastSmuEnable" :
-                mode==N33_SMU_ENABLE_PLAN ? "Navi33,LastSmuPlan" :
+    setProperty((mode==N33_SMU_ENABLE_RUN || mode==N33_SMU_SCPM_RUN) ? "Navi33,LastSmuEnable" :
+                (mode==N33_SMU_ENABLE_PLAN || mode==N33_SMU_SCPM_PLAN) ? "Navi33,LastSmuPlan" :
                 mode==N33_PSP_LOAD_RUN ? "Navi33,LastPspLoad" :
                 mode==N33_PSP_LOAD_RING_RUN ? "Navi33,LastPspRing" :
                 mode==N33_PSP_LOAD_RING_PLAN ? "Navi33,LastPspRingPlan" :

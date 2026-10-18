@@ -47,14 +47,27 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      unless `navi33-psp-autoload=1` is also set, and needs its own approval.
      The user approved writing the code on 2026-10-18; every real run needs a
      separate explicit yes (rule 2).
-   - The SMU enable experiment (kext 0.0.12, ABI 13; **not approved to run**)
+   - The SMU enable experiment (kext 0.0.12, ABI 13; **one approved attempt
+     executed 2026-10-18 at 13:14, rejected HIGH with FD; no retry approved**)
      may write only MP1 `C2PMSG_66/82/90`, with the fixed high-mask,
      low-mask, EnableAllSmuFeatures sequence. It needs `navi33-smu-enable=1`,
      is killed by either `navi33-smu-off` or `navi33-psp-off`, and consumes
      its own one-shot latch before the first write. No VRAM/table writes.
-     Design/build and read-only planning approved on 2026-10-18; the real
-     SMU run needs a separate explicit yes. See
+     Design/build and read-only planning approved on 2026-10-18; the user
+     subsequently approved recreating the PSP sequence and one SMU attempt.
+     Later attempts need renewed approval and a full power-off. See
      `src/navi33-bringup/SMU_ENABLE_DESIGN.md` for prerequisites and limits.
+   - The SCPM enable-only experiment (kext 0.0.13, ABI 14) was explicitly
+     approved by the user on 2026-10-18 after the stable Linux SCPM capture.
+     Approval covers building the new mode, recreating sOS/ring/TMR/SMU-first
+     IP firmware/AUTOLOAD_RLC in the VM after full power-off, and one
+     EnableAllSmuFeatures attempt (message 6, argument 0). It writes only MP1
+     C2PMSG_66/82/90, exactly three writes on success, no HIGH/LOW mask messages,
+     no VRAM/table/ROM writes in the SMU stage. Requires both
+     `navi33-smu-enable=1` and `navi33-smu-scpm=1`; either SMU/PSP kill switch
+     stops it. The SCPM gate closes the legacy mask-sequence gate. Both SMU
+     modes share the same one-shot latch. This approval is pending execution;
+     further attempts require renewed approval and full power-off.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -1004,6 +1017,123 @@ parser got two of them wrong:
     interactive password, so the user must run `vm/reboot-to-vm.sh`.
     SSH socket is enabled and listening. The real read-only `--smu-plan`
     awaits that boot. No SMU write has been performed or approved.
+
+- **2026-10-18 13:01, kext 0.0.12 / ABI 13, headless VM read-only run.**
+  Run `runs/20261018-130015`, results `results-20261018-130145-guest.txt`
+  and `smu-plan.txt`. Loaded UUID `95481710-1E06-3B93-AA71-93878A2B209F`
+  matches the cached artifact. Rebuilt our OpenCore disk with this boot's
+  hostfb record; PSP and SMU kill switches remain set. VM and guest SSH are
+  running in tmux session `navi33-readonly`; serial capture is active.
+  - The card is fresh: PSP `_35` `80000000`, `_58`/`_81` and ring
+    registers zero. Compared with the 12:26 post-autoload results, only
+    the PSP window, IMU scratch window and IMU core window differ; every
+    other allowlisted register window matches. IMU scratch/core are now
+    zero; reset control remains `0x10`, RLC boot status zero, SMU response 1.
+  - sOS plan passes (state 14, flags `0x0f`, host console at BAR0+0,
+    3 MiB, fw_pri MC `0x800f000000`). SMU plan safely refuses at state 21
+    (sOS not alive), completed 0/3, zero writes. The prerequisite PSP
+    sequence must be recreated before an SMU readiness plan can pass;
+    the real SMU enable run remains unapproved.
+  - Optional host-peek was skipped because host sudo requires interactive
+    authentication. Guest diagnostics succeeded with passwordless guest sudo.
+
+- **2026-10-18, approval and pre-attempt stop:** the user explicitly approved
+  one sequence: sOS, ring/TMR, SMU image first, remaining IP firmware,
+  AUTOLOAD_RLC, then the fixed SMU HIGH/LOW/ENABLE experiment. This approval
+  remains pending execution; later new write stages need separate approval.
+  The sOS-gated VM boot `runs/20261018-130354` (`sos-plan-before.txt`) reached a
+  read-only PLAN_OK with flags `0x1f`; no write command was invoked.
+  - The user confirmed this headless boot came from **Restart**, not full
+    power-off. Stopped before any GPU write to meet the SMU design's fresh
+    power-cycle prerequisite. Guest shut down and OpenCore rebuilt with
+    PSP/SMU kill switches. Next: full host power-off, power on into the
+    headless GRUB entry, rebuild hostfb for that boot, then execute the
+    already approved sequence. Host sudo requires the user's password.
+
+- **2026-10-18 13:08, approved SMU attempt preparation after full power-off.**
+  User confirmed full power-off; headless host boot ID
+  `9d8f8c98-18cf-4c4e-b1aa-8a33345b8bf1`, GPU on VFIO, BAR0 256 MiB,
+  reset methods disabled, host SSH listening. Kext 0.0.12 UUID matches
+  `95481710-1E06-3B93-AA71-93878A2B209F`, ABI 13.
+  - `runs/20261018-130733/sos-load.txt`: fresh sOS plan state 14, then
+    load state 20, four parts, eight register writes, 27 ms; heartbeat
+    `0821ebf8`, sOS `00330024`. Host console and aperture checks passed.
+    Results before load: `results-20261018-130829-guest.txt`.
+  - `runs/20261018-130920/ring3-run.txt`: ring creation, LOAD_TOC and
+    SETUP_TMR state 28, six register writes, status 0, fence 2, 25 ms;
+    TMR 19,922,944 B, `_64` `80020000`, `_67` `20`. Console checks passed.
+  - `runs/20261018-131034/ipfw-smu-run.txt`: record 26 (SMU) loaded
+    first and alone, state 32, one register write, status 0, fence 1,
+    7 ms, `_67` `20` -> `30`, returned TMR address 0 (as before).
+  - `runs/20261018-131131/ipfw-rest-run.txt`: records 0..25 loaded,
+    state 32, 26 register writes, status 0, fence 26, 67 ms; `_67` `30`
+    -> `1d0`, RLC_G returned address `0x81fc900000`.
+  - `runs/20261018-131233/autoload-run.txt`: AUTOLOAD_RLC state 32,
+    one register write, status 0, fence 1, 1 ms; `_67` `1d0` -> `1e0`.
+    `smu-plan-after-autoload.txt` passes state 14 with the SMU gate closed:
+    scratch `0b214700/babeface`, core 2, reset `10`, RLC 0, SMU response 1.
+  - `runs/20261018-131339/smu-enable-run.txt`: the approved SMU attempt
+    stopped at the first message. HIGH mask message 5, argument `0001a3a4`,
+    response `fd` (CmdRejectedPrereq), state 37, three register writes,
+    completed 0/3, 1 ms. LOW and ENABLE were never sent. Post-attempt
+    `results-20261018-131433-guest.txt` matches every pre-attempt GC window;
+    only PSP heartbeat and the three SMU mailbox values differ. Core remains
+    2, reset `10`, RLC 0. Guest SSH survived; serial trace confirms rejection.
+  - Guest shut down; OpenCore rebuilt with `navi33-psp-off=1` and
+    `navi33-smu-off=1`. A full power-off is required before another attempt;
+    the one-attempt approval is consumed. No retry or later new write stage
+    is authorized.
+  - Upstream follow-up (same pinned Linux revision): `amdgpu_smu.c`
+    explicitly forbids allowed-feature-mask messages under SCPM and skips
+    them in `smu_smc_hw_setup`. SCPM is read from the PSP runtime database
+    (`amdgpu_psp.c`), not inferred from SMU response FD. This is a candidate
+    explanation, not proof that SCPM is enabled on this card. Next: read its
+    runtime database during a normal Linux reference boot, after power-off.
+  - Added `tools/scpm-read.py --capture`: read-only BAR0 capture of the
+    64-KiB runtime DB, twice, using driver-reported VRAM size minus 1 MiB.
+    Only normal amdgpu on 1002:7480 with DB visible in BAR0 is accepted;
+    no aperture/register/ROM writes. Raw copies and JSON go to
+    `navi33/host/scpm-<timestamp>/`. Initial offline parser tests passed;
+    capture correctly refuses the current VFIO boot. No kext/ABI change.
+    After full power-off, boot normal Ubuntu and run `sudo python3 -I
+    src/navi33-bringup/tools/scpm-read.py --capture`; hand over its saved
+    directory. This capture is the next prerequisite to designing a retry.
+
+- **2026-10-18, first SCPM runtime-database capture:** the user ran the
+  read-only capture on the normal amdgpu boot. It read the database header,
+  directory and SCPM entry, then reported `unknown SCPM status 0x40000000`.
+  The old parser stopped on that first snapshot, before its second read or
+  writing either raw database file, so the value is not yet confirmed stable.
+  Upstream documents SCPM values 0, 1 and 2, while `amdgpu` treats every
+  nonzero value as SCPM enabled. The exact meaning of this value remains
+  unknown. Updated the parser to preserve unknown values and save both raw
+  snapshots; rerun the same read-only capture and provide its output directory
+  before drawing a hardware conclusion. No GPU write was performed.
+
+- **2026-10-18 13:24, SCPM runtime database captured on amdgpu.** The saved
+  directory is `/home/darren/macos tahoe/navi33/host/scpm-20261018-132450`,
+  boot ID `a8a50688-4c92-4b5a-a228-7df4e4f6d464`. Both 64-KiB snapshots are
+  byte-for-byte identical (SHA-256
+  `efd6400e63139a9b70fc1345875fe69efb721c1df30302f73f34b82496741ba5`).
+  The valid DB has cookie `0x0ed5`, version `0x0100`, and one entry: type 6
+  (SCPM), offset `0x208`, size 4. The entry bytes are `00 00 00 40`, or
+  little-endian status `0x40000000`. The enum's exact meaning remains
+  undocumented, but the pinned Linux `amdgpu` code treats any nonzero value
+  as SCPM enabled and skips allowed-feature-mask messages under SCPM. This is
+  now the leading explanation for the earlier HIGH `FD` rejection, not proof
+  of the specific rejected prerequisite. No retry is approved; no GPU write
+  was performed during this capture.
+
+- **2026-10-18, SCPM enable-only experiment approved.** The user approved
+  the proposed separate mode, CI build and one physical VM attempt following
+  full power-off and recreation of the PSP sequence. Kext 0.0.13 / ABI 14
+  adds `--smu-scpm-plan` and `--smu-scpm-enable` (new modes 9/10). The latter
+  sends only message 6, argument 0, using the same allowlist, lock, shared
+  SMU latch, stop-on-error behavior and one-second read-only GC observation.
+  The Linux host is currently on amdgpu (boot `a8a50688...`); sudo requires
+  interactive authentication. Do not detach it from amdgpu. Build and stage
+  first, then arrange a full power-off and fresh headless VFIO boot with
+  hostfb from that boot. Approval is not yet consumed.
 
 ## Adding a register read
 

@@ -281,7 +281,8 @@ IOReturn Navi33NativeClient::externalMethod(
             (req.mode!=N33_PSP_LOAD_PLAN && req.mode!=N33_PSP_LOAD_RUN &&
              req.mode!=N33_PSP_LOAD_RING_PLAN && req.mode!=N33_PSP_LOAD_RING_RUN &&
              req.mode!=N33_PSP_LOAD_FW_PLAN && req.mode!=N33_PSP_LOAD_FW_RUN &&
-             req.mode!=N33_SMU_ENABLE_PLAN && req.mode!=N33_SMU_ENABLE_RUN) ||
+             req.mode!=N33_SMU_ENABLE_PLAN && req.mode!=N33_SMU_ENABLE_RUN &&
+             req.mode!=N33_SMU_SCPM_PLAN && req.mode!=N33_SMU_SCPM_RUN) ||
             ((req.mode==N33_PSP_LOAD_RING_PLAN || req.mode==N33_PSP_LOAD_RING_RUN) ?
                  (req.stop_after<N33_PSP_RING_STOP_RING ||
                   req.stop_after>N33_PSP_RING_STOP_TMR) :
@@ -295,7 +296,8 @@ IOReturn Navi33NativeClient::externalMethod(
             IOFree(copied,len);
             return kIOReturnBadArgument;
         }
-        if((req.mode==N33_SMU_ENABLE_PLAN || req.mode==N33_SMU_ENABLE_RUN) &&
+        if((req.mode==N33_SMU_ENABLE_PLAN || req.mode==N33_SMU_ENABLE_RUN ||
+            req.mode==N33_SMU_SCPM_PLAN || req.mode==N33_SMU_SCPM_RUN) &&
            (req.fw_bytes!=1u || static_cast<const uint8_t *>(copied)[sizeof(req)+req.rom_bytes]!=0u)) {
             IOFree(copied,len);return kIOReturnBadArgument;
         }

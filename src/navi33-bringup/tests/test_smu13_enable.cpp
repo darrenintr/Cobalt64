@@ -11,7 +11,7 @@ namespace sm=smu13;
 struct Fake {
     sm::Regs r; std::map<uint64_t,uint32_t> mem;
     std::vector<std::pair<uint64_t,uint32_t>> writes;
-    unsigned messages=0,failMessage=0,failWrite=0,failRead=0,reads=0,delayed=0;
+    unsigned gcMessage=3,messages=0,failMessage=0,failWrite=0,failRead=0,reads=0,delayed=0;
     uint32_t reject=0xfd,ms=0; bool timeout=false,allOnes=false,gc=false;
     explicit Fake(sm::Regs regs):r(regs) {
         mem={{r.sos,42},{r.resp,1},{r.msg,0},{r.arg,0},{r.scratch0,0x0b214700},
@@ -35,7 +35,7 @@ struct Fake {
             ++f.messages;
             f.mem[f.r.resp]=f.allOnes ? 0xffffffffu : f.timeout ? 0u :
                 f.messages==f.failMessage ? f.reject : 1u;
-            if(f.messages==3 && f.gc) {
+            if(f.messages==f.gcMessage && f.gc) {
                 f.mem[f.r.core]=3;f.mem[f.r.reset]=0x1f;f.mem[f.r.rlc]=0xc000001f;
             }
         }
@@ -118,5 +118,48 @@ int main() {
         o=sm::execute(r,x.hw(),true,true,attempted);
         assert(o.state==N33_PSPL_READ_FAILED && attempted==(at>9));
     }
-    puts("SMU13 fixed sequence, gates, one-shot, response errors and GC observation: passed");
+    // SCPM: the complete bus write trace must contain only EnableAll(6), arg 0.
+    {Fake x(r);attempted=false;
+     o=sm::execute(r,x.hw(),false,true,attempted,true);
+     assert(o.state==N33_PSPL_PLAN_OK && o.smu_enable_only==1 &&
+            o.smu_mask_low==0 && o.smu_mask_high==0 && x.writes.empty() && !attempted);
+     o=sm::execute(r,x.hw(),true,false,attempted,true);
+     assert(o.state==N33_PSPL_WRITE_DISABLED && x.writes.empty() && !attempted);
+     o=sm::execute(r,x.hw(),true,true,attempted,true);
+     const std::vector<std::pair<uint64_t,uint32_t>> onlyEnable={
+        {r.resp,0},{r.arg,0},{r.msg,6}};
+     assert(x.writes==onlyEnable && o.register_writes==3 && o.steps_done==1 && attempted);
+     assert(o.state==N33_PSPL_SMU_ACKED && o.smu_responses[0]==1 &&
+            o.smu_responses[1]==0 && o.smu_responses[2]==0);
+     // Switching modes cannot obtain a second attempt on the same provider.
+     o=sm::execute(r,x.hw(),true,true,attempted);
+     assert(o.state==N33_PSPL_ALREADY_ATTEMPTED && x.writes==onlyEnable);}
+    {Fake x(r);attempted=false;
+     o=sm::execute(r,x.hw(),true,true,attempted);
+     assert(o.state==N33_PSPL_SMU_ACKED && x.messages==3);
+     o=sm::execute(r,x.hw(),true,true,attempted,true);
+     assert(o.state==N33_PSPL_ALREADY_ATTEMPTED && x.messages==3);}
+    for(auto reply:{0xfcu,0xfdu,0xfeu,0xffu}) {
+        Fake x(r);x.failMessage=1;x.reject=reply;attempted=false;
+        o=sm::execute(r,x.hw(),true,true,attempted,true);
+        assert(o.state==N33_PSPL_SMU_REJECTED && o.steps_done==0 &&
+               o.smu_responses[0]==reply && x.messages==1 && o.register_writes==3 && attempted);
+        assert(x.writes.back().second==6);
+    }
+    for(unsigned at=1;at<=3;++at) {
+        Fake x(r);x.failWrite=at;attempted=false;
+        o=sm::execute(r,x.hw(),true,true,attempted,true);
+        assert(o.state==N33_PSPL_SMU_WRITE_FAILED && attempted && o.register_writes==at-1);
+    }
+    {Fake x(r);x.timeout=true;attempted=false;
+     o=sm::execute(r,x.hw(),true,true,attempted,true);
+     assert(o.state==N33_PSPL_SMU_TIMEOUT && o.elapsed_ms==1000 && x.messages==1 && attempted);}
+    {Fake x(r);x.allOnes=true;attempted=false;
+     o=sm::execute(r,x.hw(),true,true,attempted,true);
+     assert(o.state==N33_PSPL_READ_FAILED && x.messages==1 && attempted);}
+    {Fake x(r);x.gc=true;x.gcMessage=1;attempted=false;
+     o=sm::execute(r,x.hw(),true,true,attempted,true);
+     assert(o.state==N33_PSPL_SMU_GC_READY && o.smu_reset_after==0x1f &&
+            o.smu_core_after==3 && x.messages==1 && o.register_writes==3);}
+    puts("SMU13 fixed-mask and SCPM enable-only sequences, gates, shared latch and error stops: passed");
 }

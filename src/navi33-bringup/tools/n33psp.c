@@ -71,8 +71,8 @@ static const char *stateText(uint32_t s) {
     case N33_PSPL_SMU_WRITE_FAILED: return "SMU register write failed; full power-off required";
     case N33_PSPL_SMU_TIMEOUT: return "SMU response timeout; full power-off required";
     case N33_PSPL_SMU_REJECTED: return "SMU rejected a message (see raw replies); full power-off required";
-    case N33_PSPL_SMU_ACKED: return "SMU accepted all three messages; RLC boot NOT complete";
-    case N33_PSPL_SMU_GC_READY: return "SMU accepted all three messages; RLC boot complete bit set";
+    case N33_PSPL_SMU_ACKED: return "SMU accepted the selected sequence; RLC boot NOT complete";
+    case N33_PSPL_SMU_GC_READY: return "SMU accepted the selected sequence; RLC boot complete bit set";
     default: return "unknown state";
     }
 }
@@ -95,7 +95,8 @@ static void print(const struct n33_psp_load_result *r) {
     if(r->smu_marker==N33_SMU_MARKER) {
         printf("SMU mask %08x:%08x; write gate %s\n",r->smu_mask_high,r->smu_mask_low,
                (r->flags&N33_PSPL_FLAG_WRITE_GATE_OPEN) ? "OPEN" : "closed");
-        printf("planned messages: 0x05(high)=%08x, 0x04(low)=%08x, 0x06(enable)=0\n",
+        if(r->smu_enable_only)puts("planned messages: 0x06(enable)=0; SCPM mode skips HIGH/LOW masks");
+        else printf("planned messages: 0x05(high)=%08x, 0x04(low)=%08x, 0x06(enable)=0\n",
                r->smu_mask_high,r->smu_mask_low);
         printf("mailbox before: msg %08x arg %08x response %08x; IMU scratch %08x/%08x\n",
                r->smu_message_before,r->smu_argument_before,r->smu_response_before,
@@ -103,8 +104,8 @@ static void print(const struct n33_psp_load_result *r) {
         printf("core %08x->%08x reset %08x->%08x RLC %08x->%08x\n",
                r->smu_core_before,r->smu_core_after,r->smu_reset_before,r->smu_reset_after,
                r->smu_rlc_before,r->smu_rlc_after);
-        printf("completed %u/3, writes %u, last msg/arg %x/%x, responses %x/%x/%x, %u ms\n",
-               r->steps_done,r->register_writes,r->smu_last_message,r->smu_last_argument,
+        printf("completed %u/%u, writes %u, last msg/arg %x/%x, responses %x/%x/%x, %u ms\n",
+               r->steps_done,r->smu_enable_only ? 1u : 3u,r->register_writes,r->smu_last_message,r->smu_last_argument,
                r->smu_responses[0],r->smu_responses[1],r->smu_responses[2],r->elapsed_ms);
         return;
     }
@@ -225,7 +226,7 @@ static uint8_t *slurpIpFw(const char *dir,size_t *len) {
 }
 int main(int argc,char **argv) {
     const char *romPath=NULL,*fwPath=NULL,*fwDir=NULL;
-    /* mode: 1 plan, 2 load, 3 ring-plan, 4 ring, 5 ip-fw-plan, 6 ip-fw */
+    /* 1..6 PSP modes; 7/8 legacy SMU plan/run; 9/10 SCPM plan/run. */
     int mode=0,ssh=0,bad=0;
     uint32_t start=0u,stop=0u;
     for(int a=1;a<argc && !bad;++a) {
@@ -233,12 +234,14 @@ int main(int argc,char **argv) {
         if(!strcmp(arg,"--plan") || !strcmp(arg,"--load") ||
            !strcmp(arg,"--ring-plan") || !strcmp(arg,"--ring") ||
            !strcmp(arg,"--ip-fw-plan") || !strcmp(arg,"--ip-fw") ||
-           !strcmp(arg,"--smu-plan") || !strcmp(arg,"--smu-enable")) {
+           !strcmp(arg,"--smu-plan") || !strcmp(arg,"--smu-enable") ||
+           !strcmp(arg,"--smu-scpm-plan") || !strcmp(arg,"--smu-scpm-enable")) {
             if(mode) {bad=1;break;}
             mode=!strcmp(arg,"--plan") ? 1 : !strcmp(arg,"--load") ? 2 :
                  !strcmp(arg,"--ring-plan") ? 3 : !strcmp(arg,"--ring") ? 4 :
                  !strcmp(arg,"--ip-fw-plan") ? 5 : !strcmp(arg,"--ip-fw") ? 6 :
-                 !strcmp(arg,"--smu-plan") ? 7 : 8;
+                 !strcmp(arg,"--smu-plan") ? 7 : !strcmp(arg,"--smu-enable") ? 8 :
+                 !strcmp(arg,"--smu-scpm-plan") ? 9 : 10;
             if(mode==3 || mode==4) {
                 if(a+1>=argc || strlen(argv[a+1])!=1u ||
                    argv[a+1][0]<'1' || argv[a+1][0]>'3') {bad=1;break;}
@@ -259,9 +262,10 @@ int main(int argc,char **argv) {
         else if(!strcmp(arg,"--fwdir") && a+1<argc)fwDir=argv[++a];
         else bad=1;
     }
-    const int writes=mode==2 || mode==4 || mode==6 || mode==8;
+    const int writes=mode==2 || mode==4 || mode==6 || mode==8 || mode==10;
     const int ipfw=mode==5 || mode==6;
-    const int smu=mode==7 || mode==8;
+    const int scpm=mode==9 || mode==10;
+    const int smu=mode==7 || mode==8 || scpm;
     if(bad || !mode || !romPath || (smu ? (fwDir || fwPath) : ipfw ? (!fwDir || fwPath) : (!fwPath || fwDir)) ||
        (writes && !ssh)) {
         fputs("Usage: sudo n33psp --plan --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin\n"
@@ -270,6 +274,8 @@ int main(int argc,char **argv) {
               "       sudo n33psp --ring N --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin --i-have-ssh\n"
               "       sudo n33psp --ip-fw-plan START STOP --rom rx7600-ipd.bin --fwdir DIR\n"
               "       sudo n33psp --ip-fw START STOP --rom rx7600-ipd.bin --fwdir DIR --i-have-ssh\n"
+              "       sudo n33psp --smu-scpm-plan --rom rx7600-ipd.bin\n"
+              "       sudo n33psp --smu-scpm-enable --rom rx7600-ipd.bin --i-have-ssh\n"
               "       sudo n33psp --smu-plan --rom rx7600-ipd.bin\n"
               "       sudo n33psp --smu-enable --rom rx7600-ipd.bin --i-have-ssh\n"
               "--plan writes nothing. --load is the first GPU write: run it over SSH;\n"
@@ -309,13 +315,13 @@ int main(int argc,char **argv) {
         IOServiceClose(conn);free(rom);free(fw);return 5;
     }
     const int ringStage=mode==3 || mode==4;
-    const uint32_t planMode=smu ? N33_SMU_ENABLE_PLAN : ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
+    const uint32_t planMode=scpm ? N33_SMU_SCPM_PLAN : smu ? N33_SMU_ENABLE_PLAN : ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
                             N33_PSP_LOAD_PLAN;
-    const uint32_t runMode=smu ? N33_SMU_ENABLE_RUN : ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
+    const uint32_t runMode=scpm ? N33_SMU_SCPM_RUN : smu ? N33_SMU_ENABLE_RUN : ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
                            N33_PSP_LOAD_RUN;
     struct n33_psp_load_result r;
     int rc=7;
-    puts(smu ? "== SMU13 feature enable plan (read-only)" : ipfw ? "== PSP13 IP firmware plan (read-only)" :
+    puts(scpm ? "== SMU13 SCPM enable-only plan (read-only)" : smu ? "== SMU13 feature enable plan (read-only)" : ipfw ? "== PSP13 IP firmware plan (read-only)" :
          ringStage ? "== PSP13 KM ring plan (read-only)" : "== PSP13 sOS load plan (read-only)");
     if(call(conn,planMode,start,stop,rom,romLen,fw,fwLen,&r)) {
         print(&r);
@@ -325,7 +331,8 @@ int main(int argc,char **argv) {
         const uint32_t gate=(ringStage||ipfw) ? (r.ring_flags&N33_PSPR_FLAG_GATE_OPEN)
                                               : (r.flags&N33_PSPL_FLAG_WRITE_GATE_OPEN);
         if(!gate) {
-            puts(smu ? "Write gate closed: needs navi33-smu-enable=1, no navi33-smu-off or navi33-psp-off." :
+            puts(scpm ? "Write gate closed: needs navi33-smu-enable=1 and navi33-smu-scpm=1, no SMU/PSP kill switches." :
+                 smu ? "Write gate closed: needs navi33-smu-enable=1, no navi33-smu-off or navi33-psp-off." :
                  ipfw ? "Write gate closed: boot with navi33-psp-fw=1 and without navi33-psp-off=1." :
                  ringStage ?
                  "Write gate closed: boot with navi33-psp-ring=1 and without navi33-psp-off=1." :

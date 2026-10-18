@@ -423,7 +423,7 @@ assert 'bool smuAttempted_ = false;' in (root/'src/Navi33Probe.hpp').read_text()
 assert 'return executeSmu(pci,req);' in writer
 assert 'off!=io->regs.msg && off!=io->regs.arg && off!=io->regs.resp' in smu
 assert 'run ? write32 : nullptr' in smu  # the plan has no write callback
-assert 'smu13::execute(io.regs,hw,run,req.writeGate,*req.attempted)' in smu
+assert 'smu13::execute(io.regs,hw,run,req.writeGate,*req.attempted,enableOnly)' in smu
 assert 'Navi33DarwinSmu.o' in makefile
 for forbidden in ('BaseAddress0','withSubRange','->configWrite','setMemoryEnable',
                   'setBusMasterEnable','setPowerState','WREG32(','vramWrite','vramZero'):
@@ -434,3 +434,11 @@ for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert '--smu-enable' not in code and 'N33_SMU_ENABLE_RUN' not in code
 print('Navi33 SMU mailbox allowlist, independent gate and plan boundary: passed')
+
+# SCPM mode is opt-in, mutually excludes mask writes, and shares the SMU latch.
+assert 'scpmMode ? scpmGate : !scpmGate' in load_fn
+assert 'PE_parse_boot_argn("navi33-smu-scpm"' in load_fn
+assert 'const unsigned first=enableOnly ? 2u : 0u;' in smuh
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert '--smu-scpm-enable' not in code and 'N33_SMU_SCPM_RUN' not in code

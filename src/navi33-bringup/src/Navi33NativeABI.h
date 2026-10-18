@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 13u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result */
+#define N33_ABI_VERSION 14u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -210,6 +210,8 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
 #define N33_PSP_LOAD_FW_RUN 6u
 #define N33_SMU_ENABLE_PLAN 7u
 #define N33_SMU_ENABLE_RUN 8u
+#define N33_SMU_SCPM_PLAN 9u
+#define N33_SMU_SCPM_RUN 10u
 #define N33_SMU_MARKER 0x534d5531u
 #define N33_PSP_FW_RECORDS 27u
 #define N33_PSP_FW_STOP_AUTOLOAD 28u
@@ -280,7 +282,8 @@ struct n33_psp_load_result {
   uint32_t smu_message_before, smu_argument_before, smu_response_before;
   uint32_t smu_scratch0, smu_scratch1, smu_core_before, smu_reset_before, smu_rlc_before;
   uint32_t smu_core_after, smu_reset_after, smu_rlc_after;
-  uint32_t smu_last_message, smu_last_argument, smu_responses[3], smu_reserved;
+  /* Replies are in send order. enable_only=1: only slot 0 is used, masks zero. */
+  uint32_t smu_last_message, smu_last_argument, smu_responses[3], smu_enable_only;
 };
 N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==336,
                   "N33 PSP load result must be 336 bytes");

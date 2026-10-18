@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the Navi33 OpenCore disk for the Tahoe VM from a CI usb artifact.
-#   vm/make-opencore.sh ARTIFACT_DIR [--oc OPENCORE_RELEASE_DIR] [--hostfb FILE] [--psp-load|--psp-ring]
+#   vm/make-opencore.sh ARTIFACT_DIR [--oc OPENCORE_RELEASE_DIR] [--hostfb FILE] [--psp-load|--psp-ring|--psp-fw|--smu-enable|--smu-scpm]
 # ARTIFACT_DIR is an unpacked navi33-usb-macos-26-intel artifact (EFI/ + navi33/).
 # The VM's own boot/OpenCore.qcow2 is only read: the result is a separate
 # $VM_DIR/navi33/OpenCore-navi33.qcow2, so the VM's normal boots never see
@@ -12,15 +12,17 @@
 # approved, hand-run attempt. --hostfb takes the hostfb.txt that
 # vm/prepare-card.sh records and passes its console as navi33-hostfb-offset
 # and -bytes (kext 0.0.8+): the guest has no GOP console of its own.
+# --smu-scpm opens only the separately approved enable-only SMU experiment.
 set -euo pipefail
 VM_DIR="${VM_DIR:-$HOME/macos tahoe}"
 die() { echo "make-opencore: $*" >&2; exit 1; }
 [ $# -ge 1 ] || die "usage: $0 ARTIFACT_DIR [--oc OPENCORE_RELEASE_DIR] [--hostfb FILE] [--psp-load]"
 ART="$(cd -- "$1" && pwd)"; shift
-PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; OCREL=""; HOSTFB=""
+PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; SMU_SCPM=0; OCREL=""; HOSTFB=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --smu-enable) SMU_ENABLE=1 ;;
+    --smu-scpm) SMU_ENABLE=1; SMU_SCPM=1 ;;
     --psp-load) PSP_LOAD=1 ;;
     --psp-ring) PSP_RING=1 ;;
     --psp-fw) PSP_FW=1 ;;
@@ -66,12 +68,13 @@ if [ -n "$OCREL" ]; then
   OCVER="$(basename "$OCREL"), OpenCore.efi sha256 $(sha256sum "$OCREL/X64/EFI/OC/OpenCore.efi" | cut -c1-16)…"
 fi
 python3 -I - "$WORK/config.plist" "$PSP_LOAD" "$KEXT/Contents/MacOS/Navi33Probe" \
-  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" <<'EOF'
+  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" <<'EOF'
 import plistlib,struct,sys,uuid
 path,psp_load,binary,manifest,ocver,hostfb=sys.argv[1],sys.argv[2]=="1",sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6]
 psp_ring=sys.argv[7]=="1"
 psp_fw=sys.argv[8]=="1"; psp_autoload=sys.argv[9]=="1"
 smu_enable=sys.argv[10]=="1"
+smu_scpm=sys.argv[11]=="1"
 c=plistlib.load(open(path,"rb"))
 add=[k for k in c["Kernel"]["Add"] if k.get("BundlePath")!="Navi33Probe.kext"]
 add.append({"Arch":"x86_64","BundlePath":"Navi33Probe.kext",
@@ -91,6 +94,7 @@ args+=["-v","debug=0x108","serial=3","msgbuf=1048576",
        "navi33-psp-load=1" if psp_load else "navi33-psp-ring=1" if psp_ring else
        "navi33-psp-fw=1" if psp_fw else "navi33-smu-enable=1" if smu_enable else "navi33-psp-off=1"]
 if not smu_enable: args.append("navi33-smu-off=1")
+if smu_scpm: args.append("navi33-smu-scpm=1")
 if psp_autoload: args.append("navi33-psp-autoload=1")   # AUTOLOAD_RLC: its own gate
 fb={}
 if hostfb:

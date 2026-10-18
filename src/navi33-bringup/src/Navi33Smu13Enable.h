@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// MP1 13.0.7 three-message experiment. No hardware I/O except callbacks.
+// MP1 13.0.7 fixed-mask or SCPM enable-only experiment. No hardware I/O except callbacks.
 // Sources and the deliberate omissions from Linux: SMU_ENABLE_DESIGN.md.
 #pragma once
 #include "Navi33HardwarePlan.h"
@@ -58,8 +58,10 @@ inline uint32_t sample(const Regs &r,const Hw &h,n33_psp_load_result &o) {
 // Plan calls never receive a write callback. Run rechecks the live state under
 // the provider lock before consuming the one-shot latch, including on failure.
 inline n33_psp_load_result execute(const Regs &r,const Hw &h,bool run,bool gate,
-                                  bool &attempted) {
+                                  bool &attempted,bool enableOnly=false) {
     auto o=blank();
+    o.smu_enable_only=enableOnly ? 1u : 0u;
+    if(enableOnly)o.smu_mask_low=o.smu_mask_high=0u;
     if(gate)o.flags|=N33_PSPL_FLAG_WRITE_GATE_OPEN;
     if(!r.valid){o.state=N33_PSPL_BAD_ROM;return o;}
     o.state=sample(r,h,o);
@@ -69,7 +71,8 @@ inline n33_psp_load_result execute(const Regs &r,const Hw &h,bool run,bool gate,
     if(attempted){o.state=N33_PSPL_ALREADY_ATTEMPTED;return o;}
     if(!h.write || !h.sleep){o.state=N33_PSPL_BAD_REQUEST;return o;}
     attempted=true;
-    for(unsigned i=0;i<3u;++i) {
+    const unsigned first=enableOnly ? 2u : 0u;
+    for(unsigned i=first;i<3u;++i) {
         o.smu_last_message=kMessages[i];o.smu_last_argument=kParams[i];
         // Never clobber an in-flight or failed mailbox, even between messages.
         uint32_t ready=0;
@@ -85,7 +88,7 @@ inline n33_psp_load_result execute(const Regs &r,const Hw &h,bool run,bool gate,
         uint32_t response=0;
         for(uint32_t ms=0;;++ms) {
             if(!read(h,r.resp,response)){o.state=N33_PSPL_READ_FAILED;return o;}
-            o.smu_responses[i]=response;
+            o.smu_responses[i-first]=response;
             if(response)break;
             if(ms==kTimeoutMs){o.state=N33_PSPL_SMU_TIMEOUT;return o;}
             h.sleep(h.ctx,1u);++o.elapsed_ms;

@@ -81,7 +81,8 @@ n33_psp_load_result execute(IOPCIDevice *pci,const Request &req) {
         return executeRing(pci,req);
     if(req.mode==N33_PSP_LOAD_FW_PLAN || req.mode==N33_PSP_LOAD_FW_RUN)
         return executeFw(pci,req);
-    if(req.mode==N33_SMU_ENABLE_PLAN || req.mode==N33_SMU_ENABLE_RUN)
+    if(req.mode==N33_SMU_ENABLE_PLAN || req.mode==N33_SMU_ENABLE_RUN ||
+       req.mode==N33_SMU_SCPM_PLAN || req.mode==N33_SMU_SCPM_RUN)
         return executeSmu(pci,req);
     if(!pci || (req.mode!=N33_PSP_LOAD_PLAN && req.mode!=N33_PSP_LOAD_RUN) ||
        !req.attempted)
