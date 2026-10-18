@@ -110,7 +110,7 @@ decoded against upstream `psp_v13_0.c`, `smu_v13_0.c`, `imu_v11_0.c`,
   (`FB_LOCATION` `0x8000/0x81ff`), with the system aperture over the same
   range. NBIO memsize reads 8176 MiB.
 
-### PSP13 sOS load stage (Navi33Probe 0.0.7, N33N ABI 9; not yet run)
+### PSP13 sOS load stage (Navi33Probe 0.0.8, N33N ABI 9; not yet run)
 
 The first GPU write, approved by the user on 2026-10-18 with SSH as the
 recovery path. `N33_SEL_PSP_LOAD` has two modes:
@@ -133,6 +133,19 @@ The plan refuses unless all of these hold:
    comes from `boot_args->Video`. 0.0.6 used `getConsoleInfo()`, which
    on the Mac returned the kernel's virtual mapping
    (`0xffffffa06a800000`), so its plan refused with state 11.
+   - **No boot console (0.0.8):** in the Tahoe VM the guest's AMD GOP
+     switched DCN off, so the guest boots without it (`rombar=0`) and
+     `boot_args->Video` is empty. The user chose on 2026-10-18 to take
+     the console from the host instead. `vm/prepare-card.sh` records the
+     PC firmware's framebuffer from Linux's `boot_params` as a BAR0
+     offset (1024×768×32 at offset 0, 3 MiB). It reaches the kext as
+     `navi33-hostfb-offset` and `navi33-hostfb-bytes`, through
+     `psp13load::hostConsole()`.
+   - The host range is used only when there is no boot console and both
+     boot-args are set. It must be page-aligned and inside BAR0, and
+     the HUBP check above still applies to it unchanged.
+   - `LastPspPlan` and the kext log say which source was used: `console
+     boot`, `host` or `none`.
 5. `fw_pri` at VRAM offset 240 MiB keeps 16 MiB clear of the console
    and of every active surface (each counted as at least 32 MiB). It
    must also lie inside VRAM.

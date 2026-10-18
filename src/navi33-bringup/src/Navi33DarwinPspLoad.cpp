@@ -103,7 +103,11 @@ n33_psp_load_result execute(IOPCIDevice *pci,const Request &req) {
     const pl::Range bar0Range{static_cast<uint64_t>(bar0->getPhysicalAddress()),
                               static_cast<uint64_t>(bar0->getLength())};
     out.bar0_phys=bar0Range.phys;out.bar0_bytes=bar0Range.bytes;
-    out.console_phys=req.consolePhys;out.console_bytes=req.consoleBytes;
+    const pl::Range boot{req.consolePhys,req.consoleBytes};
+    const pl::Range console=boot.phys ? boot :
+        pl::hostConsole(boot,req.hostConsole,req.hostConsoleOffset,
+                        req.hostConsoleBytes,bar0Range);
+    out.console_phys=console.phys;out.console_bytes=console.bytes;
     const pl::Registers regs=pl::resolve(disc,bar5Bytes);
     if(!regs.valid) {out.state=N33_PSPL_BAD_ROM;return out;}
 
@@ -119,15 +123,16 @@ n33_psp_load_result execute(IOPCIDevice *pci,const Request &req) {
         io.regs->release();
         out.state=N33_PSPL_READ_FAILED;return out;
     }
-    const pl::Plan plan=pl::plan(snap,{req.consolePhys,req.consoleBytes},bar0Range);
+    const pl::Plan plan=pl::plan(snap,console,bar0Range);
     pl::report(out,snap,plan);
     out.state=plan.state;
     IOLog("Navi33Probe: psp: plan state %u C2PMSG_35 %08x C2PMSG_81 %08x "
-          "FB %08x-%08x DCN FB %08x pipes 0x%x console vram+0x%llx "
+          "FB %08x-%08x DCN FB %08x pipes 0x%x console %s vram+0x%llx "
           "(%llu KiB) fw_pri vram+0x%llx MC 0x%llx\n",
           out.state,snap.c2p35,snap.c2p81,snap.mmFbBase,snap.mmFbTop,
-          snap.dcnFbBase,plan.activePipes,plan.consoleOffset,
-          req.consoleBytes>>10,plan.fwPriOffset,plan.fwPriMc);
+          snap.dcnFbBase,plan.activePipes,
+          boot.phys ? "boot" : (console.phys ? "host" : "none"),
+          plan.consoleOffset,console.bytes>>10,plan.fwPriOffset,plan.fwPriMc);
     if(plan.state!=N33_PSPL_PLAN_OK || req.mode==N33_PSP_LOAD_PLAN) {
         io.regs->release();return out;
     }

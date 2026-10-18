@@ -159,6 +159,19 @@ inline Range bootConsole(uint64_t base,uint32_t rowBytes,uint32_t height) {
     if(base>=kPhysLimit)return Range{};
     return Range{base&~0xfffull,static_cast<uint64_t>(rowBytes)*height};
 }
+// The PC firmware's console as the host saw it, for a guest with none. In
+// the Tahoe VM (2026-10-18) the guest's AMD GOP switched DCN off, so the
+// guest boots without it (rombar=0) and boot_args->Video is empty. The host
+// records the firmware framebuffer from Linux's boot_params as a BAR0
+// offset (vm/prepare-card.sh); the guest's BAR0 is the same aperture. Only
+// used when the boot loader gave no console, and plan() still demands an
+// active HUBP surface at exactly this offset.
+inline Range hostConsole(const Range &boot,bool given,uint64_t offset,
+                         uint64_t bytes,const Range &bar0) {
+    if(boot.phys || !given || (offset&0xfffull) || !bytes || !bar0.phys ||
+       offset>=bar0.bytes || bytes>bar0.bytes-offset)return Range{};
+    return Range{bar0.phys+offset,bytes};
+}
 struct Plan {
     n33_psp_load_state state=N33_PSPL_BAD_REQUEST;
     uint32_t flags=0u, activePipes=0u;

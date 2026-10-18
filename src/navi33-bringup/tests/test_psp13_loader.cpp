@@ -219,6 +219,27 @@ int main(int argc,char **argv) {
     assert(c.phys==0x830000000ull && c.bytes==8100ull*1024u);
     p=pl::plan(measured(),c,{0x830000000ull,kBar0});          // this Mac's BAR0
     assert(p.state==N33_PSPL_PLAN_OK && p.fwPriMc==0x800f000000ull);
+    // 2026-10-18, Tahoe VM with rombar=0: no boot console. The host saw the
+    // firmware's 1024x768x32 framebuffer at BAR0 offset 0 (3 MiB); the guest
+    // put BAR0 at 0xa0000000.
+    const pl::Range none{}, vmBar0{0xa0000000ull,kBar0};
+    c=pl::hostConsole(none,true,0u,3ull<<20,vmBar0);
+    assert(c.phys==0xa0000000ull && c.bytes==3ull<<20);
+    p=pl::plan(measured(),c,vmBar0);
+    assert(p.state==N33_PSPL_PLAN_OK && p.consoleOffset==0u &&
+           p.fwPriMc==0x800f000000ull);
+    // Never in place of a real boot console, never without both boot-args.
+    assert(!pl::hostConsole({0xa0000000ull,1u},true,0u,3ull<<20,vmBar0).phys);
+    assert(!pl::hostConsole(none,false,0u,3ull<<20,vmBar0).phys);
+    // The range must be page-aligned, non-empty and inside BAR0.
+    assert(!pl::hostConsole(none,true,0x800u,3ull<<20,vmBar0).phys);
+    assert(!pl::hostConsole(none,true,0u,0u,vmBar0).phys);
+    assert(!pl::hostConsole(none,true,kBar0,4096u,vmBar0).phys);
+    assert(!pl::hostConsole(none,true,kBar0-4096u,8192u,vmBar0).phys);
+    assert(!pl::hostConsole(none,true,0u,3ull<<20,{}).phys);
+    // A wrong host claim still needs a live scanout at that offset.
+    c=pl::hostConsole(none,true,16ull<<20,3ull<<20,vmBar0);
+    assert(c.phys && pl::plan(measured(),c,vmBar0).state==N33_PSPL_APERTURE_MISMATCH);
     assert(pl::clearOf(240ull<<20,0u,kConsole));
     assert(!pl::clearOf(240ull<<20,(240ull<<20)+(1ull<<20)+(15ull<<20),1u));
 

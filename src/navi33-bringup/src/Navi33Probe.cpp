@@ -662,18 +662,27 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
             ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_height);
         req.consolePhys=c.phys;req.consoleBytes=c.bytes;
     }
+    // A guest with no GOP gets the host's view of the firmware console
+    // (vm/prepare-card.sh); execute() uses it only when boot_args has none.
+    uint64_t hostOffset=0u,hostBytes=0u;
+    req.hostConsole=PE_parse_boot_argn("navi33-hostfb-offset",&hostOffset,
+                                       sizeof(hostOffset)) &&
+        PE_parse_boot_argn("navi33-hostfb-bytes",&hostBytes,sizeof(hostBytes));
+    req.hostConsoleOffset=hostOffset;req.hostConsoleBytes=hostBytes;
     IOLockLock(pspLock_);
     req.attempted=&pspLoadAttempted_;
     result=navi33::darwin_psp::execute(pci,req);
     IOLockUnlock(pspLock_);
-    char raw[224];
+    char raw[256];
     snprintf(raw,sizeof(raw),
              "mode %u state %u step %u steps %u writes %u flags 0x%x "
-             "C2PMSG_35 %08x->%08x C2PMSG_81 %08x->%08x sOS %08x fw_pri MC %llx",
+             "C2PMSG_35 %08x->%08x C2PMSG_81 %08x->%08x sOS %08x fw_pri MC %llx "
+             "console %s",
              mode,result.state,result.step,result.steps_done,
              result.register_writes,result.flags,result.c2pmsg35_before,
              result.c2pmsg35_last,result.c2pmsg81_before,result.c2pmsg81_after,
-             result.sos_version_after,result.fw_pri_mc);
+             result.sos_version_after,result.fw_pri_mc,
+             req.consolePhys ? "boot" : (result.console_phys ? "host" : "none"));
     setProperty(mode==N33_PSP_LOAD_RUN ? "Navi33,LastPspLoad" :
                                          "Navi33,LastPspPlan",raw);
     return result;

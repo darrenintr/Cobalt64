@@ -280,7 +280,15 @@ assert "navi33::darwin_psp::execute(pci,req)" in load_fn
 # the console must come from boot_args through the physical-only filter.
 assert "PE_state.bootArgs" in load_fn and "psp13load::bootConsole(" in load_fn
 assert "getConsoleInfo" not in load_fn
+# A guest without a GOP (Tahoe VM, 2026-10-18) may name the host's view of
+# the firmware console, but both boot-args are needed and a boot console wins.
+assert 'PE_parse_boot_argn("navi33-hostfb-offset"' in load_fn
+assert 'PE_parse_boot_argn("navi33-hostfb-bytes"' in load_fn
 writer=(root/"src/Navi33DarwinPspLoad.cpp").read_text()
+assert "const pl::Range console=boot.phys ? boot :" in writer
+assert "pl::hostConsole(boot,req.hostConsole," in writer
+assert "pl::plan(snap,console,bar0Range)" in writer
+assert "req.consolePhys,req.consoleBytes},bar0Range" not in writer
 assert "$(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
 wfn=writer[writer.index("bool write32("):]
 wfn=wfn[:wfn.index("\n}\n")]
