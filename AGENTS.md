@@ -116,8 +116,14 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
 The Mac boots macOS 26.7.1 through OpenCore from a USB stick labelled
 `OPENCORE`. That stick carries both the kext and the diagnostics.
 
-- On Linux the stick is `/run/media/darren/OPENCORE/`; on the Mac,
-  `/Volumes/OPENCORE/`.
+- On Linux the stick is `/mnt/opencore` (since 2026-10-18 an `/etc/fstab` line
+  `LABEL=OPENCORE /mnt/opencore vfat noauto,user,uid=1000,gid=1000,umask=022`
+  lets the agent run `mount /mnt/opencore` and `umount /mnt/opencore` without
+  sudo or a desktop; the headless boot has no desktop to mount it). Older notes
+  say `/run/media/darren/OPENCORE/`. On the Mac it is `/Volumes/OPENCORE/`.
+- The stick's boot-args must include `msgbuf=1048576`: without it the kernel
+  message buffer rolls past the kext's boot IOLog lines before `run.sh` runs
+  (lost the 0.0.18 owner decision). Verdicts are also ioreg properties since 0.0.19.
 - OpenCore injects `EFI/OC/Kexts/Navi33Probe.kext` from the stick. The
   `config.plist` entry is by path, so replacing the kext needs no config
   edit.
@@ -1439,6 +1445,15 @@ parser got two of them wrong:
   bare-metal state. PSP at bootloader-ready (`C2PMSG_35` `80000000`), no write.
   Fix for the next stick run: publish the owner decision as an ioreg property
   and have `run.sh` print it.
+
+- **2026-10-18 20:1x, stick staged for a one-boot evidence run (kext 0.0.19, not
+  booted yet).** CI run 39125451691, commit `8321114`. Backups in
+  `navi33/backup-0.0.18/` and `backup-0.0.7/`. Boot-args: `msgbuf=1048576`,
+  `navi33-owner-probe=1`, `navi33-dma-preflight=1` (read-only mapper check), and
+  every PSP/SMU/SDMA/FB/DMA-stage kill switch. `instruction.txt` asks the user to
+  run `install-autorun.sh` once, so later stick boots run `run.sh` automatically
+  and chime. Expected answers: the owner verdict and the DMA preflight status,
+  each saying whether macOS on this AMD-Vi board has a mapper for the card.
 
 ## Adding a register read
 
