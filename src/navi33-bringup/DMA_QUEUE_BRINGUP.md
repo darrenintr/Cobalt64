@@ -368,3 +368,20 @@ MEC through the IP firmware records, so the load is not planned here.
 Not done: the MQD memory image (the `v11_compute_mqd` layout), the KIQ
 MAP_QUEUES packets that bring up the KCQs, and any GPU memory the
 MQD/EOP/ring/rptr buffers live in. All of these need the GPU VM from G16.
+
+## Stage G19: offline KIQ MQD memory image
+
+`Navi33Gfx11Mqd.h` builds the 2 KiB `v11_compute_mqd` image for the KIQ. It
+takes its values from the G18 register plan, so the register writes and the
+image cannot drift apart. The field dword indices come from struct
+`v11_compute_mqd` in upstream `v11_structs.h` (torvalds/linux master, fetched
+2026-10-18). A script checked all 33 indices against the `offset:` comments
+in that header, with no mismatches. The header does no memory I/O. The
+caller memsets the image to zero first, as `gfx_v11_0_kiq_init_queue()` does.
+`test_gfx11_mqd` checks hand-derived dwords, that the shared values match
+the register plan, and refusal propagation. A mutant changing
+MISC_RESERVED fails it.
+
+Not done: the KCQ MQDs (they carry CU masks and priorities), the MAP_QUEUES
+packets that the KIQ submits, and the GPU memory the image lives in (G16 is
+SDMA-only).
