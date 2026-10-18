@@ -399,3 +399,44 @@ sequence: `mes_v11_0_enable()`, KIQ-pipe queue init (`mes_v11_0_queue_init()`),
 and then the MES API commands (`set_hw_resources`, `set_hw_resources_1`,
 `query_sched_status`). They run through a ring in GPU memory and need fences,
 so they are blocked on the same GPU memory and VM work as above.
+
+## Stage G20: offline MES bring-up plan (the upstream compute path)
+
+`Navi33GfxMes.h` plans the MES steps that upstream runs for Navi33 (see the
+correction above). The sources are `mes_v11_0.c` (`mes_v11_0_enable()`,
+`mes_v11_0_queue_init_register()`, `mes_v11_0_mqd_init()`), the
+`kiq_map_queues` path for the MES ring, `soc15d.h` for PACKET3, and
+`soc15_common.h`/`amdgpu.h` for `REG_SET_FIELD`, all from torvalds/linux
+master, fetched 2026-10-18.
+
+- Enable: the reset word, the per-pipe program counter (`uc_start >> 2`, under
+  GRBM me 3 and that pipe), then the unhalt/activate word built from zero.
+  Disable is a read-modify-write that halts the pipes.
+- KIQ-pipe queue registers, in upstream order. The MES queue differs from the
+  legacy KIQ path in four ways: NO_UPDATE_RPTR set, `CP_MQD_CONTROL` written
+  as literal 0, the wptr-poll address masked to 8 bytes, and `CP_HQD_ACTIVE`
+  always 1.
+- **Quirk, mirrored on purpose:** `mes_v11_0_mqd_init()` passes
+  `(order(4096/4)-1) << 8` to `REG_SET_FIELD` for RPTR_BLOCK_SIZE. That macro
+  shifts the value again, so the field is written as 0. The legacy path writes
+  9. The planner matches upstream, and a test pins the difference.
+- MAP_QUEUES for the MES scheduler ring: ME 2, engine 5, one queue.
+
+Firmware facts checked against the real files on this machine (decompressed
+from `/lib/firmware/amdgpu`, linux-firmware 20260915; SHA-256 prefixes
+`719f4468…` for `gc_11_0_2_mes_2.bin`, `5f8f0b50…` for `gc_11_0_2_mes1.bin`):
+the common header is 32 bytes, then `mes_firmware_header_v1_0`. Both images
+have `mes_uc_start_addr_lo = 0xf0005000` and `_hi = 0xffffffff`, read at
+offsets 56 and 60. The start address is therefore `0xffffffff_f0005000`. Its
+word address written to `CP_MES_PRGRM_CNTR_START` is `0xfc001400` (with
+`_HI` = `0x3fffffff`). The planner test uses these values.
+
+G17 still applies on the MES path. `gfx_v11_0_cp_resume()` calls
+`gfx_v11_0_kcq_resume()` regardless of MES, and that enables the MEC
+(`gfx_v11_0_cp_compute_enable(true)`). The KCQ registers are then programmed
+by MES firmware, not by the driver.
+
+Not done: the MES MQD memory image, the MES API ring (`set_hw_resources`,
+`set_hw_resources_1`, `query_sched_status`, `add_queue`), and the fences for
+them. The API ring lives in GPU memory, so it is blocked on the same GPU VM
+work as before.
