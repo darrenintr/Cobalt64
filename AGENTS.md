@@ -750,7 +750,12 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      VBIOS asks).
    - Recovery if the PSP wedges: a full power-off (a warm restart may
      leave the PSP state in place).
-3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Next.** This
+3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Next: design
+   written** (`src/navi33-bringup/FIRMWARE_LOAD_DESIGN.md`, 2026-10-18, no
+   code on the card): 26 `LOAD_IP_FW` records (SDMA, RS64 CP, MES, IMU, RLC)
+   then `AUTOLOAD_RLC`, **SMU image left out by the user's decision**;
+   `tools/fwplan.py` computes the records from the real firmware files and
+   `tests/fixtures/rx7600-fw-plan.json` is the golden list. This
    needs its own approval and its own boot-arg (hard rule 2). The KM ring
    (`C2PMSG_64` is already `0x80000000`) and TMR come first, as in
    upstream `psp_hw_start`.
