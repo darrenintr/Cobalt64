@@ -86,6 +86,12 @@ The Mac boots macOS 26.7.1 through OpenCore from a USB stick labelled
   `/var/log/cobalt64-navi33-autorun.log`. If macOS privacy blocks it, the
   log says `BLOCKED`; grant Full Disk Access to
   `/usr/local/libexec/cobalt64/n33autorun`.
+- **A boot that panics leaves no results file.** The Linux install on the
+  same PC can still read the panic: macOS keeps it in NVRAM
+  (`/sys/firmware/efi/efivars/AAPL,PanicInfo0000`, `0001`, ...) until the
+  next good macOS boot. Drop each file's 4-byte attribute header,
+  concatenate them, and unpack every 7 bytes (little-endian) into eight
+  7-bit ASCII characters.
 - **The user hands results over by pasting only a results file path.**
   Read it, compare it with the previous results file, and interpret it.
   Then record any new hardware fact in the findings log below.
@@ -111,6 +117,94 @@ so a results file shows which build actually loaded.
 in `tests/test_native_client.cpp` and `tests/test_sdma6_queue_census.cpp`.
 Old tools and a new kext refuse each other at HELLO, so ship all tools
 from the same CI run.
+
+## VM test loop (being set up, 2026-10-18)
+
+The "Mac" is this same PC (Ryzen 5 3600, no integrated GPU, 30 GiB RAM),
+booted from the stick instead of Ubuntu. The user also runs macOS in a VM
+on Ubuntu. The goal is to pass the RX 7600 into that VM, so every byte of
+output survives a hang and Linux can inspect a stuck guest.
+
+- **The VM:** the user's ultimate-macOS-KVM install at `~/macos tahoe`
+  (`HDD.qcow2`). It runs macOS 26.7.1 (25G241) on the same kernel build
+  as bare metal. Guest SSH is the `macos-vm` alias (127.0.0.1:2222, user
+  `darren`, key login). Guest sudo is passwordless
+  (`/etc/sudoers.d/cobalt64`, set by the user on 2026-10-18), which
+  `guest-run.sh` relies on.
+- **Do not touch the user's own VM files:** `boot/OpenCore.qcow2`,
+  `ovmf/OVMF_VARS.fd`, `boot.sh` and `boot-reims-vgpu.sh` (their separate
+  reims-vgpu project). Ours live in `~/macos tahoe/navi33/`.
+- **Scripts** (in `src/navi33-bringup/vm/`):
+  - `make-opencore.sh ARTIFACT_DIR [--oc RELEASE_DIR] [--psp-load]`
+    builds `navi33/OpenCore-navi33.qcow2` from the VM's OpenCore disk
+    plus the artifact's kext, and writes `OpenCore-navi33.txt` (kext UUID,
+    OpenCore version, boot-args). It sets `-v debug=0x108 serial=3`, the
+    same `navi33-*` flags as the stick, and `navi33-psp-off=1` unless
+    `--psp-load` is given. It also sends OpenCore's log to serial.
+    `--hostfb /var/lib/cobalt64-navi33/hostfb.txt` adds the host console
+    boot-args (kext 0.0.8+) and records that boot's ID in the manifest.
+    **Always pass `--oc`** with an unpacked OpenCorePkg release (1.0.8 in
+    use). The VM's own OpenCore 1.0.4 cannot inject kexts on macOS 26.
+  - `run-vm.sh [--no-gpu] [--snapshot] [--check]` boots the VM. Each run
+    gets `navi33/runs/<stamp>/` (with `runs/latest` pointing at it):
+    `serial.log`, `qemu.log`, `cmdline.txt`, `qmp.sock` and `hmp.sock`.
+    gdb attaches on 127.0.0.1:1234. A guest reboot stops the VM.
+    It hides the card's ROM (`rombar=0`) unless `ROMBAR=1`: the guest's
+    AMD GOP switches DCN off. It refuses an OpenCore disk whose hostfb
+    record is from another boot.
+  - `guest-run.sh ARTIFACT_DIR` copies the tools and the pinned firmware
+    to the guest's `~/navi33`, runs `run.sh` there, and copies the results
+    file into the run directory.
+  - `host-setup.sh` is a one-time sudo setup, undone with `--remove`. It
+    installs openssh-server and tmux, adds the GRUB entry
+    `cobalt64-navi33-vm`, an unlimited memlock limit and a vfio udev rule.
+  - `reboot-to-vm.sh` boots that GRUB entry once. The entry is headless:
+    it blacklists amdgpu and snd_hda_intel and gives 1002:7480 and
+    1002:ab30 to vfio-pci.
+  - `host-peek.py` (root, no VM running) reads the PSP mailbox and the
+    plan's DCN registers straight from BAR5 on the host, read-only.
+  - `prepare-card.sh` (root) is installed by `host-setup.sh` as
+    `cobalt64-navi33-card.service`. It runs only in the VM boot. It shrinks
+    BAR0 to 256 MiB (the firmware gives 8 GiB, which macOS cannot place)
+    and copies the ROM to `/var/lib/cobalt64-navi33/rx7600-rom.bin`. It
+    records the PC firmware's console (`boot_params` screen_info) as a
+    BAR0 offset in `/var/lib/cobalt64-navi33/hostfb.txt`, stamped with
+    the boot ID, before the resize. It also stops VFIO from resetting the
+    card: it clears `reset_method` and
+    takes 09:00.1 off vfio-pci, so the VM runs without the HDMI audio
+    function. It touches the card only while it is on vfio-pci and no VM
+    holds it.
+- **Cache that survives restarts:** `~/macos tahoe/navi33/cache/` holds
+  `artifact-0.0.7` (the kext, recovered from the OpenCore disk, plus the
+  guest's tools) and `OpenCore-1.0.8-RELEASE` (zip SHA-256
+  `2011e8b7…be6d27b`). `/tmp` is cleared at every boot.
+- **`gh` cannot download artifacts over SSH:** its token sits in the
+  desktop keyring. Download while logged in at the desktop, or use
+  `GH_TOKEN`.
+- **Never take the card away from a running amdgpu.** amdgpu loads the
+  PSP sOS itself, so the card would no longer be in the bootloader-ready
+  state. `run-vm.sh` refuses unless 09:00.0 is already on vfio-pci.
+- **Headless means the user drives it from their Arch Linux laptop:**
+  `ssh darren@192.168.100.24`, inside tmux. Recovery: `sudo poweroff`
+  over SSH, then power on, which boots normal Ubuntu.
+- **Status (2026-10-18):**
+  - The `--no-gpu` tests passed: guest SSH, the serial capture, and
+    `guest-run.sh` from tools in to results out.
+  - The first passthrough run (see the findings log) showed the PSP still
+    bootloader-ready after the VFIO reset. It also showed three blockers:
+    OpenCore 1.0.4 could not inject the kext, BAR0 was 8 GiB, and the
+    guest had no GOP.
+  - Fixed so far: OpenCore 1.0.8 and the BAR0 service. With both, the
+    second run matched bare metal in every `n33peek` value.
+  - The guest's AMD GOP switches DCN off (fourth run), so the VM runs
+    with `rombar=0`. The PSP plan then reaches `NO_CONSOLE`, exactly as
+    on bare metal. Kext 0.0.8 (host console) is the fix; it needs a CI
+    build.
+  - `run-vm.sh` takes `BOOT_DISK=` (for example `navi33/gop-diag.qcow2`),
+    `VFIO_OPTS=` (for example `,x-vga=on`), and `OVMF_CODE=` with
+    `OVMF_VARS=` (a writable copy).
+  - Every run stays read-only (`navi33-psp-off=1`) until the VM matches
+    bare metal.
 
 ## RX 7600 hardware facts
 
@@ -253,6 +347,169 @@ parser got two of them wrong:
     `config.plist.bak-20261018-psp-off` after the next load attempt.
   - The plan's console line should now show a physical address inside
     BAR0 and `= vram+0x0`.
+- **2026-10-18, kext 0.0.7 staged: macOS did not boot.** No results
+  file. The panic, decoded from NVRAM on Linux, is the same one as the
+  stick's `panic.txt`: `"The global payload bytes pointer is NULL"
+  @apfs_vfsops.c:2893` in `apfs_vfsop_mountroot`, the same kernel UUID
+  `1291D44A…`, 3.2 s after boot, and no Navi33Probe frame.
+  - The two panics had different boot-args (`navi33-psp-off=1` the first
+    time, `navi33-psp-load=1` this time). The 0.0.6 boot between them,
+    with `navi33-psp-load=1`, was clean. 0.0.7 changes only `pspLoad()`,
+    which runs only when `n33psp --load` is called.
+  - Linux on this PC has no APFS driver, so it cannot have changed the
+    macOS disk (`sda2`).
+  - Web reports tie this panic to booting Tahoe through OpenCore (macOS
+    expecting a root hash the boot path did not hand over). The cause is
+    not verified here.
+  - Next: power off fully and boot again. If it panics twice in a row,
+    boot once with Navi33Probe disabled in `config.plist`.
+- **2026-10-18, from the Linux journal: a warm restart probably resets the
+  PSP.** The Ubuntu boot before the 08:11 macOS run ended with a restart
+  (`systemd-reboot`) at 08:05:49, not a power-off. amdgpu had loaded the
+  sOS during that boot. Yet macOS saw `C2PMSG_35` = `0x80000000` and
+  `C2PMSG_81` = 0. Unless the PC was also switched off in those 6
+  minutes, a warm restart from Ubuntu leaves the PSP bootloader-ready.
+  This was seen only after amdgpu's own clean shutdown, so after a PSP
+  write attempt still power off.
+- **2026-10-18, first RX 7600 passthrough to the Tahoe VM** (run
+  `~/macos tahoe/navi33/runs/20261018-090741`, kext 0.0.7, gate closed).
+  The headless boot came from a warm restart of normal Ubuntu. Both
+  functions were on vfio-pci, and amdgpu never loaded. VFIO bus-reset the
+  card when QEMU started (and again when it stopped).
+  - **The kext never loaded.** OpenCore 1.0.4 refused Navi33Probe,
+    WhateverGreen, AppleALC and BrcmPatchRAM3 with `Prelinked injection
+    ... - Invalid Parameter`; only Lilu loaded. Upstream fixed kext
+    injection for macOS 26 in 1.0.5. The earlier `--no-gpu` "NOT loaded"
+    was the same failure: there OpenCore logged to the QXL screen, not
+    to serial.
+  - **The PSP survives the VFIO reset.** The read below went through
+    QEMU's monitor (`xp`) on the guest's BAR5 (`0x8000_0000`), reading
+    the same registers `n33peek` reads (saved as `hmp-reads.txt` in the
+    run directory).
+    - Same as bare metal: `C2PMSG_33`/`35` = `0x80000000`,
+      `C2PMSG_58`/`64`/`81` = 0, `C2PMSG_59` = `0x00330f1c`,
+      `C2PMSG_89..91`, `C2PMSG_115`/`118`, and `IMU_GFX_RESET_CTRL` =
+      `0x10`.
+    - Different: `C2PMSG_60..62` = `3200000f 8001b000 0000da5c` (bare
+      metal: `00000004 83f00f80 0d1102f4`). Their meaning is unknown.
+  - **BAR0 is 8 GiB here.** The PC's firmware assigns 8 GiB
+    (`0x7c00000000`); bare-metal macOS saw 256 MiB. OVMF put BAR0 at
+    `0x8_0000_0000` and BAR5 at `0x8000_0000`. macOS then moved BAR0 to
+    `0x8012400000000000`, an address it cannot use, and BAR2 to
+    `0x9000_0000`. The card supports 256 MiB to 8 GiB
+    (`resource0_resize` = `0x3f00`).
+  - **No GOP in the guest:** `OCC: Missing compatible GOP`, then the
+    kernel printed `initialize_screen: No video - forcing serial mode`.
+    So `boot_args->Video` is empty and the PSP plan would refuse with
+    `NO_CONSOLE`.
+- **2026-10-18, second passthrough run** (`runs/20261018-093427`), with
+  OpenCore 1.0.8 and BAR0 shrunk to 256 MiB by
+  `cobalt64-navi33-card.service`. The host now has BAR0 at
+  `0x8_3000_0000`, the same address bare-metal macOS reported; the guest
+  put it at `0xA000_0000`.
+  - **The kext loaded** (UUID `6CC36689…`), and `guest-run.sh` produced
+    `results-20261018-093615-guest.txt`.
+  - **`n33peek --all` matches every value recorded for bare metal:**
+    - PSP: `C2PMSG_33/35` = `0x80000000`, `C2PMSG_58/64-71/81` = 0,
+      `C2PMSG_59`, `89..91`, `115`, `118`.
+    - SMU: `C2PMSG_90` = 1 and DAL `C2PMSG_52` = 1.
+    - GC: everything 0 except `IMU_GFX_RESET_CTRL` = `0x10`.
+    - MMHUB: `FB_LOCATION` `0x8000/0x81ff`, the system aperture over the
+      same range, all 16 contexts `0x01fffe00`, `MMVM_L2_CNTL`
+      `0x00080602`.
+    - NBIO `MEMSIZE` `0x1ff0`.
+    - Only `C2PMSG_60..62` differ, and `C2PMSG_60` also changed between
+      two VM boots (`3200000f`, then `9800000f`), so they look like a
+      live status word.
+  - **`n33psp --plan` stopped at state 7** (`READ_FAILED`: one of its 14
+    reads returned all-ones). Its PSP and MMHUB registers read fine in
+    `n33peek`, so the all-ones read is most likely a DCN/HUBP register:
+    no GOP ran after the VFIO reset, so the display engine was never set
+    up. The zeros it printed are only an unfilled report.
+  - **The ROM is complete:** a 57856 B x86 VBIOS, then a 54272 B
+    EFI-compressed x64 boot-service driver (the AMD GOP), 112128 B in
+    all.
+  - **What the UEFI shell showed** (`vm/make-gop-diag.sh`): the firmware
+    loads `AMD GOP X64 Rel Driver Rev.3.7.13` from that ROM, and it
+    manages a controller named `NAVI33`. It creates no child and no
+    `GraphicsOutput`, with or without `x-vga=on`. Loading a second copy
+    with `loadpcirom` hung `connect -r`.
+    - It is not the monitor: with the HDMI monitor awake it said "no
+      HDMI input detected". Ubuntu's OVMF (`OVMF_CODE_4M.fd`) gave the
+      same result.
+    - The suspected cause: the RX 7600 is the PC's boot GPU. The PC
+      firmware sets it up at power-on, and VFIO bus-resets it before the
+      guest starts; after that the AMD GOP cannot light any output.
+      Passthrough setups that work boot the host on another GPU. Not
+      verified.
+    - Next test: no VFIO reset at all. `prepare-card.sh` now clears
+      09:00.0's `reset_method` (the kernel logs "All device reset
+      methods disabled by user") and takes 09:00.1 off vfio-pci, so no
+      bus reset can happen. This needs a fresh boot, because the
+      firmware's setup of the card is lost after the first reset.
+  - After the GOP had run, the PSP was still bootloader-ready, so the
+    GOP does not load an sOS.
+- **2026-10-18, third passthrough run, no VFIO reset**
+  (`runs/20261018-101022`, fresh boot at 10:08 from a warm restart).
+  - At boot `cobalt64-navi33-card.service` resized BAR0 (8192 to 256
+    MiB), disabled the reset methods and took 09:00.1 off vfio-pci.
+    QEMU logged `vfio: Cannot reset device 0000:09:00.0, depends on group
+    19 which is not owned`, and the host logged no `resetting`. So the
+    guest got the card with no reset since power-on.
+  - **Still no GOP** (`OCC: Missing compatible GOP`, `No video - forcing
+    serial mode`). So the reset was not the cause, or not the whole of
+    it.
+  - `n33peek` matches the second run, and the PSP is bootloader-ready.
+    `n33psp --plan` is again state 7.
+  - **The display engine is not answering.** All 18 DCN registers the
+    plan reads (`Navi33Dcn321.h`: `DCN_VM_FB_LOCATION_BASE/TOP`,
+    `HUBPREQ0-3` pitch and surface address, `OTG0-3_STATUS_FRAME_COUNT`)
+    read `0xffffffff` through the QEMU monitor (`hmp-dcn-reads.txt`). On
+    bare metal (0.0.6) they read `0x8000/0x81ff`, with HUBP0 at VRAM
+    offset 0.
+  - **The monitor lost its picture exactly when the VM started** (the
+    user watched it). So the host's vfio-pci bind and BAR0 resize leave
+    the display running, and the guest kills it. QEMU does not reset the
+    card, so the most likely culprit is the guest's AMD GOP failing
+    part-way; this is not verified.
+  - After that VM, `vm/host-peek.py` (root, read-only `resource5` mmap,
+    no VM running) read the same PSP values from the host as the guest
+    did, and all-ones for every DCN register.
+- **2026-10-18, fourth passthrough run, guest GOP disabled**
+  (`runs/20261018-101934`, `VFIO_OPTS=,rombar=0`, fresh boot at 10:17
+  from a warm restart, no VFIO reset).
+  - **Before the VM, the display was alive** (`host-peek.py` from the
+    host, `navi33/host/host-peek-*-before-vm.txt`):
+    - `DCN_VM_FB_LOCATION` = `0x8000/0x81ff`.
+    - HUBP0 surface MC = `0x80_0000_0000` (VRAM offset 0); its pitch
+      register reads `0x3ff`.
+    - `OTG0_STATUS_FRAME_COUNT` went from `0x1c7d` to `0x1cb9` in 1 s
+      (60 Hz). Pipes 1 to 3 read 0. The PSP was bootloader-ready.
+  - **With `rombar=0` it stays alive inside the guest:** same FB
+    location and HUBP0 surface, and OTG0 still counts. So the guest's
+    AMD GOP, run from the ROM BAR, is what switched DCN off in the
+    earlier runs. Without the ROM the guest has no GOP at all.
+  - **`n33psp --plan` reached state 11 (`NO_CONSOLE`)**, flags `0x09`
+    (fw-pinned, dcn-fb-match). That is the same state as bare-metal
+    0.0.6. All other inputs match bare metal:
+    - `C2PMSG_35` = `0x80000000`, `C2PMSG_81` = 0.
+    - MMHUB `FB_LOCATION` `0x8000-0x81ff`, DCN FB base `0x8000`.
+    - HUBP0 surface MC `0x80_0000_0000`.
+    - BAR0 is at guest `0xA000_0000` + 256 MiB.
+  - The only input missing in the VM is a GOP console inside BAR0.
+- **2026-10-18, decision:** the user chose to do the PSP load in the VM,
+  with the console taken from the host. Kext 0.0.8 adds this
+  (`psp13load::hostConsole()`, boot-args `navi33-hostfb-offset` and
+  `-bytes`).
+  - The host tests show that a boot console always wins, that both
+    boot-args are needed, and that the range must be page-aligned and
+    inside BAR0.
+  - A wrong offset still fails the HUBP check (`APERTURE_MISMATCH`).
+  - A mutant without the "boot console wins" rule fails
+    `test_psp13_loader`.
+  - This boot's record is BAR0+0x0, 3 MiB, 1024×768×32. It was made by
+    hand from the boot-time BAR0 (`0x7c00000000`) after the service had
+    already resized it.
 
 ## Adding a register read
 
@@ -316,6 +573,11 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
 2. PSP: load sOS (stages 4–8). This is the **first GPU write**.
    Implemented in kext 0.0.6 (N33N ABI 9). Its plan refused on hardware
    (console address was virtual, see the log); fixed in 0.0.7.
+   - **To be run in the VM** (user's choice, 2026-10-18). The guest has
+     no GOP console (see "VM test loop"), so kext 0.0.8 can take the
+     console from the host: `navi33-hostfb-offset`/`-bytes`, recorded by
+     `prepare-card.sh` from Linux's `boot_params`. This is used only
+     when `boot_args->Video` is empty, and the HUBP check is unchanged.
    - Precondition: `C2PMSG_35` = `0x80000000`. Met on 2026-10-17 (kext
      0.0.5), with no sOS loaded and the SMU already running.
    - Sequence (upstream `psp_v13_0.c`): KDB, SPL (KDB bytes), SYS_DRV,
