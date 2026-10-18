@@ -126,6 +126,15 @@ def main():
     if "--dir" in sys.argv:
         d = sys.argv[sys.argv.index("--dir") + 1]
     files, items = plan(d)
+    if "--tsv" in sys.argv:
+        # one line per file ("F key name bytes sha256"), then one per record
+        # ("R order name type key offset size sha256"); read by the C++ test
+        for k, v in files.items():
+            print("F", k, v.name, v.size, v.sha)
+        for e in items:
+            key = next(k for k, v in files.items() if v.name == e["file"])
+            print("R", e["order"], e["name"], e["type"], key, e["offset"], e["size"], e["sha256"])
+        return
     if "--json" in sys.argv:
         print(json.dumps(dict(files={k: dict(name=v.name, bytes=v.size, sha256=v.sha,
                                              header=f"{v.maj}.{v.min}", version=hex(v.ver))

@@ -348,6 +348,13 @@ for filename in ("Navi33Psp13Loader.h", "Navi33Sha256.h"):
     for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(",
                       "mapDeviceMemory", "setMemoryEnable", "IOConnectCallMethod("):
         assert forbidden not in code, f"{filename} gained hardware I/O: {forbidden}"
+# The IP firmware record builder is pure: no I/O, no hardware, nothing wired in yet.
+ipfw=(root/"src/Navi33Psp13IpFw.h").read_text()
+for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(", "mapDeviceMemory",
+                  "setMemoryEnable", "IOConnectCallMethod(", "IOLog(", "write32"):
+    assert forbidden not in ipfw, f"Navi33Psp13IpFw.h gained hardware I/O: {forbidden}"
+assert "SMC" not in ipfw.replace("// ","//") or "left out" in ipfw   # SMU stays out
+assert "Navi33Psp13IpFw.h" not in source and "Navi33Psp13IpFw.h" not in client
 # Hard rule 5: our scripts and sources never modify the VBIOS (reading is allowed).
 for rel in ("vm/prepare-card.sh","vm/run-vm.sh","vm/host-setup.sh","vm/reboot-to-vm.sh",
             "vm/guest-run.sh","vm/make-opencore.sh","vm/host-peek.py"):

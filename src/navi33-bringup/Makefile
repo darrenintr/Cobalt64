@@ -81,6 +81,9 @@ $(KEXT): $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33Dar
 HOST_FLAGS ?= -std=c++17 -Wall -Wextra -Werror -pedantic
 # Optional: PSP_FW=/path/to/psp_13_0_7_sos.bin also checks the real file
 # against the Kext's SHA-256 pin (the file is not in this repository).
+# Optional: a directory with the eight decompressed firmware files, to check them
+# against tests/fixtures/rx7600-fw-plan.tsv (see tools/fwplan.py).
+IPFW_DIR ?=
 PSP_FW ?=
 
 $(BUILD)/test-identity: tests/test_identity.cpp src/Navi33Identity.h
@@ -146,6 +149,10 @@ $(BUILD)/test-psp13-firmware: tests/test_psp13_firmware.cpp src/Navi33Psp13Firmw
 $(BUILD)/test-sha256: tests/test_sha256.cpp src/Navi33Sha256.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_sha256.cpp -o $@
+
+$(BUILD)/test-psp13-ipfw: tests/test_psp13_ipfw.cpp src/Navi33Psp13IpFw.h src/Navi33Sha256.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_psp13_ipfw.cpp -o $@
 
 PSP_RING_DEPS := src/Navi33Psp13Ring.h src/Navi33Psp13Loader.h src/Navi33Psp13Firmware.h src/Navi33Sha256.h src/Navi33Dcn321.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33HardwarePlan.h src/Navi33NativeABI.h tests/rx7600_ipd_fixture.h
 
@@ -261,7 +268,7 @@ $(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/N
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
 
-host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
+host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
 	$(BUILD)/test-hardware-plan
@@ -279,6 +286,7 @@ host-test: $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware
 	$(BUILD)/test-psp13-loader $(PSP_FW)
 	$(BUILD)/test-psp13-ring
 	$(BUILD)/test-psp13-ring-run
+	$(BUILD)/test-psp13-ipfw $(IPFW_DIR) $(if $(IPFW_DIR),tests/fixtures/rx7600-fw-plan.tsv)
 	$(BUILD)/test-sdma6-status
 	$(BUILD)/test-sdma6-queue-census
 	$(BUILD)/test-sdma6-staging
