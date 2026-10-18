@@ -1419,6 +1419,14 @@ parser got two of them wrong:
   `stop()` is not called at shutdown. Release on shutdown is therefore still not
   proven. Card back on vfio-pci. No GPU write.
 
+- **2026-10-18 18:29, kext 0.0.18 owner hold/probe in the VM** (run
+  `~/macos tahoe/navi33/runs/20261018-182916`, CI artifact of `eabb849`, kext UUID
+  `FEB0F89F-ABD6-3E58-884B-1AA1DAAC7A13`, `navi33-owner-hold=1` with probe and recovery
+  attested). Guest log: identity ok, exclusive open ok, display scan empty, and
+  **code 1 (Refused) mask 0x20 = NoDmaMapper**. Nothing was held and no owner was
+  acquired. This matches the 14:47 VM finding that no device mapper exists for this
+  PCI device, and it is the intended fail-closed result. Card back on vfio-pci.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
