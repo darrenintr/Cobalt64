@@ -291,7 +291,15 @@ assert "const pl::Range console=boot.phys ? boot :" in writer
 assert "pl::hostConsole(boot,req.hostConsole," in writer
 assert "pl::plan(snap,console,bar0Range)" in writer
 assert "req.consolePhys,req.consoleBytes},bar0Range" not in writer
-assert "$(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
+assert all(o in makefile.splitlines()[[i for i,l in enumerate(makefile.splitlines()) if l.rstrip().endswith("-o $(EXEC)")][0]] for o in ("$(BUILD)/Navi33DarwinPciOwner.o",))
+# PCI owner probe: default off, gated, and read-only (config reads and one open/close).
+owner=(root/"src/Navi33DarwinPciOwner.cpp").read_text()
+for forbidden in ("configWrite", "WREG32(", "setBusMasterEnable", "setMemoryEnable",
+                  "mapDeviceMemory", "RREG32(", "writeMmio"):
+    assert forbidden not in owner, f"PCI owner probe gained {forbidden}"
+assert 'PE_parse_boot_argn("navi33-owner-probe"' in source
+assert 'PE_parse_boot_argn("navi33-owner-off"' in source
+assert 'PE_parse_boot_argn("navi33-owner-recovery"' in source
 wfn=writer[writer.index("bool write32("):]
 wfn=wfn[:wfn.index("\n}\n")]
 assert "off!=io->allowed[0] && off!=io->allowed[1]" in wfn
@@ -319,7 +327,8 @@ assert "!killed && (ringMode ?" in load_fn     # psp-off kills both stages
 assert "bool pspRingAttempted_ = false;" in (root/"src/Navi33Probe.hpp").read_text()
 ring=(root/"src/Navi33DarwinPspRing.cpp").read_text()
 assert "return executeRing(pci,req);" in writer
-assert "$(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
+link_line=[l for l in makefile.splitlines() if l.rstrip().endswith("-o $(EXEC)")][0]
+assert all(o in link_line for o in ("$(BUILD)/Navi33DarwinPspRing.o","$(BUILD)/Navi33DarwinPspFw.o","$(BUILD)/kmod_info.o"))
 rwfn=ring[ring.index("bool write32("):]
 rwfn=rwfn[:rwfn.index("\n}\n")]
 assert "ok=ok || off==a" in rwfn and "uint64_t allowed[5]{}" in ring
@@ -363,7 +372,7 @@ assert "req.attempted=ringMode ? &pspRingAttempted_ : fwMode ? &pspFwAttempted_ 
 assert "req.autoloadGate=!killed && fwMode &&" in load_fn      # psp-off kills autoload too
 assert "bool pspFwAttempted_ = false;" in (root/"src/Navi33Probe.hpp").read_text()
 assert "return executeFw(pci,req);" in writer
-assert "$(BUILD)/Navi33DarwinPspFw.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
+assert all(o in link_line for o in ("$(BUILD)/Navi33DarwinPspFw.o","$(BUILD)/kmod_info.o"))
 fwc=(root/"src/Navi33DarwinPspFw.cpp").read_text()
 fwfn=fwc[fwc.index("bool write32("):]
 fwfn=fwfn[:fwfn.index("\n}\n")]

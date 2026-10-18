@@ -440,3 +440,35 @@ Not done: the MES MQD memory image, the MES API ring (`set_hw_resources`,
 `set_hw_resources_1`, `query_sched_status`, `add_queue`), and the fences for
 them. The API ring lives in GPU memory, so it is blocked on the same GPU VM
 work as before.
+
+## Stage G21: kernel PCI owner probe (kext 0.0.15, code only, not run)
+
+The first piece of the "production PCI/queue owner" that the SDMA Queue1
+proof needs. Approved 2026-10-18 for CI compile only. Nothing was run on the
+card, and no build went onto the stick.
+
+- `src/Navi33PciOwner.h` is a pure decision: Evidence in, Decision out. An
+  Owned decision grants no access (`kCanWriteGpu` and `kCanWriteConfig` are
+  false, with a static_assert). It is tested by `test_pci_owner`: every
+  refusal bit, the kill switch winning over everything, an empty-evidence
+  refusal, and the closed gate being Disabled, not Refused.
+- `src/Navi33DarwinPciOwner.cpp` gathers the evidence: the identity from config
+  reads, one `IOService::open(self)` followed by `close` (an observation that
+  nobody else held the device at that moment), and a one-level child scan for
+  `IOFramebuffer` or `IOAccelerator` (fail closed if the scan cannot run). It
+  logs the decision with IOLog.
+- `Navi33Probe::start()` calls it only with `navi33-owner-probe=1`. The kill
+  switch is `navi33-owner-off`, and `navi33-owner-recovery=1` is the operator's
+  recovery attestation. None of these is on the stick.
+- `tests/test_manifest.py` forbids `configWrite`, `setBusMasterEnable`,
+  `setMemoryEnable`, `mapDeviceMemory`, `RREG32`/`WREG32` and `writeMmio` in
+  the owner file.
+- Checks run: host tests on g++ and clang++ with ASan/UBSan, the manifest, the
+  bootstrap tests (kext version 0.0.15), and a kernel `-fsyntax-only` of
+  `Navi33DarwinPciOwner.cpp` and `Navi33Probe.cpp` against the RDNA4FB
+  MacKernelSDK headers, which pass.
+
+Not done, and not claimed: the real open/close result, whether the child scan
+finds the display stack on this machine, and the display-client detection
+itself. Those are only observable on the card. The IOKit calls are checked by
+the compiler, not by a run. Recovery stays the operator's attestation.

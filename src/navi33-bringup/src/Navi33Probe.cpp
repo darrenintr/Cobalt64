@@ -28,6 +28,7 @@
 #include "Navi33Sdma6Status.h"
 #include "Navi33Sdma6QueueCensus.h"
 #include "Navi33HwProbeLogic.h"
+#include "Navi33DarwinPciOwner.h"
 #include "Navi33MmioPeek.h"
 #include "Navi33Gmc11VramLive.h"
 #include "Navi33VramSurvey.h"
@@ -114,6 +115,14 @@ bool Navi33Probe::start(IOService *provider) {
         (static_cast<uint32_t>(id.baseClass) << 16) |
         (static_cast<uint32_t>(id.subClass) << 8) | id.progIf), 32);
     setProperty("Navi33,SubsystemPair", static_cast<uint64_t>(pci->configRead32(0x2Cu)), 32);
+    // Owner probe: default off, read-only (config reads and one open/close).
+    // Nothing here grants GPU access; see Navi33PciOwner.h.
+    uint32_t ownerOn=0u, ownerOff=0u, recoveryOn=0u;
+    const bool ownerGate=PE_parse_boot_argn("navi33-owner-probe",&ownerOn,sizeof(ownerOn)) && ownerOn==1u;
+    const bool ownerKill=PE_parse_boot_argn("navi33-owner-off",&ownerOff,sizeof(ownerOff)) && ownerOff!=0u;
+    const bool recovery=PE_parse_boot_argn("navi33-owner-recovery",&recoveryOn,sizeof(recoveryOn)) && recoveryOn==1u;
+    if(ownerGate)
+        navi33::darwin_owner::runOwnerProbe(pci,this,true,ownerKill,recovery);
     // Report any explicitly enabled PSP or SMU write stage.
     uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u, smuOn=0u, smuOff=0u;
     const bool pspKilled=PE_parse_boot_argn("navi33-psp-off", &pspOff,
