@@ -1370,6 +1370,17 @@ parser got two of them wrong:
   Host access note: the SSH host key was verified by fingerprint and stored;
   the machine running these reads is the test host itself.
 
+- **2026-10-18 16:58, kext 0.0.15 owner probe in the VM** (run
+  `~/macos tahoe/navi33/runs/20261018-165823`, OpenCore disk
+  `OpenCore-navi33-owner.qcow2`, built with `--owner-probe`, kext UUID
+  `C4A92175-1A3F-393F-B4B0-68E2B0DF3C98` as the builder prints it). The RX 7600
+  passed through (`rombar=0`), PSP/SMU/DMA gates closed, `navi33-owner-probe=1`
+  only (no recovery attestation). Guest kext log: identity ok, exclusive
+  `IOService::open` succeeded and was closed, display child scan found nothing,
+  decision Refused with `NoRecovery` (mask `0x10`), which is the intended
+  outcome without attestation. The guest had no GOP, so the child scan says
+  nothing about bare-metal macOS. Shut down cleanly over SSH; QEMU exited.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
