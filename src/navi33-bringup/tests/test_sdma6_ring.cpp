@@ -36,12 +36,19 @@ int main() {
     assert(!ring.fenceComplete(batch.fence));
     assert(ring.consumedDwords()==7u);
     // Wrap: next packet spans the ring's last 2 DWORDs and first 5.
-    const auto batch2=ring.publish(copies,1u);
-    assert(batch2.code==RingCode::Pass&&batch2.fence==2u);
-    assert(ring.publishedDwords()==21u);
+    // Batch 2 would straddle the ring end at dword 14, so it is padded with
+    // two zero dwords (SDMA NOPs) and starts at dword 16 (ring position 0).
     assert(ring.peek(desc)==RingCode::Pass&&desc.source==c);
     assert(ring.consume()==RingCode::Pass);
-    assert(ring.fenceComplete(batch.fence)&&!ring.fenceComplete(batch2.fence));
+    assert(ring.fenceComplete(batch.fence));
+    const auto batch2=ring.publish(copies,1u);
+    assert(batch2.code==RingCode::Pass&&batch2.fence==2u);
+    assert(ring.publishedDwords()==23u);
+    assert(!ring.fenceComplete(batch2.fence));
+    assert(ring.nextItemDwords()==2u);
+    assert(ring.peek(desc)==RingCode::InvalidPacket);
+    assert(ring.consume()==RingCode::Pass);
+    assert(ring.consumedDwords()==16u);
     assert(ring.peek(desc)==RingCode::Pass&&desc.source==a);
     assert(ring.consume()==RingCode::Pass);
     assert(ring.fenceComplete(batch2.fence)&&ring.inFlightBatches()==0u);

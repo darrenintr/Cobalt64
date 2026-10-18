@@ -106,7 +106,7 @@ for forbidden in ("<IOKit/", "WREG32", "configWrite", "mapDeviceMemory"):
     assert forbidden not in parser, f"IP parser gained {forbidden}"
 for filename in ("Navi33HardwarePlan.h", "Navi33Dcn321.h", "Navi33FirmwareGuard.h", "Navi33Sdma6Packet.h", "Navi33Gmc11Gart.h",
                  "Navi33GpuVaArena.h", "Navi33Sdma6Ring.h", "Navi33DmaScatter.h",
-                 "Navi33DmaBackend.h",
+                 "Navi33DmaBackend.h", "Navi33DmaEngine.h",
                  "Navi33Psp13Status.h", "Navi33Psp13Firmware.h",
                  "Navi33Sdma6Status.h", "Navi33Sdma6Staging.h"):
     code = (root / "src" / filename).read_text()

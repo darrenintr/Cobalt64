@@ -147,6 +147,17 @@ $(BUILD)/test-dma-backend: tests/test_dma_backend.cpp tests/dma_mock_gpu.h src/N
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_dma_backend.cpp -o $@
 
+DMA_ENGINE_DEPS=tests/test_dma_engine.cpp tests/dma_mock_gpu.h src/Navi33DmaEngine.h src/Navi33DmaBackend.h src/Navi33Sdma6MmioQueue.h src/Navi33Sdma6Ring.h src/Navi33Gmc11Gart.h src/Navi33Sdma6Packet.h
+
+$(BUILD)/test-dma-engine: $(DMA_ENGINE_DEPS)
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_dma_engine.cpp -o $@
+
+# Same source, write path compiled in; drives the simulated SDMA6 block.
+$(BUILD)/test-dma-engine-unsafe: $(DMA_ENGINE_DEPS)
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) -DCOBALT_NAVI33_ENABLE_UNSAFE_MMIO tests/test_dma_engine.cpp -o $@
+
 $(BUILD)/test-gfx11-native: tests/test_gfx11_native.cpp src/Navi33NativeABI.h src/Navi33Gfx11Command.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_gfx11_native.cpp -o $@
@@ -341,7 +352,7 @@ $(BUILD)/test-smu13-enable: tests/test_smu13_enable.cpp src/Navi33Smu13Enable.h 
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 
-host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/test-dma-backend $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-sdma6-queue1-config-plan $(BUILD)/test-sdma6-queue1-memory-contract $(BUILD)/test-gfx11-mec-enable $(BUILD)/test-gfx11-kiq-hqd $(BUILD)/test-gfx11-mqd $(BUILD)/test-gfx11-mes $(BUILD)/test-gfx11-mes-mqd $(BUILD)/test-pci-owner $(BUILD)/test-production-owner $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
+host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/test-dma-backend $(BUILD)/test-dma-engine $(BUILD)/test-dma-engine-unsafe $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-sdma6-queue1-config-plan $(BUILD)/test-sdma6-queue1-memory-contract $(BUILD)/test-gfx11-mec-enable $(BUILD)/test-gfx11-kiq-hqd $(BUILD)/test-gfx11-mqd $(BUILD)/test-gfx11-mes $(BUILD)/test-gfx11-mes-mqd $(BUILD)/test-pci-owner $(BUILD)/test-production-owner $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
 	$(BUILD)/test-smu13-enable
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
@@ -352,6 +363,8 @@ host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-disco
 	$(BUILD)/test-sdma6-ring
 	$(BUILD)/test-dma-scatter
 	$(BUILD)/test-dma-backend
+	$(BUILD)/test-dma-engine
+	$(BUILD)/test-dma-engine-unsafe
 	$(BUILD)/test-gfx11-native
 	$(BUILD)/test-gfx11-formats
 	$(BUILD)/test-live-mmio

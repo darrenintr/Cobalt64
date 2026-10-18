@@ -47,11 +47,17 @@ public:
         if(issued_==UINT64_MAX || n>UINT64_MAX/kCopyPacketDwords)
             return {RingCode::Overflow,0u};
         const uint64_t dwords=static_cast<uint64_t>(n)*kCopyPacketDwords;
-        if(published_>UINT64_MAX-dwords)
+        if(published_>UINT64_MAX-dwords-length_)
             return {RingCode::Overflow,0u};
+        // SDMA cannot tell a full ring from an empty one at equal pointers, so
+        // one dword always stays free. A batch never straddles the ring end:
+        // the gap up to the end is filled with zero dwords (SDMA NOPs).
+        const uint64_t pos=published_&(length_-1u);
+        const uint64_t pad=(pos+dwords>length_)?length_-pos:0u;
+        const uint64_t total=pad+dwords;
         if(published_<consumed_ ||
            published_-consumed_>length_ ||
-           dwords>length_-(published_-consumed_))
+           total>=length_-(published_-consumed_))
             return {RingCode::NoSpace,0u};
         for(size_t i=0;i<n;++i)
             if(packets[i].status!=CopyCode::Pass ||
@@ -60,14 +66,16 @@ public:
 
         // Copy every validated packet first; a single pointer assignment
         // publishes the complete batch for this single-threaded simulator.
+        for(uint64_t j=0;j<pad;++j)
+            storage_[(published_+j)&(length_-1u)]=0u;
         for(size_t i=0;i<n;++i) {
             for(size_t j=0;j<kCopyPacketDwords;++j) {
                 const size_t index=static_cast<size_t>(
-                    (published_+i*kCopyPacketDwords+j)&(length_-1u));
+                    (published_+pad+i*kCopyPacketDwords+j)&(length_-1u));
                 storage_[index]=packets[i].words[j];
             }
         }
-        published_+=dwords;
+        published_+=total;
         issued_++;
         pending_[next_]={issued_,published_};
         next_=(next_+1u)%kMaxPendingFences;
@@ -86,11 +94,34 @@ public:
         out=inspectCopy(dwords,kCopyPacketDwords);
         return out.status==CopyCode::Pass?RingCode::Pass:RingCode::InvalidPacket;
     }
+    // Dwords the engine will consume next: a whole copy packet, or the zero
+    // padding up to the ring end. Zero when nothing is published.
+    uint64_t nextItemDwords() const {
+        if(!storage_ || consumed_==published_)return 0u;
+        const uint64_t pos=consumed_&(length_-1u);
+        return storage_[pos]==0u ? length_-pos : kCopyPacketDwords;
+    }
     RingCode consume() {
+        if(consumed_==published_)return RingCode::NoPublishedPacket;
+        const uint64_t pos=consumed_&(length_-1u);
+        if(storage_[pos]==0u) {
+            // Padding to the ring end. Every dword in it must be zero.
+            const uint64_t pad=length_-pos;
+            if(published_-consumed_<pad)return RingCode::InvalidPacket;
+            for(uint64_t j=0;j<pad;++j)
+                if(storage_[(pos+j)&(length_-1u)]!=0u)return RingCode::InvalidPacket;
+            advance(pad);
+            return RingCode::Pass;
+        }
         CopyDescription d{};
         const RingCode status=peek(d);
         if(status!=RingCode::Pass)return status;
-        consumed_+=kCopyPacketDwords;
+        advance(kCopyPacketDwords);
+        return RingCode::Pass;
+    }
+    // Completes every batch whose last dword is now consumed.
+    void advance(uint64_t dwords) {
+        consumed_+=dwords;
         while(pendingCount_>0u) {
             const size_t oldest=(next_+kMaxPendingFences-pendingCount_)%
                                 kMaxPendingFences;
@@ -100,7 +131,6 @@ public:
             pending_[oldest]={0u,0u};
             pendingCount_--;
         }
-        return RingCode::Pass;
     }
     bool fenceComplete(uint64_t sequence) const {
         return storage_ && sequence!=0u && sequence<=completed_;

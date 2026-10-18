@@ -648,3 +648,34 @@ Branch: feature/navi33-dma-backend. Software only; nothing runs on the card.
   PCI/IOMMU owner (on this board macOS has no IOMapper), real VRAM root,
   independent reset, and the Queue1 owner gate. The backend is not wired to
   any kext selector, and `kHardwareSubmissionEnabled` is `false`.
+
+## Stage G27: host-verified SDMA6 copy engine (no hardware run)
+
+- `src/Navi33DmaEngine.h` joins the G26 backend, the software ring and the
+  SDMA6 register path into one engine: `start`, `attach/map/unmap/release`,
+  `copy`, `ringDoorbell` and `pollCompletion`.
+- Register writes need three independent gates: the build defines
+  `COBALT_NAVI33_ENABLE_UNSAFE_MMIO`, `Config::hardwareSubmit` is set and a
+  port is supplied. Production defines none of them. The engine never sets
+  RB_CNTL or RB_BASE; the queue must already be configured and enabled by an
+  owner (`sdma6_mmio::Queue`).
+- The write pointer is ring-relative bytes, written high word then low
+  (WPTR_HI=0, WPTR), the same order as `sdma6_mmio::Queue::submit()`. Upstream
+  `sdma_v6_0.c` uses `wptr << 2` for the same field; the doorbell is not used.
+- Completion comes only from the read pointer. Retire is modular, never claims
+  work beyond what was published (`RetireMismatch`), and stops at whole items.
+  An all-ones read is `ReadFailed`, never "done".
+- Ring change (`Navi33Sdma6Ring.h`): SDMA rejects a packet that crosses the
+  ring end, and the old ring wrapped silently. A batch now pads the gap with
+  zero dwords (SDMA NOPs), and one dword stays free, because equal pointers
+  cannot tell full from empty. `test_sdma6_ring` was updated for the new
+  positions and padding.
+- Host tests: `test_dma_engine` (default build, write path compiled out) and
+  `test_dma_engine-unsafe` (same source, `COBALT_NAVI33_ENABLE_UNSAFE_MMIO`,
+  against a simulated SDMA6 block). The unsafe build runs 120 copies through
+  a 256-dword ring: wraps, padding, retire, fences 1..120. Mutants that remove
+  the runtime gate or the padding abort.
+- Still not verified against silicon: the RPTR/WPTR semantics on wrap, the
+  SDMA NOP encoding on the card, and the hardware fence path (completion here
+  is read-pointer based, not a fence write). None of this runs until the owner
+  and VM gates in G21-G25 are met.
