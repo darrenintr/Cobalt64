@@ -175,6 +175,7 @@ navi33-dma-stage-off=1 navi33-fb-off=1 navi33-psp-off=1 navi33-sdma-off=1`.
   runs one `IOService::open`/`close` on the provider and a framebuffer/accelerator
   child scan, and logs the decision. `navi33-owner-off` kills it,
   `navi33-owner-recovery=1` is the operator's recovery attestation. Config reads only.
+  Kext 0.0.17 also releases a held owner in `systemWillShutdown` and `willTerminate`.
 - Owner hold (kext 0.0.16, default off, never on the stick): `navi33-owner-hold=1`
   keeps `IOService::open` for one production-owner epoch when the decision is Owned,
   and releases it in `stop()`. While held, other clients cannot open the card. Needs

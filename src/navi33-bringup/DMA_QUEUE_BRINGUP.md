@@ -527,3 +527,11 @@ clients, including the display stack, while held. A run needs a fresh CI
 artifact, a VM boot with the hold gate set, and a check that the guest's
 probe and release log lines appear. It is on-card work, so it falls under the
 standing card-run scope, and it must not touch the VBIOS.
+
+**Kext 0.0.17 (release on shutdown, CI only so far).** The 0.0.16 VM run showed
+that macOS shutdown does not reach `stop()`, so the held open was dropped only
+when QEMU exited. 0.0.17 adds `systemWillShutdown()` and `willTerminate()`
+overrides that call the same `releaseHeldOwner()` helper, which is idempotent.
+Both are IOService notifications. `systemWillShutdown` reaches only power-plane
+members, and this kext may not be one, so the VM run decides whether this works.
+A new power-driver registration would be the next step if it does not.

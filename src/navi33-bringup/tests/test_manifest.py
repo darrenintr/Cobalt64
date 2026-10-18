@@ -302,6 +302,8 @@ assert 'PE_parse_boot_argn("navi33-owner-off"' in source
 assert 'PE_parse_boot_argn("navi33-owner-recovery"' in source
 assert 'PE_parse_boot_argn("navi33-owner-hold"' in source
 assert 'releaseOwner(' in source, 'stop() must release a held owner'
+assert 'Navi33Probe::systemWillShutdown' in source, 'shutdown must release a held owner'
+assert 'Navi33Probe::willTerminate' in source, 'termination must release a held owner'
 wfn=writer[writer.index("bool write32("):]
 wfn=wfn[:wfn.index("\n}\n")]
 assert "off!=io->allowed[0] && off!=io->allowed[1]" in wfn

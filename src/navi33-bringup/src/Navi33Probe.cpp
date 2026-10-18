@@ -864,11 +864,25 @@ void Navi33Probe::releaseStageOwner(const void *client,uint64_t epoch) {
     IOLockUnlock(stageOwnerLock_);
 }
 
+void Navi33Probe::releaseHeldOwner(IOService *provider) {
+    if(!pciOwnerTicket_)
+        return;
+    navi33::darwin_owner::releaseOwner(OSDynamicCast(IOPCIDevice, provider),this,pciOwner_,pciOwnerTicket_);
+    setProperty("Navi33,OwnerHeld", static_cast<uint64_t>(0), 8);
+}
+
+void Navi33Probe::systemWillShutdown(IOOptionBits specifier) {
+    releaseHeldOwner(getProvider());
+    super::systemWillShutdown(specifier);
+}
+
+bool Navi33Probe::willTerminate(IOService *provider, IOOptionBits options) {
+    releaseHeldOwner(provider);
+    return super::willTerminate(provider, options);
+}
+
 void Navi33Probe::stop(IOService *provider) {
-    if(pciOwnerTicket_) {
-        navi33::darwin_owner::releaseOwner(OSDynamicCast(IOPCIDevice, provider),this,pciOwner_,pciOwnerTicket_);
-        setProperty("Navi33,OwnerHeld", static_cast<uint64_t>(0), 8);
-    }
+    releaseHeldOwner(provider);
     if(stageOwnerLock_) {
         IOLockLock(stageOwnerLock_);
         stageOwner_.shutdown();

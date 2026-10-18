@@ -18,6 +18,9 @@ public:
     IOService *probe(IOService *provider, SInt32 *score) override;
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
+    // Shutdown and termination paths also release a held PCI owner (G23).
+    void systemWillShutdown(IOOptionBits specifier) override;
+    bool willTerminate(IOService *provider, IOOptionBits options) override;
     void free() override;
     IOReturn newUserClient(task_t owningTask, void *securityID, UInt32 type,
                            OSDictionary *properties, IOUserClient **handler) override;
@@ -54,6 +57,7 @@ public:
     }
 
 private:
+    void releaseHeldOwner(IOService *provider);
     // Written in start() before registerService(), read thereafter.
     uint32_t nativeFlags_ = N33_CAP_PCI_INVENTORY;
     IOLock *stageOwnerLock_ = nullptr;
