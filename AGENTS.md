@@ -718,6 +718,30 @@ parser got two of them wrong:
     user approves, then `RLC_G` and `AUTOLOAD_RLC` (stop 27, needs
     `--psp-autoload` and its own approval). Re-sending records 0-1 is not
     needed: the PSP keeps them until a full power-off.
+- **2026-10-18, kext 0.0.10 in the VM: IP firmware records 2..24 loaded
+  (CP, MES, IMU and the RLC parts except RLC_G).** Run `runs/20261018-113949`
+  (`ipfw-run-2-25-*.txt`, `serial.log`; host reads in
+  `navi33/host/ringregs-before-fw-2-24.txt`, `ringregs-after-fw-2-24.txt`,
+  `gcregs-after-fw-2-24.txt`). The user approved it ("yes, load records 2 to
+  24") with a one-hour standing approval for the routine steps; I read that
+  as covering these 23 records and the steps around them only, **not**
+  `RLC_G` or `AUTOLOAD_RLC`, which keep their own explicit approval.
+  - Setup: OpenCore disk built with `--psp-fw` only (no autoload, no
+    `navi33-psp-off`). The plan for records [2,25) was OK first (state 14,
+    ring flags `0x11`, `C2PMSG_67` `0x50`).
+  - `n33psp --ip-fw 2 25`: state 32, flags `0x6f`, **23 register writes**
+    (`C2PMSG_67` `0x50` -> `0x1c0`, one per record), 60 ms, **response status
+    0 and fence 23**; the PSP gave `0x81_FC91_2F00` for record 24 (inside the
+    TMR). One run per boot, so records 0-1 (earlier run) and 2-24 are now
+    stored; 24 of 26 records are in.
+  - Host reads afterwards: `C2PMSG_67` `0x1c0`, `C2PMSG_64` `0x80020000`, ring
+    registers unchanged, sOS heartbeat counting, DCN scanning. **GC still
+    unchanged** (`IMU_GFX_RESET_CTRL` `0x10`, RLC and SDMA registers 0). The
+    gate was closed again.
+  - **Next (needs the user's yes):** record 25 (`RLC_G`), then
+    `AUTOLOAD_RLC`: `--ip-fw 25 27` in a single run sends both, with
+    `--psp-fw --psp-autoload`; or `--ip-fw 25 26` first to store `RLC_G`
+    alone and `--ip-fw 26 27` for the autoload in a second VM boot.
 
 ## Adding a register read
 
