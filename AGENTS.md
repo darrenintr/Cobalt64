@@ -633,6 +633,27 @@ parser got two of them wrong:
     summary prints 0; the host read shows the real `80020000`.
   - **Next:** `--ring 3`: SETUP_TMR with MC `0x81_FC00_0000` and 19 MiB.
     After it the PSP owns that VRAM region. It needs its own yes.
+- **2026-10-18, kext 0.0.9 in the VM: SETUP_TMR succeeded. The PSP ring
+  stage is complete (ring, LOAD_TOC, TMR).** Run `runs/20261018-110904` (`ring3-*.txt`,
+  `serial.log`; host reads in `navi33/host/ringregs-after-tmr.txt`). The
+  user approved it ("yes, set up the TMR") after the read-only plan.
+  - `n33psp --ring 3` on the resumed ring: state 28, flags `0x6f`, ring
+    flags `0x1d` (resumed, toc-loaded, tmr-set, gate open), **2 register
+    writes** (`C2PMSG_67` 16 -> 32 -> 48: LOAD_TOC repeated, then
+    SETUP_TMR; an earlier message wrongly said 1), 5 ms, response status
+    0, fence 2 (the SETUP_TMR frame).
+  - The TMR is MC `0x81_FC00_0000`, 19,922,944 B (0x1300000), the same
+    place and size as in this card's Linux journal. It was written by the
+    PSP alone; nothing of ours was mapped there.
+  - Host reads afterwards: `C2PMSG_67` `0x30` (three frames consumed),
+    `C2PMSG_64` `0x80020000`, ring registers unchanged, sOS heartbeat
+    counting, DCN scanning at 60 Hz. The gate was closed again.
+  - In all, the PSP is now where Linux's `psp_hw_start()` leaves it for
+    this ASIC (sOS, KM ring, TMR). **Next on the ladder:** loading the other
+    firmware through the ring (`GFX_CMD_ID_LOAD_IP_FW`: RLC, MES, CP, SDMA
+    and the rest) and the SMU/IMU/RLC power-up that follows; each of those
+    is a new write stage that needs the user's approval and its own gate
+    (hard rule 2).
 
 ## Adding a register read
 
@@ -720,7 +741,7 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      Only that 1 MiB sub-range of BAR0 is ever mapped, and every write is
      read back before the command goes out.
    - Left out on purpose: DRAM long training (Linux runs it only when the
-     VBIOS asks), TOC/TMR, the KM ring.
+     VBIOS asks).
    - Recovery if the PSP wedges: a full power-off (a warm restart may
      leave the PSP state in place).
 3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Next.** This
@@ -757,9 +778,8 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      TMR rule: size a non-zero 4 KiB multiple up to 32 MiB, address 1 MiB
      aligned.
    - **Status:** `--ring-plan 3` passed and `--ring 1` (create the KM ring)
-     succeeded in the VM on 2026-10-18, then `--ring 2` (LOAD_TOC) too
-     (findings log). **Next:** `--ring 3` (SETUP_TMR), which needs the
-     user's explicit yes.
+     succeeded in the VM on 2026-10-18, then `--ring 2` (LOAD_TOC) and `--ring
+     3` (SETUP_TMR) too (findings log). The ring stage is complete.
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
    GPU work.
 5. PM4 fence and compute dispatch (stages 16–17).
