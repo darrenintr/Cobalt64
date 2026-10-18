@@ -1427,6 +1427,19 @@ parser got two of them wrong:
   acquired. This matches the 14:47 VM finding that no device mapper exists for this
   PCI device, and it is the intended fail-closed result. Card back on vfio-pci.
 
+- **2026-10-18 19:40, kext 0.0.18 on bare-metal macOS from the stick** (file
+  `navi33/results-20261018-194014-manual.txt` on the stick; `run.sh` manual run).
+  Loaded kext UUID `FEB0F89F-ABD6-3E58-884B-1AA1DAAC7A13` matches the 0.0.18
+  artifact of `eabb849`. Boot-args had `navi33-owner-probe=1`, the PSP, SMU and
+  DMA gates closed. The kernel log shows `IOPCIFamily` `handleClose` for
+  `Navi33Probe` at 19:31:20, so the probe opened and closed the card. **The
+  owner-probe decision line is not in the results file**: `run.sh` captures only
+  the tail of the boot log, so the mapper outcome on bare metal is **not
+  confirmed**. The PSP plan read state 11 (`NO_CONSOLE`), the same as the earlier
+  bare-metal state. PSP at bootloader-ready (`C2PMSG_35` `80000000`), no write.
+  Fix for the next stick run: publish the owner decision as an ioreg property
+  and have `run.sh` print it.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
