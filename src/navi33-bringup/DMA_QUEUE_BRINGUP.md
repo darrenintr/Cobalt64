@@ -599,3 +599,18 @@ rolled past the boot lines before `run.sh` ran. The VM disks set
   swap `navi33-dma-off=1` for `navi33-dma-preflight=1` (the read-only mapper
   check, no GPU DMA), and keep `navi33-owner-probe=1` and every PSP, SMU, SDMA,
   FB and DMA-stage kill switch.
+
+## Stage G25: offline MES KIQ-pipe MQD image
+
+`Navi33GfxMesMqd.h` builds the 2 KiB MQD that `mes_v11_0_mqd_init()` writes for
+the MES KIQ pipe. Values shared with the G20 register writes are copied from
+the G20 plan. The MQD-only fields are computed from upstream: EOP base and
+size (`MES_EOP_SIZE` 2048), `CP_MQD_CONTROL` default with VMID 0, IB control,
+IQ timer and quantum defaults. Field indices are the v11_compute_mqd ones
+checked for G19, plus `cp_hqd_iq_timer` at dword 150.
+
+Differences from the legacy KIQ image (G19) are pinned by the test: quantum
+0 (legacy `0x111`), the MES pq-control word `0xd8308009` (NO_UPDATE_RPTR,
+RPTR_BLOCK_SIZE 0), and `CP_MQD_CONTROL` `0x100` in memory although the MES
+register write uses a literal 0. A mutant giving MES the legacy quantum fails
+`test_gfx11_mes_mqd`. No I/O; not hardware evidence.
