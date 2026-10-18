@@ -854,6 +854,17 @@ parser got two of them wrong:
     the amdgpu debugfs firmware/pm info, then power off again. That gives the
     exact target values to compare with. A warm restart is not enough: our sOS
     and ring are still in the PSP, which amdgpu does not expect.
+  - **Procedure for the reference boot** (so a fresh session can run it): 1) the
+    user does a FULL power-off and boots normal Ubuntu; 2) check `lspci -k -s
+    09:00.0` shows `amdgpu`; 3) `sudo python3 -I
+    src/navi33-bringup/tools/ref-dump.py` (read-only, saves
+    `~/macos tahoe/navi33/host/reference-*.txt`; it turns the driver's GFXOFF
+    switch off while reading the graphics registers and restores it, because
+    those reads can hang the machine in GFXOFF); 4) compare with
+    `runs/20261018-115241/results-20261018-115324-guest.txt`; 5) the user does
+    another FULL power-off before any of our own experiments, since amdgpu
+    leaves its own sOS in the PSP. The password for `sudo` is the user's own;
+    ask if it is not in the conversation.
 
 ## Adding a register read
 
