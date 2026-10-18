@@ -27,6 +27,13 @@ constexpr bool kCanClaimHardware=false;
 static_assert(!kCanWriteGpu && !kCanWriteConfig && !kCanClaimHardware,
               "production owner state machine must not touch the card");
 
+// The DMA domain is the IOMapper that IOMapper::copyMapperForDevice() returns
+// for the card. It is the IOMMU unit's domain, which can be shared with other
+// devices behind the same unit. It is zero when no mapper exists.
+inline uint64_t domainFromMapper(bool mapperPresent,uint64_t mapperRegistryId) {
+    return mapperPresent ? mapperRegistryId : 0u;
+}
+
 // The supported identity, from Navi33Identity.h and the RX 7600 facts.
 constexpr uint16_t kVendorAmd=0x1002u;
 constexpr uint16_t kDeviceNavi33=0x7480u;

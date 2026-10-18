@@ -112,6 +112,17 @@ static void queueClaimNeedsLiveOwner() {
     assert(!o.claimSdma0Queue1(t));            // poisoned owner cannot claim
 }
 
+static void domainComesFromTheMapperOnly() {
+    // No mapper means no domain, whatever id the caller holds.
+    assert(po::domainFromMapper(false,0x77u)==0u);
+    assert(po::domainFromMapper(true,0x77u)==0x77u);
+    // A zero registry id is refused by the owner, not silently accepted.
+    po::Owner o;
+    po::Attestation a=good();
+    a.dmaDomainId=po::domainFromMapper(true,0u);
+    assert(!o.acquire(a) && (o.lastRefusal()&po::MissingProvider));
+}
+
 static void deviceOwnerFeedsTheMemoryContract() {
     po::Owner o;
     po::Ticket t=o.acquire(good());
@@ -132,5 +143,6 @@ int main() {
     queueClaimIsExclusivePerEpoch();
     queueClaimNeedsLiveOwner();
     deviceOwnerFeedsTheMemoryContract();
+    domainComesFromTheMapperOnly();
     puts("Navi33 production PCI/queue owner state machine: PASS (offline)");
 }

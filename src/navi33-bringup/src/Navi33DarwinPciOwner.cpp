@@ -4,6 +4,7 @@
 #include "Navi33Identity.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IORegistryEntry.h>
+#include <IOKit/IOMapper.h>
 #include <libkern/c++/OSIterator.h>
 #include <libkern/c++/OSObject.h>
 
@@ -26,11 +27,24 @@ static bool displayClientAttached(IOPCIDevice *pci) {
     return found;
 }
 
+// The card's DMA domain: the IOMapper for this device, identified by its
+// registry entry. Absent when macOS has no mapper for the device (the VM).
+static bool dmaMapperFor(IOPCIDevice *pci,uint64_t *domainOut) {
+    IOMapper *mapper=IOMapper::copyMapperForDevice(pci);
+    if(!mapper) {
+        *domainOut=0u;
+        return false;
+    }
+    *domainOut=production_owner::domainFromMapper(true,mapper->getRegistryEntryID());
+    mapper->release();
+    return true;
+}
+
 // Gathers Evidence. keepOpen leaves IOService::open in place on success, so
 // the caller owns the close.
 static pci_owner::Evidence gather(IOPCIDevice *pci,IOService *self,bool gateOn,
                                   bool killOn,bool recoveryAttested,bool keepOpen,
-                                  navi33::Identity *idOut) {
+                                  navi33::Identity *idOut,uint64_t *domainOut) {
     pci_owner::Evidence e{};
     e.gateOn=gateOn;
     e.killOn=killOn;
@@ -46,6 +60,7 @@ static pci_owner::Evidence gather(IOPCIDevice *pci,IOService *self,bool gateOn,
         e.openSucceeded=pci->open(self);
         if(e.openSucceeded && !keepOpen) pci->close(self);
         e.displayClientAttached=displayClientAttached(pci);
+        e.dmaMapperPresent=dmaMapperFor(pci,domainOut);
     }
     return e;
 }
@@ -53,7 +68,8 @@ static pci_owner::Evidence gather(IOPCIDevice *pci,IOService *self,bool gateOn,
 pci_owner::Decision runOwnerProbe(IOPCIDevice *pci,IOService *self,
                                   bool gateOn,bool killOn,
                                   bool recoveryAttested) {
-    const pci_owner::Evidence e=gather(pci,self,gateOn,killOn,recoveryAttested,false,nullptr);
+    uint64_t domain=0u;
+    const pci_owner::Evidence e=gather(pci,self,gateOn,killOn,recoveryAttested,false,nullptr,&domain);
     const pci_owner::Decision d=pci_owner::decide(e);
     IOLog("Navi33Probe: owner probe gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x\n",
           int(e.gateOn), int(e.killOn), int(e.identityOk), int(e.openSucceeded),
@@ -65,7 +81,8 @@ pci_owner::Decision runOwnerProbe(IOPCIDevice *pci,IOService *self,
 bool holdOwner(IOPCIDevice *pci,IOService *self,bool killOn,bool recoveryAttested,
                production_owner::Owner &owner,production_owner::Ticket &ticket) {
     navi33::Identity id{};
-    const pci_owner::Evidence e=gather(pci,self,true,killOn,recoveryAttested,true,&id);
+    uint64_t domain=0u;
+    const pci_owner::Evidence e=gather(pci,self,true,killOn,recoveryAttested,true,&id,&domain);
     const pci_owner::Decision d=pci_owner::decide(e);
     IOLog("Navi33Probe: owner hold gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x\n",
           int(e.gateOn), int(e.killOn), int(e.identityOk), int(e.openSucceeded),
@@ -75,12 +92,12 @@ bool holdOwner(IOPCIDevice *pci,IOService *self,bool killOn,bool recoveryAtteste
         if(e.openSucceeded && pci) pci->close(self);
         return false;
     }
-    // providerId: the kernel's registry identity for the card. dmaDomainId is
-    // the probe's own registry identity; it is not yet an IODMACommand domain.
+    // providerId: the kernel's registry identity for the card. dmaDomainId: the
+    // IOMapper for this device (the IOMMU unit's domain, possibly shared).
     production_owner::Attestation a{};
     a.pciDecision=d;
     a.providerId=pci->getRegistryEntryID();
-    a.dmaDomainId=self->getRegistryEntryID();
+    a.dmaDomainId=domain;
     a.vendorId=id.vendorId;
     a.deviceId=id.deviceId;
     a.revisionId=id.revisionId;

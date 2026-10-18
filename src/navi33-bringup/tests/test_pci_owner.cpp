@@ -12,6 +12,7 @@ static po::Evidence good() {
     e.openSucceeded=true;
     e.displayClientAttached=false;
     e.recoveryAttested=true;
+    e.dmaMapperPresent=true;
     return e;
 }
 
@@ -39,6 +40,9 @@ static void everyFailureRefusesWithItsBit() {
 
     e=good(); e.recoveryAttested=false;
     assert(po::decide(e).refusalMask==po::NoRecovery);
+
+    e=good(); e.dmaMapperPresent=false;
+    assert(po::decide(e).refusalMask==po::NoDmaMapper);
 }
 
 static void killSwitchWinsOverEverything() {
@@ -60,7 +64,7 @@ static void emptyEvidenceRefusesWithGateOpen() {
     e.gateOn=true;
     const po::Decision d=po::decide(e);
     assert(d.code==po::Code::Refused);
-    assert(d.refusalMask==(po::WrongDevice|po::OpenFailed|po::NoRecovery));
+    assert(d.refusalMask==(po::WrongDevice|po::OpenFailed|po::NoRecovery|po::NoDmaMapper));
 }
 
 static void ownedNeverGrantsWrites() {

@@ -548,3 +548,25 @@ but not clean.
 power-off. Registering as a power driver is not being done for now. A restart
 has not been tested, so the hold must not be relied on across a reboot until it
 is.
+
+## Stage G24: real DMA domain for the owner (kext 0.0.18, CI only so far)
+
+The owner's `dmaDomainId` was the probe's own registry ID, which is not an
+IODMACommand domain. 0.0.18 takes the domain from
+`IOMapper::copyMapperForDevice()` for the card: the mapper's registry entry ID,
+the same mapper the staging code already uses (`Navi33DarwinStage.cpp`).
+
+- `pci_owner::Evidence.dmaMapperPresent` and the `NoDmaMapper` refusal:
+  without a mapper the probe is Refused, because there is no DMA domain to own.
+- `production_owner::domainFromMapper()`: zero when no mapper exists, and the
+  owner refuses a zero domain (`MissingProvider`).
+- The mapper is shared by every device behind the same IOMMU unit, so the
+  domain identifies that unit, not the card alone. The memory contract needs the
+  staging memory mapped through this domain, which is why it is the right id.
+- Checks run: host suites on g++ and clang++ with sanitizers, the bootstrap
+  tests, and a mutation that removes the `NoDmaMapper` refusal (the test fails).
+  The kernel `-fsyntax-only` passes for the owner file and `Navi33Probe.cpp`.
+
+**Expected in the VM:** the 14:47 VM run found no device mapper for this PCI
+device (`NoDeviceMapper`). So the probe should now refuse with `NoDmaMapper`, not
+report Owned. That is the correct fail-closed result, not a regression. Not run yet.

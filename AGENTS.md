@@ -175,6 +175,9 @@ navi33-dma-stage-off=1 navi33-fb-off=1 navi33-psp-off=1 navi33-sdma-off=1`.
   runs one `IOService::open`/`close` on the provider and a framebuffer/accelerator
   child scan, and logs the decision. `navi33-owner-off` kills it,
   `navi33-owner-recovery=1` is the operator's recovery attestation. Config reads only.
+  Kext 0.0.18: the owner's DMA domain is the card's IOMapper (`NoDmaMapper`
+  refusal when none exists). The VM has no mapper for this device, so an
+  attested probe there should now refuse, not report Owned.
   Kext 0.0.17 also tries to release a held owner in `systemWillShutdown` and
   `willTerminate`, but macOS shutdown does not reach either (VM run 2026-10-18 18:08).
   **Accepted limitation:** a held open lasts until power-off. Restart is not yet tested.

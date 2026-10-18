@@ -21,6 +21,7 @@ enum Refusal : uint32_t {
     OpenFailed     = 1u<<2,  // IOService::open refused: someone else holds it
     DisplayClient  = 1u<<3,  // a framebuffer or accelerator child is attached
     NoRecovery     = 1u<<4,  // operator did not attest recovery (navi33-owner-recovery)
+    NoDmaMapper    = 1u<<5,  // no IOMapper for this device: no DMA domain to own
 };
 
 // Filled by the kext. Every field is an observation, not a claim: the open
@@ -32,6 +33,7 @@ struct Evidence {
     bool identityOk=false;           // inspectPci() and isSupported() passed
     bool openSucceeded=false;        // IOService::open(self) returned true
     bool displayClientAttached=false;// IOFramebuffer/IOAccelerator child found
+    bool dmaMapperPresent=false;     // IOMapper::copyMapperForDevice() returned one
     bool recoveryAttested=false;     // navi33-owner-recovery=1
 };
 
@@ -55,6 +57,7 @@ inline Decision decide(const Evidence &e) {
     if(!e.openSucceeded) refused|=OpenFailed;
     if(e.displayClientAttached) refused|=DisplayClient;
     if(!e.recoveryAttested) refused|=NoRecovery;
+    if(!e.dmaMapperPresent) refused|=NoDmaMapper;
     d.refusalMask=refused;
     d.code=refused ? Code::Refused : Code::Owned;
     return d;
