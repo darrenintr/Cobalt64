@@ -114,8 +114,8 @@ bool Navi33Probe::start(IOService *provider) {
         (static_cast<uint32_t>(id.baseClass) << 16) |
         (static_cast<uint32_t>(id.subClass) << 8) | id.progIf), 32);
     setProperty("Navi33,SubsystemPair", static_cast<uint64_t>(pci->configRead32(0x2Cu)), 32);
-    // 1 only when this boot may run the PSP13 sOS load; nothing else writes.
-    uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u;
+    // Report any explicitly enabled PSP or SMU write stage.
+    uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u, smuOn=0u, smuOff=0u;
     const bool pspKilled=PE_parse_boot_argn("navi33-psp-off", &pspOff,
                                             sizeof(pspOff)) && pspOff!=0u;
     const bool pspWrites=!pspKilled &&
@@ -125,7 +125,10 @@ bool Navi33Probe::start(IOService *provider) {
                              sizeof(pspRingOn)) && pspRingOn==1u) ||
          (PE_parse_boot_argn("navi33-psp-fw", &pspFwOn,
                              sizeof(pspFwOn)) && pspFwOn==1u));
-    setProperty("Navi33,GpuWritesEnabled", static_cast<uint64_t>(pspWrites), 32);
+    const bool smuWrites=!pspKilled &&
+        !(PE_parse_boot_argn("navi33-smu-off",&smuOff,sizeof(smuOff)) && smuOff!=0u) &&
+        PE_parse_boot_argn("navi33-smu-enable",&smuOn,sizeof(smuOn)) && smuOn==1u;
+    setProperty("Navi33,GpuWritesEnabled", static_cast<uint64_t>(pspWrites || smuWrites), 32);
     setProperty("Navi33,FirmwareLoadingImplemented",
                 "PSP13 sOS bootloader, KM ring (TOC, TMR) and IP firmware records only");
     setProperty("Navi33,GpuQueuesImplemented", static_cast<uint64_t>(0), 8);
@@ -643,7 +646,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     uint32_t startAt) {
     n33_psp_load_result result{};
     result.abi_version=N33_ABI_VERSION;result.size=sizeof(result);
-    uint32_t enabled=0u,off=0u,load=0u,ring=0u,fwOn=0u,autoOn=0u,pspOff=0u;
+    uint32_t enabled=0u,off=0u,load=0u,ring=0u,fwOn=0u,autoOn=0u,pspOff=0u,smuOn=0u,smuOff=0u;
     const bool allowed=PE_parse_boot_argn("navi33-hw-probe",
                                          &enabled,sizeof(enabled)) && enabled==1u;
     const bool stopped=PE_parse_boot_argn("navi33-hw-off",
@@ -662,6 +665,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     req.fw=fwBytes;req.fwBytes=fwLength;
     const bool ringMode=mode==N33_PSP_LOAD_RING_PLAN || mode==N33_PSP_LOAD_RING_RUN;
     const bool fwMode=mode==N33_PSP_LOAD_FW_PLAN || mode==N33_PSP_LOAD_FW_RUN;
+    const bool smuMode=mode==N33_SMU_ENABLE_PLAN || mode==N33_SMU_ENABLE_RUN;
+    const bool smuKilled=PE_parse_boot_argn("navi33-smu-off",&smuOff,sizeof(smuOff)) && smuOff!=0u;
     const bool killed=PE_parse_boot_argn("navi33-psp-off",&pspOff,
                                          sizeof(pspOff)) && pspOff!=0u;
     // Each write stage has its own boot-arg; navi33-psp-off kills all of them.
@@ -670,6 +675,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
         fwMode ?
         (PE_parse_boot_argn("navi33-psp-fw",&fwOn,sizeof(fwOn)) && fwOn==1u) :
         (PE_parse_boot_argn("navi33-psp-load",&load,sizeof(load)) && load==1u));
+    if(smuMode)req.writeGate=!killed && !smuKilled &&
+        PE_parse_boot_argn("navi33-smu-enable",&smuOn,sizeof(smuOn)) && smuOn==1u;
     // AUTOLOAD_RLC powers up the graphics engine: a second, separate boot-arg.
     req.autoloadGate=!killed && fwMode &&
         PE_parse_boot_argn("navi33-psp-autoload",&autoOn,sizeof(autoOn)) && autoOn==1u;
@@ -691,6 +698,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     IOLockLock(pspLock_);
     req.attempted=ringMode ? &pspRingAttempted_ : fwMode ? &pspFwAttempted_ :
                              &pspLoadAttempted_;
+    if(smuMode)req.attempted=&smuAttempted_;
     result=navi33::darwin_psp::execute(pci,req);
     IOLockUnlock(pspLock_);
     char raw[320];
@@ -707,7 +715,16 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
              result.ring_mc,result.tmr_mc,result.tmr_bytes,result.toc_bytes,
              result.cmd_status,result.fence_seen,result.ring_flags,
              result.fw_last_record,result.fw_record_count,result.fw_tmr_addr);
-    setProperty(mode==N33_PSP_LOAD_RUN ? "Navi33,LastPspLoad" :
+    if(smuMode)snprintf(raw,sizeof(raw),
+        "mode %u state %u mask %08x:%08x steps %u writes %u replies %x/%x/%x "
+        "core %x->%x reset %x->%x RLC %x->%x",mode,result.state,
+        result.smu_mask_high,result.smu_mask_low,result.steps_done,result.register_writes,
+        result.smu_responses[0],result.smu_responses[1],result.smu_responses[2],
+        result.smu_core_before,result.smu_core_after,result.smu_reset_before,
+        result.smu_reset_after,result.smu_rlc_before,result.smu_rlc_after);
+    setProperty(mode==N33_SMU_ENABLE_RUN ? "Navi33,LastSmuEnable" :
+                mode==N33_SMU_ENABLE_PLAN ? "Navi33,LastSmuPlan" :
+                mode==N33_PSP_LOAD_RUN ? "Navi33,LastPspLoad" :
                 mode==N33_PSP_LOAD_RING_RUN ? "Navi33,LastPspRing" :
                 mode==N33_PSP_LOAD_RING_PLAN ? "Navi33,LastPspRingPlan" :
                 mode==N33_PSP_LOAD_FW_RUN ? "Navi33,LastPspFw" :

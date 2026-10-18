@@ -32,4 +32,5 @@ n33_psp_load_result execute(IOPCIDevice *pci,const Request &req);
 n33_psp_load_result executeRing(IOPCIDevice *pci,const Request &req);
 // IP firmware stage (modes FW_PLAN / FW_RUN), Navi33DarwinPspFw.cpp.
 n33_psp_load_result executeFw(IOPCIDevice *pci,const Request &req);
+n33_psp_load_result executeSmu(IOPCIDevice *pci,const Request &req);
 } } // namespace navi33::darwin_psp

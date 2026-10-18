@@ -11,8 +11,8 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
   through RADV. Its staged bring-up ladder is the template for every
   other GPU (see "Road to compute").
 - `src/navi33-bringup`: RX 7600 (Navi 33, RDNA3, gfx1102) bring-up. A
-  **separate** kext (`Navi33Probe`), read-only except for one gated write
-  stage (the PSP sOS load), with its own user-client ABI ("N33N"). No
+  **separate** kext (`Navi33Probe`), read-only except for the gated PSP
+  stages and the opt-in SMU enable experiment, with its own user-client ABI ("N33N"). No
   shared Navi48 sources. Never reuse RDNA4 constants (GC12, PSP14, DCN4);
   Navi33 is GC 11.0.2, PSP 13.0.7, DCN 3.2.1.
 - `src/dcn321`, `src/dcn41`: display-engine helpers per generation.
@@ -25,7 +25,7 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
 
 ## Navi33 hard rules
 
-1. **The kext is read-only except three gated PSP stages.**
+1. **The kext is read-only except three gated PSP stages and the SMU experiment.**
    - The sOS load (approved and run 2026-10-18) may write only
      `C2PMSG_35`/`C2PMSG_36` and its 1 MiB `fw_pri` window in VRAM. It
      needs `navi33-psp-load=1`, is killed by `navi33-psp-off`, and runs at
@@ -47,6 +47,14 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      unless `navi33-psp-autoload=1` is also set, and needs its own approval.
      The user approved writing the code on 2026-10-18; every real run needs a
      separate explicit yes (rule 2).
+   - The SMU enable experiment (kext 0.0.12, ABI 13; **not approved to run**)
+     may write only MP1 `C2PMSG_66/82/90`, with the fixed high-mask,
+     low-mask, EnableAllSmuFeatures sequence. It needs `navi33-smu-enable=1`,
+     is killed by either `navi33-smu-off` or `navi33-psp-off`, and consumes
+     its own one-shot latch before the first write. No VRAM/table writes.
+     Design/build and read-only planning approved on 2026-10-18; the real
+     SMU run needs a separate explicit yes. See
+     `src/navi33-bringup/SMU_ENABLE_DESIGN.md` for prerequisites and limits.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -971,6 +979,19 @@ parser got two of them wrong:
     preceded by the pptable/driver-table messages. This is a **new write stage**
     (SMU mailbox, and DPM features on the only display GPU): needs a design, host
     tests, its own boot-arg and gate, and the user's explicit approval (rule 2).
+
+- **2026-10-18, SMU stage implementation decision (no hardware run):** user
+  approved completing Claude's SMU design/build and read-only plan. Kext
+  0.0.12 / ABI 13 adds `n33psp --smu-plan` / `--smu-enable`, a fixed
+  three-message experiment, with independent gating/latch and a three-register
+  allowlist. Corrected the proposed order from upstream: HIGH (5), LOW (4),
+  ENABLE (6). Source-derived Linux default mask: `0x0001a3a471fe7fff`;
+  this is not a measurement of the reference boot's allowed mask. Plan
+  checks the recorded stalled IMU hardware signature (survives VM restarts),
+  not a provider-local history flag. Linux's earlier tables/calibration are
+  deliberately absent: acknowledgement alone does not prove GC boot.
+  The real SMU write remains unapproved. Full power-off required after
+  any SMU attempt and before retry; never take the GPU from live amdgpu.
 
 ## Adding a register read
 

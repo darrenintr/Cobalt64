@@ -60,5 +60,6 @@ private:
     IOLock *pspLock_ = nullptr; // serializes PSP plans and the one load
     bool pspLoadAttempted_ = false; // set before the first write; never reset
     bool pspRingAttempted_ = false; // same for the ring stage
+    bool smuAttempted_ = false;
     bool pspFwAttempted_ = false;   // same for the IP firmware stage
 };

@@ -145,6 +145,8 @@ jobs:
           { "$usb/navi33/n33psp" || true; } 2>&1 | grep -q -- '--ring N'
           nm "src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe" | grep -q 'darwin_psp.*executeFw'
           { "$usb/navi33/n33psp" || true; } 2>&1 | grep -q -- '--ip-fw START STOP'
+          nm "src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe" | grep -q 'darwin_psp.*executeSmu'
+          { "$usb/navi33/n33psp" || true; } 2>&1 | grep -q -- '--smu-plan'
           find "$usb" -type f | sort
       - name: Preserve OPENCORE stick layout as a CI artifact
         uses: actions/upload-artifact@v4

@@ -412,3 +412,25 @@ for unattended in ("usb/run.sh", "usb/navi33-autorun.sh", "tools/n33autorun.c"):
     assert "--ip-fw" not in code, f"{unattended} must never run the firmware stage"
     assert "N33_PSP_LOAD_FW_RUN" not in code
 print("Navi33 device IOMMU staging and GPU submission boundaries: static checks passed")
+# SMU stage: separate opt-in, independent latch, narrow register allowlist.
+smu=(root/'src/Navi33DarwinSmu.cpp').read_text()
+smuh=(root/'src/Navi33Smu13Enable.h').read_text()
+assert 'if(smuMode)req.attempted=&smuAttempted_;' in load_fn
+assert 'req.writeGate=!killed && !smuKilled &&' in load_fn
+assert 'PE_parse_boot_argn("navi33-smu-enable"' in load_fn
+assert 'PE_parse_boot_argn("navi33-smu-off"' in load_fn
+assert 'bool smuAttempted_ = false;' in (root/'src/Navi33Probe.hpp').read_text()
+assert 'return executeSmu(pci,req);' in writer
+assert 'off!=io->regs.msg && off!=io->regs.arg && off!=io->regs.resp' in smu
+assert 'run ? write32 : nullptr' in smu  # the plan has no write callback
+assert 'smu13::execute(io.regs,hw,run,req.writeGate,*req.attempted)' in smu
+assert 'Navi33DarwinSmu.o' in makefile
+for forbidden in ('BaseAddress0','withSubRange','->configWrite','setMemoryEnable',
+                  'setBusMasterEnable','setPowerState','WREG32(','vramWrite','vramZero'):
+    assert forbidden not in smu, f'SMU stage gained {forbidden}'
+for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory'):
+    assert forbidden not in smuh
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert '--smu-enable' not in code and 'N33_SMU_ENABLE_RUN' not in code
+print('Navi33 SMU mailbox allowlist, independent gate and plan boundary: passed')

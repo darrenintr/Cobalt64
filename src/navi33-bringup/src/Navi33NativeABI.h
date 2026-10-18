@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 12u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record */
+#define N33_ABI_VERSION 13u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -208,6 +208,9 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
  * others. FW_PLAN reads only; FW_RUN needs navi33-psp-fw=1. */
 #define N33_PSP_LOAD_FW_PLAN 5u
 #define N33_PSP_LOAD_FW_RUN 6u
+#define N33_SMU_ENABLE_PLAN 7u
+#define N33_SMU_ENABLE_RUN 8u
+#define N33_SMU_MARKER 0x534d5531u
 #define N33_PSP_FW_RECORDS 27u
 #define N33_PSP_FW_STOP_AUTOLOAD 28u
 #define N33_PSP_LOAD_MAX_INPUT (4u*1024u*1024u)
@@ -229,7 +232,10 @@ enum n33_psp_load_state {
   N33_PSPL_RING_DONE=28,
   /* IP firmware stage */
   N33_PSPL_RING_MISSING=29, N33_PSPL_FW_BAD_IMAGES=30,
-  N33_PSPL_AUTOLOAD_DISABLED=31, N33_PSPL_FW_DONE=32
+  N33_PSPL_AUTOLOAD_DISABLED=31, N33_PSPL_FW_DONE=32,
+  N33_PSPL_SMU_NOT_READY=33, N33_PSPL_SMU_BAD_PRECONDITION=34,
+  N33_PSPL_SMU_WRITE_FAILED=35, N33_PSPL_SMU_TIMEOUT=36,
+  N33_PSPL_SMU_REJECTED=37, N33_PSPL_SMU_ACKED=38, N33_PSPL_SMU_GC_READY=39
 };
 /* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
 enum n33_psp_load_step {
@@ -269,9 +275,15 @@ struct n33_psp_load_result {
   uint64_t ring_mc, cmd_mc, fence_mc, tmr_mc;
   uint32_t tmr_bytes, toc_bytes, c2pmsg64_last, c2pmsg67_last;
   uint32_t cmd_status, fence_seen, ring_flags, reserved3;
+  /* SMU experiment: never aliases PSP fields. Zero for the other modes. */
+  uint32_t smu_marker, smu_mask_low, smu_mask_high;
+  uint32_t smu_message_before, smu_argument_before, smu_response_before;
+  uint32_t smu_scratch0, smu_scratch1, smu_core_before, smu_reset_before, smu_rlc_before;
+  uint32_t smu_core_after, smu_reset_after, smu_rlc_after;
+  uint32_t smu_last_message, smu_last_argument, smu_responses[3], smu_reserved;
 };
-N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==256,
-                  "N33 PSP load result must be 256 bytes");
+N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==336,
+                  "N33 PSP load result must be 336 bytes");
 #define N33_PSPR_FLAG_RESUMED (1u<<0) /* ring already existed, not recreated */
 #define N33_PSPR_FLAG_RING_CREATED (1u<<1)
 #define N33_PSPR_FLAG_TOC_LOADED (1u<<2)
