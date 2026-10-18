@@ -880,6 +880,18 @@ parser got two of them wrong:
   `RLC_RLCS_BOOTLOAD_STATUS` bit 31 and `IMU_GFX_RESET_CTRL` 0x1f.
   Open risk: the SMU is already running the VBIOS' copy; re-loading may change
   clocks or briefly disturb the display.
+- **2026-10-18 12:2x, kext 0.0.11 (ABI 12) in the VM: sOS and ring redone on
+  the freshly power-cycled card, SMU plans OK.** The user approved ("yes, redo
+  sOS and ring") the repeats of stages already proven.
+  - sOS load: state 20, 8 writes, sOS `00330024`, heartbeat counting.
+  - `--ring 3` from a fresh ring (create, LOAD_TOC, SETUP_TMR in one run): state
+    28, flags `0x6f`, ring flags `0x1e`, 6 register writes, status 0, fence 2,
+    TOC 2304 B, TMR 19,922,944 B; host: `C2PMSG_67` `0x20`, `C2PMSG_64`
+    `0x80020000`, ring `0x0f100000`/`0x80`/`0x1000`.
+  - With all gates closed: `--ip-fw-plan 26 27` (SMU), `0 26` and `27 28`
+    (autoload) all state 14, ring found and resumed. Nothing else written.
+  - **Next, needs its own yes:** `--ip-fw 26 27` (the SMU image alone,
+    261,632 B, 1 register write), then `0 26`, then autoload `27 28`.
 
 ## Adding a register read
 
