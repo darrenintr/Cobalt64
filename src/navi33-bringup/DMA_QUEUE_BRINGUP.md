@@ -614,3 +614,37 @@ Differences from the legacy KIQ image (G19) are pinned by the test: quantum
 RPTR_BLOCK_SIZE 0), and `CP_MQD_CONTROL` `0x100` in memory although the MES
 register write uses a literal 0. A mutant giving MES the legacy quantum fails
 `test_gfx11_mes_mqd`. No I/O; not hardware evidence.
+
+## Stage G26: host-verified DMA buffer backend (no hardware)
+
+Branch: feature/navi33-dma-backend. Software only; nothing runs on the card.
+
+- `src/Navi33DmaBackend.h` connects page lists to the existing pieces: it
+  attaches pinned bus pages, installs GMC11 system PTEs into a shadow
+  aperture (`gmc11::mapSystemPages`), turns a buffer copy into an SDMA6
+  COPY packet with GPU VAs (`sdma6::makeCopy`), and publishes it through
+  the software `sdma6::Ring`, recording the fence on both buffers.
+- Address validation: alignment, the 48-bit PTE range, zero pages,
+  duplicates within a buffer and aliasing with any live or quarantined
+  buffer. Refused operations leave no slot behind.
+- Ownership: handles carry the owner epoch and a slot generation, so stale
+  handles from another epoch or a released slot are refused.
+- Synchronization: a buffer is busy while its last fence is above the
+  completion horizon. Unmap and release are refused while busy.
+- Faults: `quarantine()` freezes a buffer. Its pages and PTEs stay reserved,
+  and it can never be unmapped, released or aliased again.
+- Unmapped DMA is a separate mode, `Translation::PhysicalUnverified`. The
+  absence of an IOMMU does not by itself make the GPU unable to reach
+  CPU-physical pages. Reachability is unproven, though, so this mode is
+  refused unless `allowPhysicalUnverified` is set, and GART installation
+  needs `gpuGateOpen`. Production code sets neither.
+- `tests/dma_mock_gpu.h` is a mock SDMA engine. It translates every byte
+  through the shadow GART table and faults before consuming the packet. The
+  mock models transactions only; it is not silicon evidence.
+- `tests/test_dma_backend.cpp` passes under GCC and Clang with
+  `-Werror -pedantic`, under ASan/UBSan, and in `make host-test`. Mutants
+  that drop the in-flight check or the destination fence record abort.
+- Still blocked for hardware, unchanged from G12-G25: a production
+  PCI/IOMMU owner (on this board macOS has no IOMapper), real VRAM root,
+  independent reset, and the Queue1 owner gate. The backend is not wired to
+  any kext selector, and `kHardwareSubmissionEnabled` is `false`.
