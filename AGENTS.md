@@ -992,6 +992,13 @@ parser got two of them wrong:
   deliberately absent: acknowledgement alone does not prove GC boot.
   The real SMU write remains unapproved. Full power-off required after
   any SMU attempt and before retry; never take the GPU from live amdgpu.
+  - Build verified: CI run `39098725048`, commit `7fc020b`, all host and both
+    macOS jobs passed. The macos-26-intel artifact is cached in
+    `~/macos tahoe/navi33/cache/artifact-0.0.12`; kext UUID
+    `95481710-1E06-3B93-AA71-93878A2B209F`, version 0.0.12 / ABI 13.
+    Not installed or booted. The real read-only `--smu-plan` is pending
+    the VFIO/headless boot; this desktop boot currently owns the card with
+    amdgpu. No SMU write has been performed or approved.
 
 ## Adding a register read
 
