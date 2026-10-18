@@ -30,23 +30,24 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      `C2PMSG_35`/`C2PMSG_36` and its 1 MiB `fw_pri` window in VRAM. It
      needs `navi33-psp-load=1`, is killed by `navi33-psp-off`, and runs at
      most once per boot.
-   - The ring stage (code since kext 0.0.9; **not yet approved to run**)
+   - The ring stage (code since kext 0.0.9; approved and run in the VM on
+     2026-10-18 as part of the SCPM sequence)
      may write only `C2PMSG_64/67/69/70/71` and a 2 MiB window in VRAM.
      It needs `navi33-psp-ring=1`, is killed by `navi33-psp-off`, and runs
-     at most once per boot. The user approved writing it and running its
-     read-only plan on 2026-10-18; its first real run needs a separate
-     explicit yes (rule 2).
-   - The IP firmware stage (code since kext 0.0.10, ABI 11; **not yet
-     approved to run**) may write only `C2PMSG_67` (the ring write pointer)
+     at most once per boot. Its first real run was separately approved as
+     part of the SCPM sequence and succeeded on 2026-10-18.
+   - The IP firmware stage (code since kext 0.0.10, ABI 11; approved and
+     run in the VM on 2026-10-18 as part of the SCPM sequence) may write
+     only `C2PMSG_67` (the ring write pointer)
      and two zones of an 8 MiB window in VRAM (ring pages, staging area). It
      needs `navi33-psp-fw=1`, is killed by `navi33-psp-off`, and runs at most
      once per boot. It sends `LOAD_IP_FW` for records of the 27-record list
      (record 26 is the SMU image, added in kext 0.0.11 at the user's choice
      on 2026-10-18; Linux sends it first, so it goes alone as range 26..27
      before the others). `AUTOLOAD_RLC` (stop value 28) is refused
-     unless `navi33-psp-autoload=1` is also set, and needs its own approval.
-     The user approved writing the code on 2026-10-18; every real run needs a
-     separate explicit yes (rule 2).
+     unless `navi33-psp-autoload=1` is also set. The SCPM sequence approval
+     explicitly covered and ran AUTOLOAD_RLC on 2026-10-18. Further real
+     runs require separate approval (rule 2).
    - The SMU enable experiment (kext 0.0.12, ABI 13; **one approved attempt
      executed 2026-10-18 at 13:14, rejected HIGH with FD; no retry approved**)
      may write only MP1 `C2PMSG_66/82/90`, with the fixed high-mask,
@@ -57,7 +58,8 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      subsequently approved recreating the PSP sequence and one SMU attempt.
      Later attempts need renewed approval and a full power-off. See
      `src/navi33-bringup/SMU_ENABLE_DESIGN.md` for prerequisites and limits.
-   - The SCPM enable-only experiment (kext 0.0.13, ABI 14) was explicitly
+   - The SCPM enable-only experiment (kext 0.0.13, ABI 14; one approved
+     attempt executed 2026-10-18 at 13:44 and accepted, state 39) was explicitly
      approved by the user on 2026-10-18 after the stable Linux SCPM capture.
      Approval covers building the new mode, recreating sOS/ring/TMR/SMU-first
      IP firmware/AUTOLOAD_RLC in the VM after full power-off, and one
@@ -66,8 +68,11 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      no VRAM/table/ROM writes in the SMU stage. Requires both
      `navi33-smu-enable=1` and `navi33-smu-scpm=1`; either SMU/PSP kill switch
      stops it. The SCPM gate closes the legacy mask-sequence gate. Both SMU
-     modes share the same one-shot latch. This approval is pending execution;
-     further attempts require renewed approval and full power-off.
+     modes share the same one-shot latch. The command returned OK, set
+     `IMU_GFX_RESET_CTRL` to `0x1f` and `RLC_BOOTLOAD_STATUS` to `0xc000001f`.
+     This approval is consumed; further attempts require renewed approval
+     and full power-off. The follow-up preflight still reports reason 11
+     (GPU memory/queue ownership not established), and Metal remains disabled.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -83,6 +88,12 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
    Mac, and a full power-off to reset the PSP). Ask first; never assume.
    The PSP sOS load was approved on 2026-10-18 with SSH as the recovery
    path. That approval covers that stage only.
+   - The user approved one bounded GMC11 VMID1 + SDMA6 Queue1 COPY/FENCE
+     proof attempt on 2026-10-18, with SSH and full power-off recovery.
+     It has not run and does not authorize unrelated writes. It remains
+     gated on a production PCI/queue owner, a real owned VRAM page-table
+     root and readback, independent recovery, a read-only plan, and a fresh
+     CI kext artifact. Synthetic ownership flags are not hardware evidence.
 3. **Every register offset comes from upstream Linux amdgpu headers**
    for the exact IP version, never from memory. See "Adding a register
    read".
@@ -181,23 +192,30 @@ output survives a hang and Linux can inspect a stuck guest.
   `ovmf/OVMF_VARS.fd`, `boot.sh` and `boot-reims-vgpu.sh` (their separate
   reims-vgpu project). Ours live in `~/macos tahoe/navi33/`.
 - **Scripts** (in `src/navi33-bringup/vm/`):
-  - `make-opencore.sh ARTIFACT_DIR [--oc RELEASE_DIR] [--psp-load]`
-    builds `navi33/OpenCore-navi33.qcow2` from the VM's OpenCore disk
+  - `make-opencore.sh ARTIFACT_DIR [--oc RELEASE_DIR] [--hostfb FILE]
+    [--dma-preflight] [--output FILE.qcow2] [write-stage options]`
+    builds `navi33/OpenCore-navi33.qcow2` by default from the VM's OpenCore disk
     plus the artifact's kext, and writes `OpenCore-navi33.txt` (kext UUID,
     OpenCore version, boot-args). It sets `-v debug=0x108 serial=3`, the
     same `navi33-*` flags as the stick, and `navi33-psp-off=1` unless
     `--psp-load` is given. It also sends OpenCore's log to serial.
     `--hostfb /var/lib/cobalt64-navi33/hostfb.txt` adds the host console
     boot-args (kext 0.0.8+) and records that boot's ID in the manifest.
+    `--dma-preflight` removes `navi33-dma-off=1` and adds
+    `navi33-dma-preflight=1`; this one-shot IODMACommand mapper check maps
+    and unmaps system RAM and issues no GPU DMA. `--output` writes a separate
+    `.qcow2` filename under `navi33/` for an isolated diagnostic boot disk.
     **Always pass `--oc`** with an unpacked OpenCorePkg release (1.0.8 in
     use). The VM's own OpenCore 1.0.4 cannot inject kexts on macOS 26.
-  - `run-vm.sh [--no-gpu] [--snapshot] [--check]` boots the VM. Each run
+  - `run-vm.sh [--no-gpu] [--snapshot] [--intel-iommu] [--check]` boots the VM. Each run
     gets `navi33/runs/<stamp>/` (with `runs/latest` pointing at it):
     `serial.log`, `qemu.log`, `cmdline.txt`, `qmp.sock` and `hmp.sock`.
     gdb attaches on 127.0.0.1:1234. A guest reboot stops the VM.
     It hides the card's ROM (`rombar=0`) unless `ROMBAR=1`: the guest's
     AMD GOP switches DCN off. It refuses an OpenCore disk whose hostfb
-    record is from another boot.
+    record is from another boot. `--intel-iommu` exposes QEMU's virtual
+    Intel VT-d with VFIO caching mode for read-only `IODMACommand` mapper
+    experiments; it does not itself submit GPU DMA.
   - `guest-run.sh ARTIFACT_DIR` copies the tools and the pinned firmware
     to the guest's `~/navi33`, runs `run.sh` there, and copies the results
     file into the run directory.
@@ -1130,12 +1148,12 @@ parser got two of them wrong:
   adds `--smu-scpm-plan` and `--smu-scpm-enable` (new modes 9/10). The latter
   sends only message 6, argument 0, using the same allowlist, lock, shared
   SMU latch, stop-on-error behavior and one-second read-only GC observation.
-  The Linux host is currently on amdgpu (boot `a8a50688...`); sudo requires
-  interactive authentication. Do not detach it from amdgpu. Build and stage
+  At approval time the Linux host was on amdgpu (boot `a8a50688...`); sudo
+  required interactive authentication. Do not detach it from amdgpu. Build and stage
   first, then arrange a full power-off and fresh headless VFIO boot with
   hostfb from that boot. Approval is not yet consumed.
 
-- **2026-10-18, kext 0.0.13 / ABI 14 built and staged, no hardware run yet.**
+- **2026-10-18 13:36, kext 0.0.13 / ABI 14 built and staged.**
   Source commit `8ebbb72` on `feature/navi33-scpm-enable-only`; GitHub Actions
   run `39100866159` passed host tests and both macOS builds. The macOS 26
   artifact is cached at `~/macos tahoe/navi33/cache/artifact-0.0.13` (paired
@@ -1149,15 +1167,144 @@ parser got two of them wrong:
     extracted kext file matches the artifact. Previous disk and manifest are
     in `navi33/backups/pre-0.0.13/`. User VM files and the USB stick were not
     changed.
-  - Host remains on amdgpu at `192.168.100.24`; SSH socket is active and the
-    card-preparation service is enabled. Host sudo requires interactive
-    authentication. The user must run `sudo grub-reboot cobalt64-navi33-vm`
+  - At staging time the host remained on amdgpu at `192.168.100.24`; SSH
+    was active and the card-preparation service enabled. Host sudo required
+    interactive authentication. The user ran `sudo grub-reboot cobalt64-navi33-vm`
     followed by `sudo poweroff`, then switch the PC on. This provides a full
     power-off and a one-time headless VFIO boot. Do not use the warm-reboot
     helper for this attempt. After that boot, rebuild our OpenCore disk with
     its new `/var/lib/cobalt64-navi33/hostfb.txt`, verify UUID/plan and execute
-    the already approved stages one gate at a time. The one SCPM enable-only
-    attempt remains approved and unconsumed. No GPU write has occurred.
+    the already approved stages one gate at a time. At this point the SCPM
+    attempt remained approved and unconsumed; no GPU write had occurred.
+
+- **2026-10-18 13:39–13:45, kext 0.0.13 / ABI 14 physical VM sequence.**
+  The user confirmed a full reboot. Headless host boot ID and hostfb record:
+  `0c611479-fc04-4009-a9bc-e7eae92b70df`; RX 7600 remained on `vfio-pci`,
+  BAR0 256 MiB, guest SSH recovered, and QEMU could not reset the card.
+  OpenCore 1.0.8 loaded UUID `EB123CF7-DBF5-3860-9CB7-87B6C597B58A`.
+  - `runs/20261018-133917/sos-load.txt`: PLAN_OK, sOS alive, four parts,
+    eight register writes, 25 ms; heartbeat `0x0b855224`, version `0x00330024`.
+  - `runs/20261018-134026/ring-run.txt`: ring, TOC and TMR succeeded,
+    six register writes, fence 2; TMR 19,922,944 B.
+  - `runs/20261018-134128/ipfw-smu-first-run.txt`: SMU image (record 26)
+    loaded first, one command/write, fence 1. `runs/20261018-134223/ipfw-rest-run.txt`:
+    the other 26 records including RLC_G loaded, 26 commands/writes, fence 26.
+  - `runs/20261018-134316/autoload-run.txt`: AUTOLOAD_RLC-only plan and run
+    succeeded, response 0, fence 1. `--smu-scpm-plan` then passed with core 2,
+    reset `0x10`, RLC 0, response 1, and IMU scratch `0x0b214700/0xbabeface`.
+  - `runs/20261018-134419/smu-scpm-enable-run.txt`: the single approved
+    EnableAllSmuFeatures command (message 6, argument 0) returned OK. Exactly
+    three MP1 writes, 32 ms, state 39; reset changed `0x10` → `0x1f`, and
+    `RLC_BOOTLOAD_STATUS` changed 0 → `0xc000001f`. No mask messages, VRAM,
+    table or ROM writes in the SMU stage.
+  - Combined read-only diagnostics in
+    `runs/20261018-134419/results-20261018-134504-guest.txt` show live GC/SDMA
+    registers, `SDMA0_ID=0x00000001/0x00000600`, and MMHUB/GFXHUB context 0
+    `0x01fffe00`. The preflight is now reason 11 (GPU memory/queue ownership
+    not established); N33N still reports hardware command submission and Metal
+    disabled. No SDMA copy, shader, or Metal frame ran.
+  - The guest was shut down and `OpenCore-navi33.qcow2` rebuilt with both
+    `navi33-psp-off=1` and `navi33-smu-off=1`; the VM remains off. The host
+    is still on the same headless VFIO boot. The one SCPM attempt is consumed.
+    Any new GPU write stage needs its own
+    explicit approval and recovery plan; another SMU attempt also needs a
+    full power-off.
+
+- **2026-10-18 13:57–13:58, read-only repeat after the SCPM sequence.** The
+  VM booted kext 0.0.13 / ABI 14 (UUID
+  `EB123CF7-DBF5-3860-9CB7-87B6C597B58A`) with both PSP and SMU kill
+  switches set. Results:
+  `~/macos tahoe/navi33/runs/20261018-135743/results-20261018-135823-guest.txt`.
+  The sOS is still alive (`C2PMSG_81=0x0b88b410`, version `0x00330024`);
+  `n33psp --plan` reports state 8 and made zero writes. SDMA6 is observable
+  (`SDMA0_ID=1/0x600`, checksum `0x7a75a926`), but Queue0 and Queue1 both
+  have zero RPTR/WPTR and are not running a Cobalt64 job. MMHUB/GFXHUB
+  context 0 remains `0x01fffe00`; preflight remains reason 11. The N33N
+  client reports hardware submission and Metal disabled, and the VM
+  diagnostic submitted no copy or shader. This confirms the state persisted
+  after the prior firmware/SMU sequence; it does not establish queue
+  ownership or a usable GPU page table. QEMU was shut down after collection;
+  no GPU write occurred in this run.
+
+- **2026-10-18 14:00, Metal frame acceptance gate on the RX 7600 VM.** With
+  kext 0.0.13 / ABI 14 and both PSP/SMU kill switches set, the macOS
+  `metal_frame_proof` program compiled and ran as root. It exited 2 at the
+  N33N capability check with `caps 0x00000001`; required HW_VM, HW_GFX and
+  METAL bits are absent. The test stopped before Metal device enumeration,
+  shader compilation or GPU submission, as designed. QEMU was then stopped.
+  Full output: `~/macos tahoe/navi33/runs/20261018-140039/metal-frame-proof.txt`.
+
+- **2026-10-18 14:09–14:10, Metal SDK and device enumeration plus combined
+  read-only diagnostics.** A fresh GPU VM boot (run
+  `~/macos tahoe/navi33/runs/20261018-140937/`) used kext 0.0.13 / ABI 14,
+  the same N33N caps `0x00000001`, and both PSP/SMU kill switches. The new
+  macOS SDK check passed (`RGBA8=70`, `BGRA8=80`). The new
+  `metal_frame_proof --enumerate-only` mode found **0 Metal devices**; it
+  created no queue or command buffer. Normal `metal_frame_proof` still exited
+  2 at the caps gate. The same boot's combined diagnostic
+  (`results-20261018-141036-guest.txt`) reports reason 11, sOS alive,
+  Queue0/Queue1 pointers zero, and both MMHUB/GFXHUB Context0 at
+  `0x01fffe00`; no SDMA copy, shader, Metal command or GPU write occurred.
+  QEMU was shut down after collection. Tool and outputs:
+  `metal-format-sdk-check.txt`, `metal-device-census.txt`, and
+  `metal-frame-gate.txt` in that run directory.
+
+- **2026-10-18 14:36–14:37, read-only IOKit accelerator census** (run
+  `~/macos tahoe/navi33/runs/20261018-143634/`). The VM again used kext
+  0.0.13 / ABI 14, the RX7600 via VFIO with `rombar=0`, and both PSP/SMU
+  kill switches. `metal_frame_proof --enumerate-only` reported N33N caps
+  `0x00000001`, **zero `IOAccelerator` services**, and **zero Metal devices**.
+  The normal proof exited 2 at the same capability gate, before queue,
+  pipeline, texture or command-buffer creation. The same boot's full
+  diagnostic again reported reason 11, live PSP sOS version `0x00330024`,
+  SDMA6 observable with Queue0/Queue1 pointers zero, and both MMHUB/GFXHUB
+  Context0 at `0x01fffe00`; all GPU-write counters remained zero. No GPU
+  command or register write ran. QEMU logged that VFIO could not reset the
+  card, and the guest was shut down cleanly. Evidence:
+  `metal-ioaccel-census.txt`, `metal-frame-gate.txt` (inside the guest), and
+  `results-20261018-143717-guest.txt` in the run directory.
+
+- **2026-10-18 14:47–14:48, read-only DMA-mapper and Metal repeat** (run
+  `~/macos tahoe/navi33/runs/20261018-144711/`). Built a separate
+  `OpenCore-navi33-dma-preflight.qcow2` with `navi33-dma-preflight=1`, while
+  PSP/SMU/GPU-write and DMA-stage kill switches stayed enabled. The one-shot
+  `IODMACommand` preflight returned status 2 (`NoDeviceMapper`), with zero
+  segments and pages: macOS has no `IOMapper` for this PCI device in the
+  current VM, so the existing device-IOMMU path cannot provide a GPU DMA
+  address. This does not rule out a host VFIO mapping; it means this
+  guest-side adapter did not obtain one. The macOS SDK format check passed
+  (`RGBA8=70`, `BGRA8=80`), while the root-run frame census again found zero
+  `IOAccelerator` services and zero Metal devices. `metal_frame_proof`
+  exited 2 at caps `0x00000001`; diagnostics remained at reason 11, disabled
+  MMHUB/GFXHUB Context0 `0x01fffe00`, and idle Queue0/Queue1. No GPU DMA,
+  register write, command, shader or frame was submitted. VFIO could not
+  reset the card; the guest shut down cleanly over SSH. Evidence:
+  `results-20261018-144752-guest.txt`, `metal-ioaccel-census.txt`, and
+  `metal-frame-gate.txt` in the run directory.
+
+- **2026-10-18 14:53–14:57, RX7600 passthrough with guest Intel VT-d**
+  (run `~/macos tahoe/navi33/runs/20261018-145308/`). This used
+  `run-vm.sh --intel-iommu` with the DMA-preflight OpenCore disk. It did not
+  use `--no-gpu`: QEMU passed through `0000:09:00.0` as `vfio-pci` with
+  `rombar=0`; the ROM BAR alone was hidden. PSP/SMU and DMA-stage gates
+  remained closed. macOS saw QEMU's ACPI DMAR table, but the serial log said
+  `AppleVTD is not yet installed as gSystem`; kext 0.0.13 returned status 2
+  (`NoDeviceMapper`), zero segments/pages. The read-only diagnostic still
+  reported reason 11, Context0 `0x01fffe00`, and idle SDMA Queue0/Queue1.
+  The Metal SDK enum check passed; root-run enumeration found zero
+  `IOAccelerator` services and zero Metal devices, while the frame proof
+  exited 2 at caps `0x00000001` before creating a queue or submitting work.
+  No GPU DMA or GPU register write occurred; the guest shut down cleanly
+  over SSH. Evidence: `results-20261018-145339-guest.txt` and
+  `serial.log` in the run directory.
+
+- **Working tree after the 14:53 result:** kext 0.0.14 adds an opt-in
+  no-mapper check that pins a 64-KiB physically contiguous descriptor with
+  `kIOMemoryMapperNone`, validates CPU-physical page addresses, and builds
+  only a temporary CPU shadow PTE image. The result is `PhysicalAddressOnly`;
+  it is not GPU-DMA reachability evidence and does not satisfy the Queue1
+  write gate's owned-VRAM-root prerequisite. macOS CI compilation and a new
+  read-only VM run are still required before trusting even that candidate.
 
 ## Adding a register read
 
@@ -1248,22 +1395,25 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      VBIOS asks).
    - Recovery if the PSP wedges: a full power-off (a warm restart may
      leave the PSP state in place).
-3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Progress: all 26
-   firmware records and `AUTOLOAD_RLC` were sent on 2026-10-18 and the IMU
-   firmware is running; the driver-side IMU start is next (findings log).**
+3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Progress: all 27
+   firmware records were sent with the SMU first, `AUTOLOAD_RLC` succeeded,
+   and the SCPM EnableAllSmuFeatures command set RLC boot complete on
+   2026-10-18. GC registers now answer, but preflight is reason 11
+   (GPU memory/queue ownership not established), and Metal remains disabled.**
    Earlier note: **design
    written** (`src/navi33-bringup/FIRMWARE_LOAD_DESIGN.md`, 2026-10-18, no
    code on the card until 0.0.10): 26 `LOAD_IP_FW` records (SDMA, RS64 CP, MES, IMU, RLC)
    then `AUTOLOAD_RLC`, **SMU image left out by the user's decision**;
    `tools/fwplan.py` computes the records from the real firmware files and
    `tests/fixtures/rx7600-fw-plan.{json,tsv}` is the golden list.
-   **Built 2026-10-18 (kext 0.0.10, N33N ABI 11), not yet run on the card:**
+   **Built 2026-10-18 (kext 0.0.10, N33N ABI 11), then physically run with
+   kext 0.0.13 / ABI 14 on 2026-10-18:**
    pure parser `src/Navi33Psp13IpFw.h` (tests `test_psp13_ipfw`, which
    compares the real files with the golden list record for record),
    planner and runner `src/Navi33Psp13FwLoad.h` (tests `test_psp13_fwload`,
    fake PSP, seven mutants caught), writer `src/Navi33DarwinPspFw.cpp`.
    Modes `N33_PSP_LOAD_FW_PLAN` (5) / `FW_RUN` (6): records `[start_at,
-   stop_after)`, stop 27 adds `AUTOLOAD_RLC`; tool `n33psp --ip-fw-plan
+   stop_after)`, stop 28 adds `AUTOLOAD_RLC`; tool `n33psp --ip-fw-plan
    START STOP --rom .. --fwdir DIR` and `--ip-fw START STOP .. --i-have-ssh`;
    `vm/make-opencore.sh --psp-fw [--psp-autoload]`; `vm/guest-run.sh` now
    copies the eight decompressed files to the guest's `~/navi33/fw`.
@@ -1271,12 +1421,14 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
    slot per record in list order at +4 MiB (2.42 MiB used). The plan needs
    our ring to exist (otherwise `RING_MISSING`), the exact pinned files
    (otherwise `FW_BAD_IMAGES`), and the same console/aperture proof as the
-   other stages. This
-   needs its own approval and its own boot-arg (hard rule 2). The KM ring
+   other stages. This stage ran under the SCPM-sequence approval on
+   2026-10-18; further runs need separate approval and its own boot-arg
+   (hard rule 2). The KM ring
    (`C2PMSG_64` is already `0x80000000`) and TMR come first, as in
    upstream `psp_hw_start`.
-   - **Built 2026-10-18 (kext 0.0.9, N33N ABI 10), not yet run on the
-     card.** Pure protocol, planner and runner: `src/Navi33Psp13Ring.h`
+   - **Built 2026-10-18 (kext 0.0.9, N33N ABI 10); ring/TMR run succeeded
+     in the VM with kext 0.0.13 / ABI 14 on 2026-10-18.** Pure protocol,
+     planner and runner: `src/Navi33Psp13Ring.h`
      (tests `test_psp13_ring.cpp` and `test_psp13_ring_run.cpp`, a fake
      PSP with failure paths and mutation checks). Writer:
      `src/Navi33DarwinPspRing.cpp`. Modes `N33_PSP_LOAD_RING_PLAN` (3) and

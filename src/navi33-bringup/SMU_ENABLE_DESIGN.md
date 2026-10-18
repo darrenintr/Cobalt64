@@ -1,9 +1,10 @@
 # Navi33 SMU feature-enable experiments (kext 0.0.13, ABI 14)
 
 The user approved one SCPM enable-only attempt on 2026-10-18 after the
-stable Linux runtime-database capture. This approval covers preparing and
-building the new mode, a full power-off, recreation of the PSP firmware
-sequence in the VM, and one EnableAllSmuFeatures command. Execution is pending.
+stable Linux runtime-database capture. That approval covered preparing and
+building the new mode, a full power-off, recreating the PSP firmware sequence
+in the VM, and one EnableAllSmuFeatures command. The command was accepted in
+state 39 on 2026-10-18 at 13:44; that approval is consumed.
 The earlier fixed-mask attempt (kext 0.0.12 / ABI 13) rejected HIGH with FD;
 that approval is consumed.
 
@@ -200,3 +201,27 @@ tests under Clang ASan/UBSan, and all 31 bootstrap tests passed locally. Tests
 check the exact three-write trace (message 6, argument 0), error stops, shared
 latch across modes, zero-write plans and mutually exclusive boot gates.
 The macOS kext/tools build is performed by GitHub Actions.
+
+## SCPM hardware result (2026-10-18)
+
+After a full power-off, kext 0.0.13 / ABI 14 recreated the sOS, KM ring/TMR,
+SMU firmware first, remaining IP firmware records and `AUTOLOAD_RLC`. Plans
+passed before each stage. The post-autoload SCPM plan saw the expected stalled
+state: response 1, IMU scratch `0x0b214700/0xbabeface`, core 2, reset `0x10`,
+RLC 0.
+
+`~/macos tahoe/navi33/runs/20261018-134419/smu-scpm-enable-run.txt` records
+the one approved attempt. Message 6, argument 0 returned response 1 after
+exactly three MP1 register writes and 32 ms. State 39 observed reset `0x1f`
+and `RLC_BOOTLOAD_STATUS=0xc000001f`; no HIGH/LOW mask message, VRAM or table
+write occurred. The GPU stayed responsive over guest SSH.
+
+The combined read-only run at
+`~/macos tahoe/navi33/runs/20261018-134419/results-20261018-134504-guest.txt`
+shows GC/SDMA registers answering, but `n33compute --rom` now reports reason
+11: GPU memory/queue ownership is not established. N33N still advertises no
+hardware command submission and no Metal. No SDMA copy, shader or rendered
+frame was attempted. The guest was shut down and both SMU/PSP kill switches
+were restored in the isolated OpenCore image. Further GPU write stages need
+their own explicit approval and recovery plan; another SMU attempt also needs
+a full power-off.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Boot the Tahoe VM for Navi33 work and keep everything it prints.
-#   vm/run-vm.sh [--no-gpu] [--snapshot] [--check]
+#   vm/run-vm.sh [--no-gpu] [--snapshot] [--intel-iommu] [--check]
 # Default: the real RX 7600 through VFIO (09:00.0, plus 09:00.1 when it is
 # also on vfio-pci), no emulated display and its ROM hidden (rombar=0), so the
 # scanout the PC firmware set up survives and the PSP plan can check it
@@ -8,8 +8,10 @@
 # headless boot (vm/reboot-to-vm.sh).
 #   --no-gpu    emulated QXL display on VNC 127.0.0.1:5901, no RX 7600; for
 #               testing the VM itself from a normal desktop boot
-#   --snapshot  throw away the guest disk's writes on exit
-#   --check     print the QEMU command line and stop
+#   --snapshot      throw away the guest disk's writes on exit
+#   --intel-iommu   expose a virtual Intel VT-d IOMMU to the guest; intended
+#                   for the read-only DMA mapper preflight
+#   --check         print the QEMU command line and stop
 # Every run gets $VM_DIR/navi33/runs/<stamp>/ (runs/latest points at it):
 # serial.log (kernel console, kprintf, panics), qemu.log, cmdline.txt and the
 # qmp.sock/hmp.sock monitors. gdb attaches on 127.0.0.1:1234 and the guest's
@@ -23,10 +25,11 @@ GPU="${GPU:-0000:09:00.0}"; GPU_AUDIO="${GPU_AUDIO:-0000:09:00.1}"
 # touched (hard rule 5, AGENTS.md), and the guest's AMD GOP switched DCN off.
 VFIO_OPTS="${VFIO_OPTS:-}"    # extra vfio-pci options for 09:00.0, e.g. ,x-vga=on
 RAM="${RAM:-8G}"; SSH_PORT="${SSH_PORT:-2222}"; GDB_PORT="${GDB_PORT:-1234}"
-USE_GPU=1; SNAPSHOT=0; CHECK=0
+USE_GPU=1; SNAPSHOT=0; INTEL_IOMMU=0; CHECK=0
 for a in "$@"; do
   case "$a" in
-    --no-gpu) USE_GPU=0 ;; --snapshot) SNAPSHOT=1 ;; --check) CHECK=1 ;;
+    --no-gpu) USE_GPU=0 ;; --snapshot) SNAPSHOT=1 ;;
+    --intel-iommu) INTEL_IOMMU=1 ;; --check) CHECK=1 ;;
     -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option $a (try --help)" >&2; exit 1 ;;
   esac
@@ -87,6 +90,14 @@ if [ "$USE_GPU" = 1 ]; then
 else
   GPU_ARGS=(-device qxl-vga,vgamem_mb=128,vram_size_mb=128 -display none -vnc 127.0.0.1:1)
 fi
+IOMMU_ARGS=()
+if [ "$INTEL_IOMMU" = 1 ]; then
+  [ "$USE_GPU" = 1 ] || die "--intel-iommu is for a passed-through PCI device; omit --no-gpu"
+  # QEMU documents caching-mode as required for VFIO passthrough with a
+  # guest VT-d. Interrupt remapping is disabled to avoid irqchip changes;
+  # this diagnostic only checks whether macOS can create an IODMA mapper.
+  IOMMU_ARGS=(-device intel-iommu,caching-mode=on,intremap=off,aw-bits=48)
+fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"; RUN="$N/runs/$STAMP"
 HDD_OPT="id=MacHDD,if=none,format=qcow2,file=$HDD"
@@ -94,7 +105,7 @@ HDD_OPT="id=MacHDD,if=none,format=qcow2,file=$HDD"
 ARGS=(
   -name navi33-tahoe,debug-threads=on -pidfile "$RUN/qemu.pid"
   -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off
-  -enable-kvm -m "$RAM" -machine q35
+  -enable-kvm -m "$RAM" -machine q35 "${IOMMU_ARGS[@]}"
   # Same CPU and SMBIOS shape as the VM's own boot.sh, so the guest is the one installed.
   -cpu Haswell-noTSX,kvm=on,vendor=GenuineIntel,+invtsc,vmware-cpuid-freq=on,+ssse3,+sse4.2,+popcnt,+avx,+aes,+xsave,+xsaveopt,check
   -smp threads=2,cores=4,sockets=1

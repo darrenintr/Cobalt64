@@ -3,8 +3,9 @@
 **Status:** The macOS source now contains a real, compiler-verified
 `IODMACommand`-backed staging session and isolated physical BAR0/BAR5
 adapters. **This is NOT a functional RX7600 SDMA6/GFX11/Metal driver.**
-No register write, hardware COPY or GPU fence has been submitted on a
-physical Navi33 by Cobalt64.
+Approved PSP and SMU initialization writes have been performed on the
+physical card, including PSP ring fences and the SMU SCPM enable command.
+No SDMA copy, GFX command, shader or GPU-rendered frame has been submitted.
 
 ## Physical-resource path now present
 
@@ -40,6 +41,15 @@ physical Navi33 by Cobalt64.
    compiled to object files on Intel macOS CI with
    `make physical-io-check`, **never linked, loaded, or installed**.
    Linux GCC/Clang and sanitizer runs test the DMA lifetime policy.
+
+The working tree's Kext 0.0.14 adds an opt-in, read-only no-mapper path to
+`Navi33DarwinDma`: allocate and pin 64 KiB of physically contiguous system
+RAM with `kIOMemoryMapperNone`, validate its CPU-physical pages and build a
+temporary shadow GMC11 PTE image. The report is explicitly
+`PhysicalAddressOnly`; it does not claim that PCIe or the RX 7600 can reach
+those addresses. It performs no BAR mapping, VRAM write, MMIO write, or GPU
+DMA. This path has passed the portable PTE planner regression but has not
+yet been compiled by macOS CI or run in the VM.
 
 ## Register addresses checked against a physical RX 7600
 
@@ -157,8 +167,8 @@ The plan refuses unless all of these hold:
    must also lie inside VRAM.
 
 A second write stage, the PSP KM ring (kext 0.0.9, N33N ABI 10), follows
-this one; see "PSP13 KM ring stage" below. It is built and host-tested but
-has not been run on the card.
+this one; see "PSP13 KM ring stage" below. It was run in the VM on
+2026-10-18 as part of the approved SCPM sequence.
 
 RUN maps only the 1 MiB `fw_pri` sub-range of BAR0, uncached. It then
 follows `psp_v13_0.c` step by step:
@@ -185,6 +195,49 @@ for exactly that reason. Only volatile GPU memory and registers are
 written; the VBIOS flash is never touched.
 
 ## Actual hardware compute remains BLOCKED
+
+Latest physical result (2026-10-18): the approved SCPM EnableAllSmuFeatures
+command returned OK, and read-only snapshots show
+`IMU_GFX_RESET_CTRL=0x1f` and `RLC_BOOTLOAD_STATUS=0xc000001f`. The follow-up
+preflight reports reason 11, **GPU memory/queue ownership not established**;
+N33N continues to advertise hardware command submission and Metal as disabled.
+Evidence is in `~/macos tahoe/navi33/runs/20261018-134419/` and `AGENTS.md`.
+
+The 2026-10-18 13:57 read-only repeat confirms the sOS and SDMA6 remain
+observable, but MMHUB/GFXHUB context 0 is still `0x01fffe00`, Queue0/Queue1
+RPTR/WPTR are zero, and preflight remains reason 11. At 14:00 the macOS
+`metal_frame_proof` program compiled, then exited at the capability gate with
+`caps 0x00000001`; it did not enumerate a Metal device or submit GPU work.
+The complete result and exact run paths are recorded in `AGENTS.md`.
+
+In a fresh 14:09–14:10 read-only VM boot, the macOS SDK enum check passed for
+RGBA8/BGRA8 (`70`/`80`), but `metal_frame_proof --enumerate-only` found zero
+Metal devices. The standard proof still stopped at caps `0x00000001`. The
+combined diagnostics again showed reason 11, inactive Context0 page tables in
+both hubs (`0x01fffe00`), and idle Queue0/Queue1 pointers; it submitted no GPU
+commands. The VM was shut down after collection; see the exact files in
+`AGENTS.md`.
+
+In the 14:36–14:37 read-only passthrough run, the expanded macOS census found
+zero `IOAccelerator` services and zero Metal devices. The frame proof again
+stopped at the capability gate before creating a command queue or submitting
+anything. The combined hardware read again showed reason 11, live PSP sOS,
+idle SDMA Queue0/Queue1, and disabled MMHUB/GFXHUB Context0. QEMU could not
+reset the VFIO device, and the VM shut down cleanly. This pins an immediate
+OS discovery blocker in addition to the missing GPU VM and render queue. Full
+outputs are listed in `AGENTS.md`.
+
+In the 14:47–14:48 read-only VM run, the opt-in macOS `IODMACommand`
+preflight returned `NoDeviceMapper` (status 2), zero segments and zero pages.
+The current guest cannot obtain a device-associated IOMMU mapper for the
+RX7600, so this existing path cannot supply GPU DMA addresses. This does not
+rule out a host VFIO IOVA mapping; it records only that the guest-side IOKit
+mapper path failed. The macOS format enum check still passed RGBA8/BGRA8
+(`70`/`80`), but the root-run Metal census again found zero `IOAccelerator`
+services and zero Metal devices; the frame proof stopped at caps
+`0x00000001`. GPU Context0 stayed disabled and both SDMA queues idle. No GPU
+DMA or GPU register write occurred, and the VM shut down cleanly. See the
+`20261018-144711` run files in `AGENTS.md`.
 
 A Queue1 ring and a ROM/register read do not confer ownership.
 The following are required before a write-capable kernel backend can
@@ -233,7 +286,7 @@ CI bug and must not be bypassed by advertising `N33_CAP_HW_SDMA`,
 currently drives the display.** Compile success is not macOS Metal
 support and does not make any OpenCore Kext safe to install.
 
-### PSP13 KM ring stage (Navi33Probe 0.0.9, N33N ABI 10; not yet run)
+### PSP13 KM ring stage (Navi33Probe 0.0.9, N33N ABI 10; run 2026-10-18)
 
 Runs after the sOS is alive. Modes `RING_PLAN` and `RING_RUN` of
 `N33_SEL_PSP_LOAD`; `n33psp --ring-plan N` / `--ring N --i-have-ssh`.
@@ -256,15 +309,20 @@ then follows `psp_v13_0_ring_create()` (69, 70, 71, then 64, 20 ms, wait for
 the response), then for each command writes the command buffer and a ring
 frame, reads both back, advances `C2PMSG_67` and waits for the fence. A
 non-zero response status or a missing fence stops the run. The register
-writer accepts only `C2PMSG_64/67/69/70/71`.
+writer accepts only `C2PMSG_64/67/69/70/71`. In the 2026-10-18 VM run,
+ring creation, LOAD_TOC and SETUP_TMR succeeded; the PSP returned a
+19,922,944-byte TMR and fence 2.
 
-### PSP13 IP firmware stage (Navi33Probe 0.0.10, N33N ABI 11; not yet run)
+### PSP13 IP firmware stage (Navi33Probe 0.0.10, N33N ABI 11; run 2026-10-18)
 
 Runs after the ring and TMR exist. Modes `FW_PLAN` / `FW_RUN` of
 `N33_SEL_PSP_LOAD`; `n33psp --ip-fw-plan START STOP` / `--ip-fw START STOP
 --i-have-ssh`, with `--fwdir` pointing at the eight decompressed
 linux-firmware files. It sends `LOAD_IP_FW` for records `[START, STOP)` of the
-26-record list in `FIRMWARE_LOAD_DESIGN.md` through our ring; STOP 27 also
-sends `AUTOLOAD_RLC`. The SMU image is never sent. Gate: `navi33-psp-fw=1`,
-no `navi33-psp-off`, once per boot; `AUTOLOAD_RLC` also needs
+27-record list in `FIRMWARE_LOAD_DESIGN.md` through our ring. Record 26 is the
+SMU image and was sent first with `[26,27)`; the other 26 records ran as
+`[0,26)`. Stop 28 adds `AUTOLOAD_RLC`; `[27,28)` sends autoload alone. Gate:
+`navi33-psp-fw=1`, no `navi33-psp-off`, once per boot; autoload also needs
 `navi33-psp-autoload=1`. The register writer accepts only `C2PMSG_67`.
+All records and autoload succeeded in the approved 2026-10-18 VM run, with
+26 firmware commands/fences plus the autoload command/fence.

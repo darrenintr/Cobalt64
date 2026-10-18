@@ -220,49 +220,63 @@ Source details: Linux \`amdgpu_vm.h\`, \`amdgpu_gart.c\`,
 \`soc_v1_0_enum.h\`; AMD permissive/MIT-style licenses.
 
 
-## Stage 7: opt-in macOS IODMACommand preflight (implemented; untested on RX7600)
+## Stage 7: opt-in macOS DMA-address preflight (RX7600 VM; no device mapper)
 
 This is the first macOS **kernel IOMMU / DMA-mapping adapter** (as opposed
 to only CPU-simulated bus addresses). No Navi33 hardware registers are
 touched, and it remains opt-in because the user's machine has one GPU:
 
 - `src/Navi33DmaScatter.h`: portable bounds-checked, non-aliasing
-  scatter/gather IOVA-to-4KiB-page planner. It only accepts OS-provided
-  48-bit-aligned 4KiB bus-address segments, and refuses malformed lists
-  **without modifying** the target page list or shadow page table.
+  scatter/gather-to-4KiB-page planner. It accepts 48-bit aligned candidate
+  addresses, and refuses malformed lists **without modifying** the page
+  list or shadow page table. A CPU-physical candidate is never treated as a
+  proven GPU bus address.
 - `src/Navi33DarwinDma.cpp`: allocates up to **64 KiB of ordinary wired
   system memory** using `IOBufferMemoryDescriptor`, pins it, obtains the
   **device-associated** `IOMapper::copyMapperForDevice`, and creates a
   mapped `IODMACommand`. It enumerates IOMMU I/O bus segments, validates
   and transiently builds GMC11 PTEs in a CPU-only shadow array, tests
   unmap, and releases mappings, memory, and the mapper on all exit paths.
-  It **never** writes a GPU MMIO register or publishes a live GART page.
+  If no device mapper exists, the opt-in diagnostic checks whether a
+  physically contiguous, `kIOMemoryMapperNone` descriptor can provide
+  representable CPU-physical pages and validates their PTE encoding in a
+  CPU-only shadow array. That result is `PhysicalAddressOnly`, not a DMA
+  success. Neither path writes a GPU MMIO register or publishes a live GART
+  page.
 - `Navi33Probe.kext` exposes one-shot status, number of validated bus
-  segments/pages, but **not** the actual IOVA addresses.
+  segments/pages, but **not** actual IOVA or physical addresses.
 
 By default, this adapter is **not invoked**. Even with `navi33-probe=1`
 the new code does nothing unless `navi33-dma-preflight=1` is ALSO
 present. `navi33-dma-off=1` takes precedence. Do not add these
 experimental flags until you have an observable, recoverable macOS boot.
 
-A CI pass demonstrates Kext compile/link and CPU-only scatter-page test
-fixtures, **not** that macOS IOMMU mappings are usable by a real RX7600.
-A macOS IOMMU mapper may refuse the request, and this stage intentionally
-does not bypass it or fall back to unsafe physical addresses.
+A read-only RX7600 passthrough run on 2026-10-18 with Kext 0.0.13 exercised
+the mapper-only preflight. `IOMapper::copyMapperForDevice` returned null,
+status 2 (`NoDeviceMapper`), with zero segments/pages. A second run exposed
+QEMU's virtual Intel VT-d and used VFIO caching mode; macOS logged that
+`AppleVTD` was not installed as the system mapper, and status 2 remained.
+These runs did not bypass the refusal or use CPU physical addresses. Kext
+0.0.14 adds the explicitly non-authoritative `PhysicalAddressOnly` candidate
+check for the no-mapper case; it still requires the macOS CI build and a new
+VM run. Neither result describes the host VFIO IOVA mapping.
 
 Hardware GART page tables, GPU VMID initialization, TLB invalidations,
 firmware authentication, SDMA queue/doorbell and GFX11 compute remain
-disabled. The preflight's `fakeGpuVa` is a constant used ONLY inside
-a CPU-owned shadow page-table array: it is NOT assigned to the GPU.
+disabled. The preflight's `fakeGpuVa` is a constant used ONLY inside a
+CPU-owned shadow page-table array: it is NOT assigned to the GPU. A
+physical address returned by `kIOMemoryMapperNone` is not yet known to be a
+GPU-reachable bus address on this machine.
 
 
 ## Next milestones (not implemented yet)
 
 1. Establish a genuinely observable, recoverable native macOS boot on
    the user's single RX7600. OpenCore GOP and AuxKC remain unverified.
-2. Validate device-associated IOMMU/IOVA mapping on actual macOS and keep
-   the OS bus mapping lifetime valid through GPU execution. Stage 7's
-   `IODMACommand` adapter only preflights in software and cleans up.
+2. Establish whether the GPU can reach either a device-associated IOVA or
+   an explicitly validated CPU-physical address, then hold the selected
+   mapping through execution. Stage 7 currently establishes neither path
+   for GPU use; it only preflights and cleans up.
 3. Implement separate RDNA3 firmware/PSP13/SMU13, real GMC11 GART page
    tables, GFXHUB/MMHUB state/TLB updates, SDMA6 rings/doorbells,
    interrupts, PCI DMA-safe synchronization and measured hardware fences.

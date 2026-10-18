@@ -37,6 +37,27 @@ int main() {
     assert(gmc11::unmapSystemPages(a,a.gpuVaBase,kMaxPages,shadow,kMaxPages).code==
            gmc11::Code::Pass);
 
+    // Mapper-less x86 fallback supplies one CPU-physical segment per
+    // pinned 4-KiB page. These remain address candidates only; the pure
+    // planner may build a shadow PTE image but cannot submit GPU DMA.
+    Segment physicalPages[kMaxPages]{};
+    for(size_t i=0u;i<kMaxPages;++i)
+        physicalPages[i]={0x30000000ull+i*gmc11::kPageBytes,
+                          gmc11::kPageBytes};
+    auto physical=flatten(physicalPages,kMaxPages,kDiagnosticBytes,
+                          pages,kMaxPages);
+    assert(physical.code==Status::Pass&&physical.pages==kMaxPages);
+    assert(pages[0]==0x30000000ull&&pages[kMaxPages-1u]==0x3000f000ull);
+    auto physicalShadow=mapIntoShadow(
+        physicalPages,kMaxPages,kDiagnosticBytes,a,a.gpuVaBase,
+        shadow,kMaxPages);
+    assert(physicalShadow.code==Status::Pass&&
+           physicalShadow.pages==kMaxPages);
+    assert((shadow[0]&gmc11::kAddressMask)==0x30000000ull);
+    assert((shadow[kMaxPages-1u]&gmc11::kAddressMask)==0x3000f000ull);
+    assert(gmc11::unmapSystemPages(a,a.gpuVaBase,kMaxPages,shadow,kMaxPages).code==
+           gmc11::Code::Pass);
+
     auto reject=[&](const Segment *s,size_t n,uint64_t expectedBytes, Status code) {
         for(size_t i=0;i<kMaxPages;++i){pages[i]=0xdeadbeefull;shadow[i]=0u;}
         auto res=flatten(s,n,expectedBytes,pages,kMaxPages);
@@ -79,5 +100,5 @@ int main() {
                                     dirty,kMaxPages);
     assert(denied.code==Status::GartRejected&&dirty[0]==0x1234ull);
     for(size_t i=1;i<kMaxPages;++i)assert(dirty[i]==0u);
-    std::puts("Navi33 macOS IOMMU scatter -> GMC11 shadow PTE: PASS (host-only)");
+    std::puts("Navi33 DMA-address candidates -> GMC11 shadow PTE: PASS (host-only)");
 }

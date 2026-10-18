@@ -10,7 +10,8 @@ SCRIPT = pathlib.Path(__file__).resolve().parents[2] / 'vm/make-opencore.sh'
 
 
 class SmuBootArgsTests(unittest.TestCase):
-    def generate(self, load=False, ring=False, fw=False, autoload=False, smu=False, scpm=False):
+    def generate(self, load=False, ring=False, fw=False, autoload=False,
+                 smu=False, scpm=False, dma_preflight=False):
         code = SCRIPT.read_text().split("<<'EOF'\n", 1)[1].split('\nEOF', 1)[0]
         guid = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
         with tempfile.TemporaryDirectory() as directory:
@@ -25,7 +26,8 @@ class SmuBootArgsTests(unittest.TestCase):
             binary = tmp / 'binary'
             binary.write_bytes(bytes(32))  # no LC_UUID: harmless manifest fallback
             args = [str(config), str(int(load)), str(binary), str(tmp / 'manifest'),
-                    'test-OC', '', str(int(ring)), str(int(fw)), str(int(autoload)), str(int(smu or scpm)), str(int(scpm))]
+                    'test-OC', '', str(int(ring)), str(int(fw)), str(int(autoload)),
+                    str(int(smu or scpm)), str(int(scpm)), str(int(dma_preflight))]
             subprocess.run([sys.executable, '-I', '-', *args], input=code,
                            text=True, capture_output=True, check=True)
             result = plistlib.loads(config.read_bytes())
@@ -62,6 +64,13 @@ class SmuBootArgsTests(unittest.TestCase):
                      'navi33-psp-load=1', 'navi33-psp-ring=1', 'navi33-psp-fw=1'):
             self.assertNotIn(flag, args)
         self.assertNotIn('navi33-smu-scpm=1', self.generate(smu=True))
+
+    def test_dma_preflight_opens_only_read_only_mapping_probe(self):
+        args = self.generate(dma_preflight=True)
+        self.assertIn('navi33-dma-preflight=1', args)
+        self.assertNotIn('navi33-dma-off=1', args)
+        self.assertIn('navi33-psp-off=1', args)
+        self.assertIn('navi33-smu-off=1', args)
 
     def test_combined_write_gates_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:

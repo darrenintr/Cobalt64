@@ -26,7 +26,7 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
     -isysroot $(SDK) -nostdlib -Xlinker -kext \
     -L$(MKSDK)/Library/x86_64 -lkmodc++ -lkmod -Wl,-no_deduplicate
 
-.PHONY: all clean host-test physical-io-check
+.PHONY: all clean host-test physical-io-check metal-format-sdk-check
 all: $(KEXT)
 
 $(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h src/Navi33LiveMmio.h src/Navi33HwProbeLogic.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33Nbio43Capacity.h src/Navi33VramSurvey.h src/Navi33Psp13Status.h src/Navi33Psp13Firmware.h src/Navi33Sdma6Status.h src/Navi33Sdma6QueueCensus.h src/Navi33MmioPeek.h src/Navi33PeekWindows.h src/Navi33Probe.hpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h src/Navi33DarwinStage.h src/Navi33StageOwner.h src/Navi33DarwinPspLoad.h
@@ -53,6 +53,16 @@ $(BUILD)/Navi33DarwinQueue1IO.o: src/Navi33DarwinQueue1IO.cpp src/Navi33DarwinQu
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 physical-io-check: $(BUILD)/Navi33DarwinQueue1IO.o $(BUILD)/Navi33DarwinRootReadback.o
+
+# SDK-only enum compatibility check. This runs no Metal device code and is
+# deliberately separate from host-test so Linux host-test needs no macOS SDK.
+$(BUILD)/metal-format-enum-check: tools/metal_format_enum_check.m src/Navi33Gfx11Formats.h
+	@mkdir -p $(BUILD)
+	$(CC) -arch $(ARCH) -x objective-c -std=gnu11 -Wall -Wextra -Werror \
+	    -isysroot $(SDK) -mmacosx-version-min=$(DEPLOY) $< -framework Metal -o $@
+
+metal-format-sdk-check: $(BUILD)/metal-format-enum-check
+	$(BUILD)/metal-format-enum-check
 
 $(BUILD)/Navi33DarwinDma.o: src/Navi33DarwinDma.cpp src/Navi33DarwinDma.h src/Navi33DmaScatter.h src/Navi33Gmc11Gart.h src/Navi33Identity.h
 	@mkdir -p $(BUILD)
@@ -133,6 +143,10 @@ $(BUILD)/test-dma-scatter: tests/test_dma_scatter.cpp src/Navi33DmaScatter.h src
 $(BUILD)/test-gfx11-native: tests/test_gfx11_native.cpp src/Navi33NativeABI.h src/Navi33Gfx11Command.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_gfx11_native.cpp -o $@
+
+$(BUILD)/test-gfx11-formats: tests/test_gfx11_formats.cpp src/Navi33Gfx11Formats.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_gfx11_formats.cpp -o $@
 
 $(BUILD)/native-caps: tools/native_caps.cpp src/Navi33NativeABI.h
 	@mkdir -p $(BUILD)
@@ -284,7 +298,7 @@ $(BUILD)/test-smu13-enable: tests/test_smu13_enable.cpp src/Navi33Smu13Enable.h 
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 
-host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
+host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-proof-run $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
 	$(BUILD)/test-smu13-enable
 	$(BUILD)/test-identity
 	$(BUILD)/test-discovery
@@ -295,6 +309,7 @@ host-test: $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-disco
 	$(BUILD)/test-sdma6-ring
 	$(BUILD)/test-dma-scatter
 	$(BUILD)/test-gfx11-native
+	$(BUILD)/test-gfx11-formats
 	$(BUILD)/test-live-mmio
 	$(BUILD)/test-native-client
 	$(BUILD)/test-psp13-status

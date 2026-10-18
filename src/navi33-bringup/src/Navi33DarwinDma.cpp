@@ -1,8 +1,10 @@
-// RX 7600 macOS DMA mapping preflight, never a GPU execution path.
+// RX 7600 macOS DMA-address preflight, never a GPU execution path.
 // Apple IOKit API references: IODMACommand, IOBufferMemoryDescriptor,
 // IOMapper::copyMapperForDevice, IOMemoryDescriptor prepare()/complete().
-// The OS IOMMU is asked for temporary I/O bus addresses for one 64 KiB
-// *system RAM* buffer; they are only used in a CPU-owned shadow PTE array.
+// When available, the OS IOMMU is asked for temporary I/O bus addresses for
+// one 64 KiB *system RAM* buffer. If there is no mapper, a separate
+// kIOMemoryMapperNone path checks CPU-physical candidates. Both remain inside
+// a CPU-owned shadow PTE array and never reach the GPU.
 #include "Navi33DarwinDma.h"
 #include "Navi33DmaScatter.h"
 #include "Navi33Identity.h"
@@ -39,6 +41,79 @@ struct Lifetime {
         if(mapper) mapper->release();
     }
 };
+
+struct PhysicalLifetime {
+    IOBufferMemoryDescriptor *memory=nullptr;
+    bool prepared=false;
+    ~PhysicalLifetime() {
+        if(memory) {
+            if(prepared) (void)memory->complete();
+            memory->release();
+        }
+    }
+};
+
+// Some x86 macOS boots have no installed IOKit device mapper. In that
+// configuration, report only whether ordinary wired pages have representable
+// CPU-physical addresses. Do not call these addresses GPU bus addresses and
+// never submit DMA from this preflight.
+Report inspectPhysicalCandidate() {
+    constexpr mach_vm_size_t bytes=static_cast<mach_vm_size_t>(dma::kDiagnosticBytes);
+    constexpr mach_vm_address_t physMask=0x0000FFFFFFFFFFFFull &
+        ~(static_cast<mach_vm_address_t>(gmc11::kPageBytes)-1ull);
+    PhysicalLifetime guard{};
+    guard.memory=IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task,
+        kIODirectionInOut|kIOMemoryPhysicallyContiguous|kIOMemoryMapperNone,
+        bytes,physMask);
+    if(!guard.memory || guard.memory->getLength()<bytes)
+        return {Code::PhysicalNoMemory,0,0};
+    if(guard.memory->prepare(kIODirectionInOut)!=kIOReturnSuccess)
+        return {Code::PhysicalPrepareFailed,0,0};
+    guard.prepared=true;
+
+    IOByteCount contiguousBytes=0;
+    const addr64_t physical=guard.memory->getPhysicalSegment(
+        0u,&contiguousBytes,kIOMemoryMapperNone);
+    if(!physical || contiguousBytes<bytes ||
+       (physical&(gmc11::kPageBytes-1u)) ||
+       physical>=gmc11::kMaxConservativeDmaAddress ||
+       bytes>gmc11::kMaxConservativeDmaAddress-physical)
+        return {Code::PhysicalAddressInvalid,0,0};
+    dma::Segment pages[dma::kMaxPages]{};
+    for(size_t i=0u;i<dma::kMaxPages;++i)
+        pages[i]={static_cast<uint64_t>(physical+
+                          i*gmc11::kPageBytes),gmc11::kPageBytes};
+
+    uint64_t pageAddresses[dma::kMaxPages]{};
+    const dma::Plan flattened=dma::flatten(
+        pages,dma::kMaxPages,dma::kDiagnosticBytes,
+        pageAddresses,dma::kMaxPages);
+    if(flattened.code!=dma::Status::Pass)
+        return {Code::PhysicalAddressInvalid,0,0};
+
+    // Validate the same GFX11 PTE encoding in an ordinary CPU array. This
+    // does not install a page table or establish that the GPU can reach it.
+    const gmc11::Aperture fakeGpuVa{0x100000000ull,dma::kDiagnosticBytes};
+    uint64_t shadow[dma::kMaxPages]{};
+    const dma::Plan mapped=dma::mapIntoShadow(
+        pages,dma::kMaxPages,dma::kDiagnosticBytes,fakeGpuVa,
+        fakeGpuVa.gpuVaBase,shadow,dma::kMaxPages);
+    if(mapped.code!=dma::Status::Pass)
+        return {Code::PhysicalAddressInvalid,0,0};
+    for(size_t i=0u;i<mapped.pages;++i)
+        if(gmc11::parseSystemPte(shadow[i]).code!=gmc11::Code::Pass)
+            return {Code::PhysicalAddressInvalid,0,0};
+    if(gmc11::unmapSystemPages(fakeGpuVa,fakeGpuVa.gpuVaBase,
+           mapped.pages,shadow,dma::kMaxPages).code!=gmc11::Code::Pass)
+        return {Code::PhysicalAddressInvalid,0,0};
+    for(size_t i=0u;i<dma::kMaxPages;++i)
+        if(shadow[i]!=0u)
+            return {Code::PhysicalAddressInvalid,0,0};
+
+    return {Code::PhysicalAddressOnly,1u,
+            static_cast<uint8_t>(flattened.pages)};
+}
 } // anonymous
 
 Report runOnce(IOPCIDevice *pci) {
@@ -49,10 +124,11 @@ Report runOnce(IOPCIDevice *pci) {
     if(!isSupported(id)) return {Code::RefusedDevice,0,0};
 
     Lifetime guard{};
-    // Do NOT silently fall back to physical addresses or a system mapper:
-    // IOVAs must refer to the actual PCI device's IOMMU domain.
+    // Prefer a device-associated IOVA. If this platform exposes no mapper,
+    // inspect raw CPU-physical pages separately and return an explicitly
+    // non-DMA status; never treat them as a successful device mapping.
     guard.mapper=IOMapper::copyMapperForDevice(pci);
-    if(!guard.mapper) return {Code::NoDeviceMapper,0,0};
+    if(!guard.mapper) return inspectPhysicalCandidate();
 
     guard.memory=IOBufferMemoryDescriptor::withOptions(
         kIODirectionInOut, static_cast<vm_size_t>(dma::kDiagnosticBytes),

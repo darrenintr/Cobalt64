@@ -1,8 +1,9 @@
 // Navi33DmaScatter - reject malformed macOS IODMACommand scatter/gather lists.
 // Pure C++17; no IOKit, MMIO, GPU firmware, DMA submission, or physical mapping.
-// Bus addresses are ONLY trusted as OS-IOMMU-translated values obtained from
-// IODMACommand::gen64IOVMSegments for the exact RX7600 provider.
-// A successful plan does NOT imply GPU GART/GFXHUB/MMHUB was configured.
+// A platform adapter may supply OS-IOMMU IOVAs from IODMACommand, or an
+// explicitly non-authoritative CPU-physical candidate when no mapper exists.
+// A successful plan does NOT imply the GPU can reach those addresses or that
+// GART/GFXHUB/MMHUB was configured.
 #pragma once
 #include "Navi33Gmc11Gart.h"
 #include <stddef.h>
@@ -31,10 +32,10 @@ struct Plan {
     uint64_t totalBytes = 0;
 };
 
-// Fail-closed before mutating output. The offsets of IODMACommand segments
-// correspond to consecutive *logical* bytes of the descriptor; device
-// addresses may be discontinuous and must not be guessed from CPU pointers.
-// Pagewise validation also disallows aliasing one DMA bus page multiple times.
+// Fail-closed before mutating output. IODMACommand offsets correspond to
+// consecutive logical bytes; a physical-candidate adapter supplies one page
+// per segment. Device addresses may be discontinuous and must not be guessed
+// from CPU pointers. Pagewise validation also disallows aliases.
 inline Plan flatten(const Segment *segments, size_t count,
                     uint64_t expectedBytes,
                     uint64_t *pageBusAddresses, size_t pageCapacity) {

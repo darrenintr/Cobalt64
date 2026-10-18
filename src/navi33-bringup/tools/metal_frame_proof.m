@@ -53,19 +53,100 @@ static BOOL nativeNavi33Capabilities(struct n33_capabilities *out) {
         fprintf(stderr,"No verified gfx1102 query result\n");
         return NO;
     }
-    const uint32_t required=N33_CAP_HW_VM|N33_CAP_HW_GFX|N33_CAP_METAL;
-    if((out->capabilities & required)!=required) {
-        fprintf(stderr,"RX7600 GPU/Metal hardware flags are NOT proven (caps 0x%08x)\n",
-                out->capabilities);
-        return NO;
-    }
     return YES;
 }
 
-int main(void) {
+static int enumerateMetalDevices(void) {
+    NSArray<id<MTLDevice>> *devices=MTLCopyAllDevices();
+    printf("Metal device enumeration: %lu device(s)\n",
+           (unsigned long)devices.count);
+    NSUInteger index=0;
+    for(id<MTLDevice> device in devices) {
+        printf("Metal device[%lu]: name=%s registryID=0x%016llx lowPower=%u headless=%u\n",
+               (unsigned long)index++,device.name.UTF8String,
+               (unsigned long long)device.registryID,
+               device.isLowPower ? 1u : 0u,device.isHeadless ? 1u : 0u);
+    }
+    // Enumeration is a diagnostic only. Do not create a queue, compile a
+    // device pipeline, allocate a texture, or submit any GPU work here.
+    return 0;
+}
+
+static void printRegistryProperty(io_service_t service,const char *label,
+                                  CFStringRef key) {
+    CFTypeRef value=IORegistryEntryCreateCFProperty(
+        service,key,kCFAllocatorDefault,0);
+    if(!value) {
+        printf(" %s=<absent>",label);
+        return;
+    }
+    CFStringRef description=CFCopyDescription(value);
+    char text[256]="<unprintable>";
+    if(description) {
+        (void)CFStringGetCString(description,text,sizeof(text),
+                                 kCFStringEncodingUTF8);
+        CFRelease(description);
+    }
+    printf(" %s=%s",label,text);
+    CFRelease(value);
+}
+
+static int enumerateAcceleratorServices(void) {
+    io_iterator_t iterator=IO_OBJECT_NULL;
+    kern_return_t ret=IOServiceGetMatchingServices(
+        kIOMainPortDefault,IOServiceMatching("IOAccelerator"),&iterator);
+    if(ret!=KERN_SUCCESS) {
+        fprintf(stderr,"IOAccelerator service census failed: 0x%x\n",ret);
+        return 1;
+    }
+    NSUInteger count=0;
+    io_service_t service=IO_OBJECT_NULL;
+    while((service=IOIteratorNext(iterator))!=IO_OBJECT_NULL) {
+        char name[128]="?",path[512]="?";
+        (void)IORegistryEntryGetName(service,name);
+        (void)IORegistryEntryGetPath(service,kIOServicePlane,path);
+        printf("IOAccelerator[%lu]: name=%s path=%s",
+               (unsigned long)count++,name,path);
+        printRegistryProperty(service,"MetalPluginName",CFSTR("MetalPluginName"));
+        printRegistryProperty(service,"MetalPluginClassName",CFSTR("MetalPluginClassName"));
+        printRegistryProperty(service,"IOClass",CFSTR("IOClass"));
+        putchar('\n');
+        IOObjectRelease(service);
+    }
+    IOObjectRelease(iterator);
+    printf("IOAccelerator service enumeration: %lu service(s)\n",
+           (unsigned long)count);
+    return 0;
+}
+
+int main(int argc,const char *argv[]) {
     @autoreleasepool {
+        BOOL enumerateOnly=NO;
+        if(argc==2 && strcmp(argv[1],"--enumerate-only")==0) {
+            enumerateOnly=YES;
+        } else if(argc!=1) {
+            fprintf(stderr,"usage: metal_frame_proof [--enumerate-only]\n");
+            return 64;
+        }
+        if(enumerateOnly) {
+            struct n33_capabilities diagnosticCaps={0};
+            if(nativeNavi33Capabilities(&diagnosticCaps))
+                printf("N33N RX7600 caps: 0x%08x\n",diagnosticCaps.capabilities);
+            else
+                fprintf(stderr,"N33N caps unavailable; continuing system Metal enumeration.\n");
+            const int acceleratorStatus=enumerateAcceleratorServices();
+            const int metalStatus=enumerateMetalDevices();
+            return acceleratorStatus ? acceleratorStatus : metalStatus;
+        }
         struct n33_capabilities caps={0};
         if(!nativeNavi33Capabilities(&caps)) return 2;
+        printf("N33N RX7600 caps: 0x%08x\n",caps.capabilities);
+        const uint32_t required=N33_CAP_HW_VM|N33_CAP_HW_GFX|N33_CAP_METAL;
+        if((caps.capabilities & required)!=required) {
+            fprintf(stderr,"RX7600 GPU/Metal hardware flags are NOT proven (caps 0x%08x)\n",
+                    caps.capabilities);
+            return 2;
+        }
         NSArray<id<MTLDevice>> *devices=MTLCopyAllDevices();
         id<MTLDevice> dev=nil;
         for(id<MTLDevice> d in devices) {

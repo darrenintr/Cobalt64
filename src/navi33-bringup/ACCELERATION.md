@@ -33,6 +33,16 @@ portable code can build on Linux and macOS but does not touch a GPU.
 The order matters. A Metal bundle without a GPU-backed Vulkan device is not
 hardware acceleration. Host CI is only syntax/contract verification.
 
+## Offline GFX11 Metal render-target formats
+
+`src/Navi33Gfx11Formats.h` contains the first two render-target metadata rows:
+Metal `RGBA8Unorm` / `BGRA8Unorm` map to their Vulkan formats, GFX11 color
+buffer number/swap fields, and texture-format/channel selectors. The focused
+host test checks those enum relationships and rejects unknown formats. This
+does not query RX 7600 format features, create a Vulkan device, enable a Metal
+capability, or execute rendering; a future RADV backend must query the actual
+gfx1102 feature support before exposing either format.
+
 ## Stage G2: macOS read-only N33N user client (this PR)
 
 A compiled IOUserClient now responds to `IOServiceOpen("Navi33Probe", N33N)`
@@ -98,11 +108,77 @@ GPU-rendered 64x64 texture back to host memory, verifies center/background
 pixels, and reports a frame hash/GPU timing. **Current Navi33 Kext
 intentionally fails the capability gate.**
 
+The 2026-10-18 SCPM enable command was accepted and RLC boot-complete became
+visible, but the combined post-run diagnostic still reports reason 11
+(GPU memory/queue ownership not established) and
+`GFX11 hardware command submission: DISABLED; Metal: DISABLED`. No Metal
+frame was attempted. On 2026-10-18, `metal_frame_proof` compiled and ran in
+the RX7600 VM, then exited at the N33N capability gate (`caps 0x00000001`)
+before Metal device enumeration or submission. See the physical run evidence
+indexed in `AGENTS.md`.
+
+The proof tool now also accepts `--enumerate-only`: it lists the Metal
+`IOAccelerator` services and Metal devices macOS exposes even when N33N is
+unavailable or advertises no acceleration. It prints the accelerator's
+`MetalPluginName` / `MetalPluginClassName` when present. This mode does not
+create a command queue, pipeline, texture or GPU command buffer. It is
+diagnostic output and cannot pass the frame acceptance gate.
+
 macOS CI checks only that the test program compiles. A green workflow
 cannot claim any rendering. A future dedicated hardware pass of this
 program, combined with a proven non-software Navi33 Metal device, is an
 acceptance requirement before advertising native acceleration. The
 compiled binary is NOT run by CI and not installed automatically.
+
+In the 2026-10-18 14:09–14:10 RX7600 VM run, the SDK enum check passed
+(`RGBA8=70`, `BGRA8=80`). `--enumerate-only` reported zero Metal devices;
+the normal acceptance invocation still stopped at caps `0x00000001`. The
+same boot's full diagnostic remained at reason 11, with both context0 values
+`0x01fffe00` and Queue0/Queue1 pointers zero. This confirms that macOS has no
+Metal device to route to the RX7600 in this setup, and no GPU rendering was
+attempted. Full paths are in `AGENTS.md`.
+
+The current Navi33 kext matches only `Navi33Probe` as a diagnostic
+`IOService`; it does not publish an `IOAccelerator` service or Metal plugin.
+The local Navi48 stack has a separate `Navi48Accelerator` personality with
+`MetalPluginName` / `MetalPluginClassName` and a `Navi48Device` subclass of
+Metal's `MTLIOAccelDevice`, backed by its RADV/N48N path. Navi33 has none of
+those device-discovery or submit components yet. Matching the two pixel
+formats is therefore only a small output-format slice of the port.
+
+In the 14:36–14:37 RX7600 passthrough run, `--enumerate-only` found zero
+`IOAccelerator` services as well as zero Metal devices. The standard proof
+again stopped at caps `0x00000001`; the same boot kept reason 11, an alive
+PSP sOS, idle SDMA Queue0/Queue1, and disabled MMHUB/GFXHUB Context0. The
+extra registry census narrows the immediate macOS discovery gap: there is no
+accelerator personality or plugin to load. It does not change the lower-level
+GPU memory/queue blocker or prove any rendering. See `AGENTS.md` for the run
+files.
+
+In the 14:47–14:48 combined diagnostic, the one-shot macOS DMA preflight
+returned `NoDeviceMapper` (status 2), with zero mapped segments/pages. The
+guest IOKit adapter therefore cannot produce a device-IOMMU address for this
+VFIO PCI function; this says nothing about a possible host VFIO IOVA mapping.
+The RGBA8/BGRA8 Metal SDK enum check passed, but root-run discovery again
+found no `IOAccelerator` service or Metal device, and the real-frame proof
+stopped at caps `0x00000001`. Reason 11 and disabled MMHUB/GFXHUB Context0
+remained unchanged. The run submitted no GPU DMA or command and made no GPU
+register writes. Its outputs are recorded in `AGENTS.md`.
+
+The 14:53 RX7600 passthrough run added QEMU virtual Intel VT-d with VFIO
+caching mode while still passing through PCI `09:00.0`; it did not use the
+`--no-gpu` mode. macOS saw the ACPI DMAR table but logged that `AppleVTD`
+was not installed as the system mapper. Kext 0.0.13 therefore returned the
+same `NoDeviceMapper` status, with zero segments/pages. The Metal enum check
+passed, but root-run enumeration again found zero `IOAccelerator` services
+and zero Metal devices; the frame proof stopped at caps `0x00000001` before
+creating or submitting GPU work.
+
+Kext 0.0.14 now adds a separate pinned CPU-physical candidate check for the
+no-mapper case. It returns `PhysicalAddressOnly` only after the 64-KiB
+physical span and CPU shadow PTE image validate. This does not prove PCI DMA
+reachability and leaves all GPU, GART, queue and Metal capability bits off;
+the macOS CI build and VM run are still pending.
 
 ## Stage G5: Persistent OS-IOMMU GMC11 / SDMA6 staging (no GPU execution)
 

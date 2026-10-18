@@ -140,8 +140,8 @@ bool Navi33Probe::start(IOService *provider) {
     setProperty("Navi33,TLBInvalidationEnabled", static_cast<uint64_t>(0), 8);
     setProperty("Navi33,SDMA6DoorbellEnabled", static_cast<uint64_t>(0), 8);
     setProperty("Navi33,DmaPreflightExecuted", static_cast<uint64_t>(0), 8);
-    // Separate explicit one-shot preflight. Default boot has no IOMMU mapping
-    // allocations. The navi33-dma-off kill switch always wins.
+    // Separate explicit one-shot address preflight. Default boot allocates no
+    // pinned DMA/physical buffer. The navi33-dma-off kill switch always wins.
     uint32_t dmaOptIn=0u, dmaOff=0u;
     const bool disabled=PE_parse_boot_argn("navi33-dma-off", &dmaOff,
                                            sizeof(dmaOff)) && dmaOff != 0u;
@@ -156,7 +156,11 @@ bool Navi33Probe::start(IOService *provider) {
                     static_cast<uint64_t>(dmaReport.segmentCount), 8);
         setProperty("Navi33,DmaPreflightPages",
                     static_cast<uint64_t>(dmaReport.pageCount), 8);
-        IOLog("Navi33Probe: optional IOMMU staging returned %u (%u segments, %u pages), no GPU DMA\n",
+        setProperty("Navi33,DmaPreflightAddressKind",
+                    dmaReport.code==navi33::darwin_dma::Code::PhysicalAddressOnly
+                        ? "CPU-physical candidate only; GPU reachability unproven"
+                        : "device IOVA or failure");
+        IOLog("Navi33Probe: optional DMA address preflight returned %u (%u segments, %u pages), GPU DMA=NO\n",
               static_cast<unsigned>(dmaReport.code),
               static_cast<unsigned>(dmaReport.segmentCount),
               static_cast<unsigned>(dmaReport.pageCount));

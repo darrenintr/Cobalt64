@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 // PSP13 IP firmware load stage: planner and runner, host-tested, no I/O.
-// Sends LOAD_IP_FW for a range of the 26 records of Navi33Psp13IpFw.h through
+// Sends LOAD_IP_FW for a range of the 27 records of Navi33Psp13IpFw.h through
 // the KM ring that Navi33Psp13Ring.h created, optionally followed by
 // AUTOLOAD_RLC. All hardware access goes through the callbacks of
-// psp13ring::Hw; Navi33DarwinPspFw.cpp supplies them. NOT approved to write
-// the GPU until the user says so (AGENTS.md hard rule 2): FIRMWARE_LOAD_DESIGN.md.
+// psp13ring::Hw; Navi33DarwinPspFw.cpp supplies them. Physical use is gated
+// by AGENTS.md; the approved sequence ran on 2026-10-18.
 //
 // Linux (psp_load_non_psp_fw): one LOAD_IP_FW per ucode in AMDGPU_UCODE_ID
-// order, AUTOLOAD_RLC right after RLC_G. The SMU image is not sent (the
-// user's decision, 2026-10-18).
+// order, AUTOLOAD_RLC right after RLC_G. The SMU is record 26 but Linux sends
+// it first, so our approved sequence sends [26,27), then [0,26), then
+// AUTOLOAD_RLC alone as [27,28).
 //
 // Window (VRAM offsets from fw_pri, 8 MiB at 240 MiB): fw_pri 0..1 MiB is left
 // alone here, the ring pages sit at 1 MiB, the staged images at 4..8 MiB.

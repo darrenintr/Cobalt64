@@ -12,7 +12,9 @@ enum class Code : uint8_t {
     NotRequested=0, RefusedDevice, NoDeviceMapper, NoMemory,
     MemoryPrepareFailed, CommandCreationFailed, CommandBindFailed,
     CommandPrepareFailed, SegmentQueryFailed, ScatterRejected,
-    ShadowPageTableRejected, ShadowValidationFailed, Pass
+    ShadowPageTableRejected, ShadowValidationFailed, Pass,
+    PhysicalNoMemory, PhysicalPrepareFailed, PhysicalAddressInvalid,
+    PhysicalAddressOnly
 };
 
 struct Report {
@@ -22,9 +24,12 @@ struct Report {
 };
 
 // Must be called only after BOTH navi33-probe=1 and
-// navi33-dma-preflight=1 are present. It does not change PCI COMMAND,
-// map BARs, program GPU MMIO, open a user client, submit GPU commands,
-// write a hardware GART/PTE or expose bus addresses through IORegistry.
+// navi33-dma-preflight=1 are present. If no device IOMapper exists, it may
+// inspect pinned CPU-physical pages with kIOMemoryMapperNone and build a
+// CPU-only shadow PTE image. That is only an address candidate, not proof
+// that the PCI device can DMA to those pages. It never changes PCI COMMAND,
+// maps BARs, programs GPU MMIO, submits GPU commands, writes a hardware GART,
+// or exposes addresses through IORegistry.
 Report runOnce(IOPCIDevice *rx7600);
 
 constexpr bool kHardwareDmaSubmissionEnabled=false;

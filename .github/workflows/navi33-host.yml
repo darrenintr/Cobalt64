@@ -108,6 +108,8 @@ jobs:
             -framework Foundation -framework Metal -framework IOKit \
             -o /tmp/n33-metal-frame-proof
           file /tmp/n33-metal-frame-proof
+      - name: Run Metal SDK enum compatibility check (no device or GPU work)
+        run: make -C src/navi33-bringup metal-format-sdk-check
       - name: Check output files
         run: |
           test -f src/navi33-bringup/build/Navi33Probe.kext/Contents/MacOS/Navi33Probe

@@ -1,16 +1,21 @@
 # RX 7600 IP firmware load (design, step 1 of "power up the graphics engine")
 
-Status: **design only. Nothing here has been written to the card.** Written
-2026-10-18 after the PSP ring stage (sOS, KM ring, TOC, TMR) was proven in the
-Tahoe VM. Every fact below comes from the upstream Linux sources (amdgpu_psp.c,
+Status: **implemented and physically run in the Tahoe VM on 2026-10-18.**
+The SMU image was sent first, the other 26 records followed, then
+`AUTOLOAD_RLC`; every PSP response and fence succeeded. Run evidence is in
+`~/macos tahoe/navi33/runs/20261018-134128`, `20261018-134223` and
+`20261018-134316`, with the full sequence in `AGENTS.md`. This design was
+written 2026-10-18 after the PSP ring stage (sOS, KM ring, TOC, TMR) was
+proven in the Tahoe VM. Every fact below comes from the upstream Linux sources (amdgpu_psp.c,
 amdgpu_ucode.c, amdgpu_gfx.c, amdgpu_rlc.c, amdgpu_sdma.c, amdgpu_mes.c,
 gfx_v11_0.c, imu_v11_0.c, psp_gfx_if.h) and from decompressing the real
 `/lib/firmware/amdgpu/*.bin.zst` files with `tools/fwplan.py`.
 
-**Superseded 2026-10-18 (kext 0.0.11): the SMU image is now record 26, sent first and alone.** Original decision by the user: **the SMU image is left out.** Linux sends it
-first (`psp_load_smu_fw`), but this card's SMU already runs from the VBIOS, and
-re-sending it is a bigger commitment than the rest. Hard rule 5 applies: the
-VBIOS is never modified; this plan never touches it.
+**The original choice to omit SMU was superseded on 2026-10-18 (kext 0.0.11):
+the SMU image is record 26 and is sent first, alone.** Linux sends it first
+(`psp_load_smu_fw`). The user changed the order after RLC bootload stayed at
+zero. Hard rule 5 applies: the VBIOS is never modified; this plan never
+touches it.
 
 ## What Linux does after the TMR exists
 
@@ -18,7 +23,8 @@ For MP0 13.0.7 the load type is PSP (`amdgpu_ucode_get_load_type` returns PSP fo
 the default `-1`), with RLC autoload (`psp->autoload_supported`). In
 `psp_load_non_psp_fw()`:
 
-1. (SMU image: **skipped here**.)
+1. SMU image: loaded separately first by `psp_load_smu_fw`, before this
+   function processes the other records.
 2. For every registered ucode in `AMDGPU_UCODE_ID` order: one ring command
    `GFX_CMD_ID_LOAD_IP_FW` (0x6) with `fw_phy_addr` (MC address of the staged
    copy), `fw_size` and `fw_type`. The PSP checks and installs it; its reply
@@ -46,8 +52,9 @@ So RLC autoload before the SMU driver init is the normal order on this chip.
 | `gc_11_0_2_rlc` | 178,848 | 2.3 | RLC restore lists, IRAM, DRAM, RLC_P, RLC_V, RLC_G |
 
 `gc_11_0_2_mes.bin` is only Linux's fallback for the scheduler pipe and is not
-used. The full list, 26 records, is `tests/fixtures/rx7600-fw-plan.json`
-(offset, size, PSP type and SHA-256 of each record's bytes), produced by
+used. The base list has 26 records; kext 0.0.11 adds the SMU image as record
+26, for 27 records total. `tests/fixtures/rx7600-fw-plan.json` contains the
+offset, size, PSP type and SHA-256 of each record's bytes, produced by
 `tools/fwplan.py` and sanity-checked against the headers: each CP image plus its
 stack data equals the header's `ucode_size`; the RLC sub-images tile the file
 end to end with no gap.
@@ -74,7 +81,7 @@ own writable window, kept clear of the console and every surface by the same
 sits at 240-242 MiB; the TMR is far above, at 8128 MiB and written only by the
 PSP). The TMR does not need to be mapped by us.
 
-## What the kext needs (built 2026-10-18, kext 0.0.10, ABI 11; not run on the card)
+## Kext implementation (built as kext 0.0.10 / ABI 11; physical run used kext 0.0.13 / ABI 14)
 
 - A parser (`Navi33Psp13IpFw.h`, pure and host-tested) that produces exactly the
   records in the golden JSON from the eight raw files; every offset and size
@@ -94,12 +101,18 @@ PSP). The TMR does not need to be mapped by us.
 - The plan refuses unless our ring exists (`RING_MISSING`), the files are the
   exact pinned set (`FW_BAD_IMAGES`), the sOS is alive, and the console /
   aperture / clear-window proof holds for the whole 8 MiB window.
-- `AUTOLOAD_RLC` is **not** part of loading records: stop value 27 only, and the
+- `AUTOLOAD_RLC` is **not** part of loading records: stop value 28 adds it;
+  range `[27,28)` sends it alone. The
   writer refuses it (`AUTOLOAD_DISABLED`, before any record is sent) unless
   `navi33-psp-autoload=1` is set in addition to `navi33-psp-fw=1`. It needs its
   own explicit approval.
 
 ## Order of real runs (each needs the user's yes)
+
+The sequence below was approved as part of the SCPM experiment and executed
+after a full power-off on 2026-10-18. The firmware records were split so the
+SMU image (record 26) could be sent first; RLC_G was loaded in the remaining
+26 records, followed by an autoload-only range.
 
 1. Plan only (reads): staging window clear, all pins match, ring alive.
 2. Load SDMA_UCODE_TH0 and TH1 only: smallest image, a PSP-side check of the
@@ -108,8 +121,19 @@ PSP). The TMR does not need to be mapped by us.
 4. The RLC records except RLC_G.
 5. RLC_G.
 6. **AUTOLOAD_RLC.** Afterwards the GC block should come out of reset:
-   `IMU_GFX_RESET_CTRL` (now `0x10`), RLC and CP status registers become the
+   `IMU_GFX_RESET_CTRL` (then `0x10`), RLC and CP status registers become the
    observable result.
+
+## Hardware result (2026-10-18)
+
+All 27 firmware records were accepted: SMU first (`26..27`), then records
+`0..25`, with 26 successful PSP commands and fences. `AUTOLOAD_RLC` alone
+(`27..28`) also returned status 0 and fence 1. The subsequent SCPM
+EnableAllSmuFeatures attempt was accepted; `IMU_GFX_RESET_CTRL` changed from
+`0x10` to `0x1f`, and `RLC_BOOTLOAD_STATUS` became `0xc000001f`. The combined
+read-only preflight now reaches reason 11, **GPU memory/queue ownership not
+established**. No SDMA copy or shader was submitted, and Metal remains
+disabled. The register snapshots and command logs are indexed in `AGENTS.md`.
 
 ## Risks and open questions
 
