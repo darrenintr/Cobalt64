@@ -1394,6 +1394,16 @@ parser got two of them wrong:
   production owner the SDMA Queue1 proof still needs. Guest shut down cleanly;
   card back on vfio-pci.
 
+- **2026-10-18 17:53, kext 0.0.16 owner hold in the VM** (run
+  `~/macos tahoe/navi33/runs/20261018-175337`, `OpenCore-navi33-hold.qcow2`, CI
+  artifact of `ab714c5`, `navi33-owner-hold=1` with probe and recovery attested).
+  Guest kext log: identity ok, exclusive open ok and held, display child scan
+  empty, decision Owned, `owner held, epoch 1`. Guest shutdown then powered off
+  the drivers, but **no `owner release` line was logged**: `stop()` did not run
+  on macOS shutdown, so the open was only dropped when QEMU exited. Release on
+  shutdown is therefore not proven, and needs a `willTerminate` path or a
+  test that exercises `stop()`. Card back on vfio-pci. No GPU write.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
