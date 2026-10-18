@@ -216,9 +216,11 @@ parser got two of them wrong:
   `4B6769B0-5973-3370-A0D4-6E979CB327C5`.
   - The stick also has the pinned `psp_13_0_7_sos.bin`. The 0.0.5 kext,
     tools and scripts are in `navi33/backup-0.0.5/`.
-  - With the current boot-args (`navi33-psp-off=1`, no
-    `navi33-psp-load`) it is read-only. Its first boot should produce a
-    `n33psp --plan` section in the results file.
+  - The user chose to skip a separate plan-only boot. On 2026-10-18 the
+    stick's `config.plist` boot-args got `navi33-psp-load=1` in place of
+    `navi33-psp-off=1`; the original is `config.plist.bak-20261018-psp-off`.
+    `n33psp --load` still runs the plan first and refuses unless it
+    passes. Restore the backup after the attempt.
   - Plan output to check before any load: state 14 (`PLAN_OK`), console
     inside BAR0, an active HUBP surface at the console's offset, and
     `fw_pri` MC `0x80_0F00_0000`.
