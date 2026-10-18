@@ -15,6 +15,12 @@ static_assert(!kCanWriteGpu && !kCanWriteConfig,
 
 enum class Code : uint8_t { Disabled=0, Refused, Owned };
 
+// How the owned card's DMA is translated. Mapper: the OS IOMMU gave the card
+// an IOVA domain. PhysicalUnverified: no IOMMU exists for the card, and the
+// operator opted in to CPU-physical pages. The GPU's reach to those pages is
+// NOT established by this decision (see Navi33DmaBackend.h).
+enum class DmaMode : uint8_t { None=0, Mapper, PhysicalUnverified };
+
 enum Refusal : uint32_t {
     KillSwitch     = 1u<<0,  // navi33-owner-off set
     WrongDevice    = 1u<<1,  // not the supported RX 7600 identity
@@ -22,6 +28,7 @@ enum Refusal : uint32_t {
     DisplayClient  = 1u<<3,  // a framebuffer or accelerator child is attached
     NoRecovery     = 1u<<4,  // operator did not attest recovery (navi33-owner-recovery)
     NoDmaMapper    = 1u<<5,  // no IOMapper for this device: no DMA domain to own
+    PhysicalAddressesInvalid = 1u<<6, // physical opt-in, but pages not representable
 };
 
 // Filled by the kext. Every field is an observation, not a claim: the open
@@ -35,24 +42,30 @@ struct Evidence {
     bool displayClientAttached=false;// IOFramebuffer/IOAccelerator child found
     bool dmaMapperPresent=false;     // IOMapper::copyMapperForDevice() returned one
     bool recoveryAttested=false;     // navi33-owner-recovery=1
+    bool physicalDmaOptIn=false;     // navi33-owner-physical=1 (no-mapper only)
+    bool physicalAddressesValid=false; // CPU-physical candidate check passed
 };
 
 // One bit per Evidence field, for the Navi33,OwnerEvidence ioreg property, so a
 // results file shows every input even when the kernel log has rolled over.
 constexpr uint32_t kEvGate=1u<<0, kEvKill=1u<<1, kEvIdentity=1u<<2, kEvOpen=1u<<3,
-                   kEvDisplay=1u<<4, kEvMapper=1u<<5, kEvRecovery=1u<<6;
+                   kEvDisplay=1u<<4, kEvMapper=1u<<5, kEvRecovery=1u<<6,
+                   kEvPhysicalOptIn=1u<<7, kEvPhysicalAddresses=1u<<8;
 
 inline uint32_t evidenceBits(const Evidence &e) {
     return (e.gateOn ? kEvGate : 0u) | (e.killOn ? kEvKill : 0u) |
            (e.identityOk ? kEvIdentity : 0u) | (e.openSucceeded ? kEvOpen : 0u) |
            (e.displayClientAttached ? kEvDisplay : 0u) |
            (e.dmaMapperPresent ? kEvMapper : 0u) |
-           (e.recoveryAttested ? kEvRecovery : 0u);
+           (e.recoveryAttested ? kEvRecovery : 0u) |
+           (e.physicalDmaOptIn ? kEvPhysicalOptIn : 0u) |
+           (e.physicalAddressesValid ? kEvPhysicalAddresses : 0u);
 }
 
 struct Decision {
     Code code=Code::Disabled;
     uint32_t refusalMask=0u;
+    DmaMode dmaMode=DmaMode::None; // set only when code is Owned
 };
 
 // A closed gate is Disabled, not Refused, so the default boot is quiet.
@@ -70,9 +83,16 @@ inline Decision decide(const Evidence &e) {
     if(!e.openSucceeded) refused|=OpenFailed;
     if(e.displayClientAttached) refused|=DisplayClient;
     if(!e.recoveryAttested) refused|=NoRecovery;
-    if(!e.dmaMapperPresent) refused|=NoDmaMapper;
+    // Without a mapper, the only way to own the card is the explicit physical
+    // opt-in, and only if its pages can be represented as bus addresses.
+    if(!e.dmaMapperPresent) {
+        if(!e.physicalDmaOptIn) refused|=NoDmaMapper;
+        else if(!e.physicalAddressesValid) refused|=PhysicalAddressesInvalid;
+    }
     d.refusalMask=refused;
     d.code=refused ? Code::Refused : Code::Owned;
+    if(d.code==Code::Owned)
+        d.dmaMode=e.dmaMapperPresent ? DmaMode::Mapper : DmaMode::PhysicalUnverified;
     return d;
 }
 

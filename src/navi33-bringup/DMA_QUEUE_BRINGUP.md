@@ -679,3 +679,22 @@ Branch: feature/navi33-dma-backend. Software only; nothing runs on the card.
   SDMA NOP encoding on the card, and the hardware fence path (completion here
   is read-pointer based, not a fence write). None of this runs until the owner
   and VM gates in G21-G25 are met.
+
+## Stage G28: unmapped DMA owner mode (kext 0.0.20, CI build only)
+
+- The owner used to refuse every card with no IOMapper (`NoDmaMapper`). This
+  board has no mapper, so every run stopped there. The owner can now accept
+  the card through an explicit opt-in: `navi33-owner-physical=1`.
+- The decision names its mode (`pci_owner::DmaMode`). `Mapper` needs an IOMMU
+  domain. `PhysicalUnverified` needs the sentinel domain
+  `production_owner::kUnmappedDomainId` and representable CPU-physical pages
+  (`darwin_dma::physicalCandidateReady`, a 64 KiB allocate/release, no mapping).
+- A mapper always wins over the opt-in. Kill switch, open, display, recovery
+  and identity gates still apply to the physical path.
+- The owner refuses a mode/domain mismatch (`DomainModeMismatch`), including a
+  mapped owner that claims the sentinel.
+- Host-verified: `test_pci_owner` and `test_production_owner` (new cases for
+  every refusal above). Kext code is built and checked only in CI.
+- NOT established: that the GPU can DMA to those physical pages. The owner
+  says only that the decision and the pages are consistent. Any write stage
+  still needs its own approval.

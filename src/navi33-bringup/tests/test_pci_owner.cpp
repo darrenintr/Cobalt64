@@ -77,9 +77,69 @@ static void evidenceBitsNameEveryInput() {
     e=po::Evidence{}; e.displayClientAttached=true; assert(po::evidenceBits(e)==po::kEvDisplay);
     e=po::Evidence{}; e.dmaMapperPresent=true;  assert(po::evidenceBits(e)==po::kEvMapper);
     e=po::Evidence{}; e.recoveryAttested=true;  assert(po::evidenceBits(e)==po::kEvRecovery);
+    e=po::Evidence{}; e.physicalDmaOptIn=true;  assert(po::evidenceBits(e)==po::kEvPhysicalOptIn);
+    e=po::Evidence{}; e.physicalAddressesValid=true; assert(po::evidenceBits(e)==po::kEvPhysicalAddresses);
     // The good evidence has every bit but kill and display.
     assert(po::evidenceBits(good())==(po::kEvGate|po::kEvIdentity|po::kEvOpen|
                                        po::kEvMapper|po::kEvRecovery));
+}
+
+static void mapperOwnsAndNamesItsMode() {
+    const po::Decision d=po::decide(good());
+    assert(d.code==po::Code::Owned && d.dmaMode==po::DmaMode::Mapper);
+    po::Evidence e=good(); e.gateOn=false;
+    assert(po::decide(e).dmaMode==po::DmaMode::None);   // no decision, no mode
+}
+
+static void physicalOptInOwnsWithoutMapper() {
+    po::Evidence e=good();
+    e.dmaMapperPresent=false;
+    e.physicalDmaOptIn=true;
+    e.physicalAddressesValid=true;
+    const po::Decision d=po::decide(e);
+    assert(d.code==po::Code::Owned && d.refusalMask==0u);
+    assert(d.dmaMode==po::DmaMode::PhysicalUnverified);
+}
+
+static void physicalOptInNeedsRepresentablePages() {
+    po::Evidence e=good();
+    e.dmaMapperPresent=false;
+    e.physicalDmaOptIn=true;
+    e.physicalAddressesValid=false;
+    const po::Decision d=po::decide(e);
+    assert(d.code==po::Code::Refused);
+    assert(d.refusalMask==po::PhysicalAddressesInvalid);
+    assert(d.dmaMode==po::DmaMode::None);
+}
+
+static void physicalOptInDoesNotBypassOwnership() {
+    // The opt-in only replaces the mapper requirement; every other gate stays.
+    po::Evidence e=good();
+    e.dmaMapperPresent=false;
+    e.physicalDmaOptIn=true;
+    e.physicalAddressesValid=true;
+    e.openSucceeded=false;
+    assert(po::decide(e).refusalMask==po::OpenFailed);
+    e.openSucceeded=true; e.recoveryAttested=false;
+    assert(po::decide(e).refusalMask==po::NoRecovery);
+    e.recoveryAttested=true; e.killOn=true;
+    assert(po::decide(e).refusalMask==po::KillSwitch);
+}
+
+static void mapperWinsOverPhysicalOptIn() {
+    po::Evidence e=good();
+    e.physicalDmaOptIn=true;
+    e.physicalAddressesValid=true;
+    const po::Decision d=po::decide(e);
+    assert(d.code==po::Code::Owned && d.dmaMode==po::DmaMode::Mapper);
+}
+
+static void optInWithoutFlagStillRefusesNoMapper() {
+    // Physical pages are not used unless the operator asked for them.
+    po::Evidence e=good();
+    e.dmaMapperPresent=false;
+    e.physicalAddressesValid=true;
+    assert(po::decide(e).refusalMask==po::NoDmaMapper);
 }
 
 static void ownedNeverGrantsWrites() {
@@ -96,5 +156,11 @@ int main() {
     emptyEvidenceRefusesWithGateOpen();
     ownedNeverGrantsWrites();
     evidenceBitsNameEveryInput();
+    mapperOwnsAndNamesItsMode();
+    physicalOptInOwnsWithoutMapper();
+    physicalOptInNeedsRepresentablePages();
+    physicalOptInDoesNotBypassOwnership();
+    mapperWinsOverPhysicalOptIn();
+    optInWithoutFlagStillRefusesNoMapper();
     puts("Navi33 PCI owner probe decision: PASS (offline)");
 }

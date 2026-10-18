@@ -121,19 +121,23 @@ bool Navi33Probe::start(IOService *provider) {
     const bool ownerGate=PE_parse_boot_argn("navi33-owner-probe",&ownerOn,sizeof(ownerOn)) && ownerOn==1u;
     const bool ownerKill=PE_parse_boot_argn("navi33-owner-off",&ownerOff,sizeof(ownerOff)) && ownerOff!=0u;
     const bool recovery=PE_parse_boot_argn("navi33-owner-recovery",&recoveryOn,sizeof(recoveryOn)) && recoveryOn==1u;
+    // Unmapped DMA: only when the card has no IOMapper, and only with this
+    // explicit opt-in. Recorded as Navi33,OwnerDmaMode; it grants no writes.
+    uint32_t physicalOn=0u;
+    const bool physicalOptIn=PE_parse_boot_argn("navi33-owner-physical",&physicalOn,sizeof(physicalOn)) && physicalOn==1u;
     // Hold: keeps the PCI open for one owner epoch, only when the decision is
     // Owned. Off by default; it blocks other clients from the card while held.
     uint32_t holdOn=0u;
     const bool holdGate=PE_parse_boot_argn("navi33-owner-hold",&holdOn,sizeof(holdOn)) && holdOn==1u;
     if(holdGate) {
         navi33::darwin_owner::ProbeReport report{};
-        const bool held=navi33::darwin_owner::holdOwner(pci,this,ownerKill,recovery,pciOwner_,pciOwnerTicket_,&report);
+        const bool held=navi33::darwin_owner::holdOwner(pci,this,ownerKill,recovery,physicalOptIn,pciOwner_,pciOwnerTicket_,&report);
         publishOwnerReport(report);
         setProperty("Navi33,OwnerHeld", static_cast<uint64_t>(held ? 1 : 0), 8);
         setProperty("Navi33,OwnerEpoch", static_cast<uint64_t>(pciOwnerTicket_.epoch), 32);
         setProperty("Navi33,OwnerPhase", static_cast<uint64_t>(pciOwner_.phase()), 8);
     } else if(ownerGate) {
-        publishOwnerReport(navi33::darwin_owner::runOwnerProbe(pci,this,true,ownerKill,recovery));
+        publishOwnerReport(navi33::darwin_owner::runOwnerProbe(pci,this,true,ownerKill,recovery,physicalOptIn));
     }
     // Report any explicitly enabled PSP or SMU write stage.
     uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u, smuOn=0u, smuOff=0u;
@@ -875,6 +879,7 @@ void Navi33Probe::publishOwnerReport(const navi33::darwin_owner::ProbeReport &r)
     setProperty("Navi33,OwnerRefusalMask", static_cast<uint64_t>(r.decision.refusalMask), 32);
     setProperty("Navi33,OwnerEvidence", static_cast<uint64_t>(bits), 32);
     setProperty("Navi33,OwnerDmaDomain", r.dmaDomain, 64);
+    setProperty("Navi33,OwnerDmaMode", static_cast<uint64_t>(r.decision.dmaMode), 8);
     char text[160];
     snprintf(text,sizeof(text),
              "code %u mask 0x%x gate %d kill %d identity %d open %d display %d mapper %d recovery %d domain 0x%llx",

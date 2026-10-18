@@ -11,6 +11,7 @@ namespace q1=navi33::queue1_memory;
 static po::Attestation good() {
     po::Attestation a{};
     a.pciDecision.code=pci::Code::Owned;
+    a.pciDecision.dmaMode=pci::DmaMode::Mapper;
     a.providerId=0x11u;
     a.dmaDomainId=0x22u;
     a.vendorId=po::kVendorAmd;
@@ -134,6 +135,47 @@ static void deviceOwnerFeedsTheMemoryContract() {
     assert(!o.toDeviceOwner(stale,d));
 }
 
+static po::Attestation physicalGood() {
+    po::Attestation a=good();
+    a.pciDecision.dmaMode=pci::DmaMode::PhysicalUnverified;
+    a.dmaDomainId=po::kUnmappedDomainId;
+    return a;
+}
+
+static void physicalOwnerIsExplicit() {
+    // Physical mode is accepted only with the sentinel domain it declares.
+    po::Owner o;
+    po::Ticket t=o.acquire(physicalGood());
+    assert(t && o.dmaMode()==pci::DmaMode::PhysicalUnverified);
+    q1::DeviceOwner d{};
+    assert(o.toDeviceOwner(t,d) && d.dmaDomainId==po::kUnmappedDomainId);
+    assert(o.release(t));
+
+    // Mapper mode carrying the sentinel is refused.
+    po::Attestation a=good();
+    a.dmaDomainId=po::kUnmappedDomainId;
+    po::Owner m1;
+    assert(!m1.acquire(a) && (m1.lastRefusal()&po::DomainModeMismatch));
+
+    // Physical mode naming a real IOMMU domain is refused.
+    a=physicalGood();
+    a.dmaDomainId=0x22u;
+    po::Owner m2;
+    assert(!m2.acquire(a) && (m2.lastRefusal()&po::DomainModeMismatch));
+
+    // An undecided mode is refused, whatever domain it names.
+    a=good();
+    a.pciDecision.dmaMode=pci::DmaMode::None;
+    po::Owner m3;
+    assert(!m3.acquire(a) && (m3.lastRefusal()&po::DomainModeMismatch));
+
+    // Physical mode with no sentinel and no domain is refused as a mismatch.
+    a=physicalGood();
+    a.dmaDomainId=0u;
+    po::Owner m4;
+    assert(!m4.acquire(a) && (m4.lastRefusal()&po::DomainModeMismatch));
+}
+
 int main() {
     acquireReleaseHappyPath();
     eachMissingEvidenceRefuses();
@@ -144,5 +186,6 @@ int main() {
     queueClaimNeedsLiveOwner();
     deviceOwnerFeedsTheMemoryContract();
     domainComesFromTheMapperOnly();
+    physicalOwnerIsExplicit();
     puts("Navi33 production PCI/queue owner state machine: PASS (offline)");
 }

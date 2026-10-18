@@ -116,6 +116,10 @@ Report inspectPhysicalCandidate() {
 }
 } // anonymous
 
+bool physicalCandidateReady() {
+    return inspectPhysicalCandidate().code==Code::PhysicalAddressOnly;
+}
+
 Report runOnce(IOPCIDevice *pci) {
     if(!pci) return {Code::RefusedDevice,0,0};
     const Identity id=inspectPci(

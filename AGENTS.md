@@ -187,6 +187,15 @@ navi33-dma-stage-off=1 navi33-fb-off=1 navi33-psp-off=1 navi33-sdma-off=1`.
   Kext 0.0.17 also tries to release a held owner in `systemWillShutdown` and
   `willTerminate`, but macOS shutdown does not reach either (VM run 2026-10-18 18:08).
   **Accepted limitation:** a held open lasts until power-off. Restart is not yet tested.
+- Unmapped DMA owner mode (kext 0.0.20, default off, never on the stick):
+  `navi33-owner-physical=1` (with `navi33-owner-probe` or `navi33-owner-hold`)
+  lets the owner accept the card when macOS has NO IOMapper for it. The
+  decision then names `DmaMode::PhysicalUnverified` (ioreg
+  `Navi33,OwnerDmaMode`=2) and the domain sentinel `NOMAP`. Preconditions:
+  CPU-physical pages must be representable (`physicalCandidateReady`). It
+  proves nothing about whether the GPU can reach those pages. The owner's
+  write gates stay closed (`kCanWriteGpu=false`). Any card run still needs
+  its own explicit approval.
 - Owner hold (kext 0.0.16, default off, never on the stick): `navi33-owner-hold=1`
   keeps `IOService::open` for one production-owner epoch when the decision is Owned,
   and releases it in `stop()`. While held, other clients cannot open the card. Needs

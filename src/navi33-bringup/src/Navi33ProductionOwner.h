@@ -34,6 +34,10 @@ inline uint64_t domainFromMapper(bool mapperPresent,uint64_t mapperRegistryId) {
     return mapperPresent ? mapperRegistryId : 0u;
 }
 
+// Domain value for a physically-addressed owner. It is a sentinel, not an
+// IOMMU domain: no mapper exists, so the owner must say so explicitly.
+constexpr uint64_t kUnmappedDomainId=0x4e4f4d4150ull; // "NOMAP"
+
 // The supported identity, from Navi33Identity.h and the RX 7600 facts.
 constexpr uint16_t kVendorAmd=0x1002u;
 constexpr uint16_t kDeviceNavi33=0x7480u;
@@ -46,6 +50,7 @@ enum Refusal : uint32_t {
     NoResetPath      = 1u<<3,  // no independent reset path was attested
     Busy             = 1u<<4,  // an owner exists in this epoch (Owned or Poisoned)
     EpochExhausted   = 1u<<5,
+    DomainModeMismatch = 1u<<6, // DMA mode and domain disagree, or mode missing
 };
 
 struct Attestation {
@@ -80,7 +85,18 @@ public:
     Ticket acquire(const Attestation &a) {
         uint32_t refused=0u;
         if(a.pciDecision.code!=pci_owner::Code::Owned) refused|=PciNotOwned;
-        if(a.providerId==0u || a.dmaDomainId==0u) refused|=MissingProvider;
+        if(a.providerId==0u) refused|=MissingProvider;
+        // The DMA mode must be decided and match the domain it names.
+        const pci_owner::DmaMode mode=a.pciDecision.dmaMode;
+        if(mode==pci_owner::DmaMode::PhysicalUnverified) {
+            if(a.dmaDomainId!=kUnmappedDomainId) refused|=DomainModeMismatch;
+        } else if(mode==pci_owner::DmaMode::Mapper) {
+            if(a.dmaDomainId==0u) refused|=MissingProvider;
+            // The sentinel names "no mapper"; a mapped owner may not claim it.
+            else if(a.dmaDomainId==kUnmappedDomainId) refused|=DomainModeMismatch;
+        } else {
+            refused|=DomainModeMismatch;
+        }
         if(a.vendorId!=kVendorAmd || a.deviceId!=kDeviceNavi33 ||
            a.revisionId!=kRevisionNavi33)
             refused|=WrongDevice;
@@ -93,6 +109,7 @@ public:
         phase_=Phase::Owned;
         providerId_=a.providerId;
         dmaDomainId_=a.dmaDomainId;
+        dmaMode_=mode;
         vendorId_=a.vendorId;
         deviceId_=a.deviceId;
         revisionId_=a.revisionId;
@@ -153,12 +170,14 @@ public:
     Phase phase() const { return phase_; }
     uint64_t epoch() const { return epoch_; }
     uint32_t lastRefusal() const { return lastRefusal_; }
+    pci_owner::DmaMode dmaMode() const { return dmaMode_; }
 
 private:
     Phase phase_=Phase::Unowned;
     uint64_t epoch_=0u;
     uint64_t providerId_=0u;
     uint64_t dmaDomainId_=0u;
+    pci_owner::DmaMode dmaMode_=pci_owner::DmaMode::None;
     uint16_t vendorId_=0u;
     uint16_t deviceId_=0u;
     uint8_t revisionId_=0u;

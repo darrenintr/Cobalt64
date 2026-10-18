@@ -15,18 +15,19 @@ namespace navi33 { namespace darwin_owner {
 struct ProbeReport {
     pci_owner::Evidence evidence{};
     pci_owner::Decision decision{};
-    uint64_t dmaDomain=0u;   // IOMapper registry id, 0 without a mapper
+    uint64_t dmaDomain=0u;   // IOMapper registry id; kUnmappedDomainId when physical
 };
 
 // Probe only: gathers Evidence, opens and closes the device once, and logs
 // the decision. The device is not held.
 ProbeReport runOwnerProbe(IOPCIDevice *pci,IOService *self,bool gateOn,bool killOn,
-                          bool recoveryAttested);
+                          bool recoveryAttested,bool physicalOptIn=false);
 
 // Hold: when the decision is Owned, keeps IOService::open for the owner epoch
 // and acquires the production owner. Any other outcome closes the device
 // before returning. Returns true only when a live ticket is held.
 bool holdOwner(IOPCIDevice *pci,IOService *self,bool killOn,bool recoveryAttested,
+               bool physicalOptIn,
                production_owner::Owner &owner,production_owner::Ticket &ticket,
                ProbeReport *report);
 

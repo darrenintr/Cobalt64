@@ -32,6 +32,12 @@ struct Report {
 // or exposes addresses through IORegistry.
 Report runOnce(IOPCIDevice *rx7600);
 
+// True when this host can represent ordinary pinned pages as CPU-physical
+// addresses for the device-IOMMU-free owner mode. It allocates and releases
+// one 64 KiB buffer and maps nothing for the GPU. It proves representability,
+// not that the GPU can reach those addresses.
+bool physicalCandidateReady();
+
 constexpr bool kHardwareDmaSubmissionEnabled=false;
 static_assert(!kHardwareDmaSubmissionEnabled, "IOMMU diagnostics cannot submit GPU DMA");
 

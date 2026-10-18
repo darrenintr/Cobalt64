@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "Navi33DarwinPciOwner.h"
+#include "Navi33DarwinDma.h"
 #include "Navi33Discovery.h"
 #include "Navi33Identity.h"
 #include <IOKit/IOLib.h>
@@ -40,10 +41,18 @@ static bool dmaMapperFor(IOPCIDevice *pci,uint64_t *domainOut) {
     return true;
 }
 
+// The domain names the translation the decision chose. Without a mapper and
+// with the physical opt-in, the domain is the unmapped sentinel.
+static void settleDomain(const pci_owner::Decision &d,uint64_t &domain) {
+    if(d.dmaMode==pci_owner::DmaMode::PhysicalUnverified)
+        domain=production_owner::kUnmappedDomainId;
+}
+
 // Gathers Evidence. keepOpen leaves IOService::open in place on success, so
 // the caller owns the close.
 static pci_owner::Evidence gather(IOPCIDevice *pci,IOService *self,bool gateOn,
-                                  bool killOn,bool recoveryAttested,bool keepOpen,
+                                  bool killOn,bool recoveryAttested,bool physicalOptIn,
+                                  bool keepOpen,
                                   navi33::Identity *idOut,uint64_t *domainOut) {
     pci_owner::Evidence e{};
     e.gateOn=gateOn;
@@ -61,19 +70,23 @@ static pci_owner::Evidence gather(IOPCIDevice *pci,IOService *self,bool gateOn,
         if(e.openSucceeded && !keepOpen) pci->close(self);
         e.displayClientAttached=displayClientAttached(pci);
         e.dmaMapperPresent=dmaMapperFor(pci,domainOut);
+        e.physicalDmaOptIn=physicalOptIn;
+        if(physicalOptIn && !e.dmaMapperPresent)
+            e.physicalAddressesValid=darwin_dma::physicalCandidateReady();
     }
     return e;
 }
 
 ProbeReport runOwnerProbe(IOPCIDevice *pci,IOService *self,bool gateOn,bool killOn,
-                          bool recoveryAttested) {
+                          bool recoveryAttested,bool physicalOptIn) {
     uint64_t domain=0u;
-    const pci_owner::Evidence e=gather(pci,self,gateOn,killOn,recoveryAttested,false,nullptr,&domain);
+    const pci_owner::Evidence e=gather(pci,self,gateOn,killOn,recoveryAttested,physicalOptIn,false,nullptr,&domain);
     const pci_owner::Decision d=pci_owner::decide(e);
-    IOLog("Navi33Probe: owner probe gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x\n",
+    settleDomain(d,domain);
+    IOLog("Navi33Probe: owner probe gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x dma %u\n",
           int(e.gateOn), int(e.killOn), int(e.identityOk), int(e.openSucceeded),
           int(e.displayClientAttached), int(e.recoveryAttested),
-          static_cast<unsigned>(d.code), d.refusalMask);
+          static_cast<unsigned>(d.code), d.refusalMask, static_cast<unsigned>(d.dmaMode));
     ProbeReport r{};
     r.evidence=e;
     r.decision=d;
@@ -82,17 +95,19 @@ ProbeReport runOwnerProbe(IOPCIDevice *pci,IOService *self,bool gateOn,bool kill
 }
 
 bool holdOwner(IOPCIDevice *pci,IOService *self,bool killOn,bool recoveryAttested,
+               bool physicalOptIn,
                production_owner::Owner &owner,production_owner::Ticket &ticket,
                ProbeReport *report) {
     navi33::Identity id{};
     uint64_t domain=0u;
-    const pci_owner::Evidence e=gather(pci,self,true,killOn,recoveryAttested,true,&id,&domain);
+    const pci_owner::Evidence e=gather(pci,self,true,killOn,recoveryAttested,physicalOptIn,true,&id,&domain);
     const pci_owner::Decision d=pci_owner::decide(e);
+    settleDomain(d,domain);
     if(report) { report->evidence=e; report->decision=d; report->dmaDomain=domain; }
-    IOLog("Navi33Probe: owner hold gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x\n",
+    IOLog("Navi33Probe: owner hold gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x dma %u\n",
           int(e.gateOn), int(e.killOn), int(e.identityOk), int(e.openSucceeded),
           int(e.displayClientAttached), int(e.recoveryAttested),
-          static_cast<unsigned>(d.code), d.refusalMask);
+          static_cast<unsigned>(d.code), d.refusalMask, static_cast<unsigned>(d.dmaMode));
     if(d.code!=pci_owner::Code::Owned) {
         if(e.openSucceeded && pci) pci->close(self);
         return false;
