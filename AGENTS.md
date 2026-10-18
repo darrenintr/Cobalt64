@@ -1455,6 +1455,26 @@ parser got two of them wrong:
   and chime. Expected answers: the owner verdict and the DMA preflight status,
   each saying whether macOS on this AMD-Vi board has a mapper for the card.
 
+- **2026-10-18 20:10, kext 0.0.19 on bare-metal macOS, boot autorun** (stick file
+  `navi33/results-20261018-201032-boot.txt`; first autorun result, so the
+  LaunchDaemon works). Loaded UUID `09C0C695-5593-3D51-A9DC-A64E6377C0F9` matches
+  the artifact of `8321114`. Write gates all closed.
+  - **No DMA mapper on bare metal:** `Navi33,OwnerProbe` = `code 1 mask 0x30`
+    (`NoRecovery | NoDmaMapper`), evidence `13` (gate, identity, open; display 0,
+    mapper 0, recovery 0), domain 0. The DMA preflight independently returned status
+    16 (`PhysicalAddressOnly`). The system has **0 IOMapper and 0 AppleVTD
+    instances**. So macOS on this AMD-Vi board gives no device an IOMMU domain, and
+    the owner's mapper requirement can never be met here as designed.
+  - **The display check is racy:** the system does drive the card, through Apple's
+    generic `IONDRVFramebuffer` (`.Display_boot`, 1920x1080, `IOFBMemorySize`
+    8294400, `system_profiler` "No Kext Loaded", VRAM 7 MB), yet the probe saw no
+    display child. The probe runs in `start()` before that framebuffer attaches, so
+    `display 0` on bare metal is not evidence. Also, the exclusive open succeeded
+    while the boot framebuffer was in use, so it does not hold an exclusive open.
+  - Gap: the ACPI-table grep printed nothing (the property is probably on another
+    class), so IVRS/DMAR presence was not captured.
+  - PSP plan state 11 (`NO_CONSOLE`) as before; no write of any kind.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
