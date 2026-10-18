@@ -300,6 +300,8 @@ for forbidden in ("configWrite", "WREG32(", "setBusMasterEnable", "setMemoryEnab
 assert 'PE_parse_boot_argn("navi33-owner-probe"' in source
 assert 'PE_parse_boot_argn("navi33-owner-off"' in source
 assert 'PE_parse_boot_argn("navi33-owner-recovery"' in source
+assert 'PE_parse_boot_argn("navi33-owner-hold"' in source
+assert 'releaseOwner(' in source, 'stop() must release a held owner'
 wfn=writer[writer.index("bool write32("):]
 wfn=wfn[:wfn.index("\n}\n")]
 assert "off!=io->allowed[0] && off!=io->allowed[1]" in wfn

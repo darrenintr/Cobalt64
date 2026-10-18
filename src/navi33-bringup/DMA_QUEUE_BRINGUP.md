@@ -503,3 +503,27 @@ the kext must hold its `IOService::open` for the whole epoch instead of closing
 it at once (today's 0.0.15 probe closes straight away), and it must feed the
 state machine from real IOKit results. Until then this stays a state machine
 without a live owner.
+
+## Stage G23: kext holds the PCI owner for an epoch (kext 0.0.16, CI only)
+
+The kext side of G22. With `navi33-owner-hold=1` (default off, never on the
+stick), `holdOwner()` keeps `IOService::open` for one production-owner epoch.
+It does this only when the decision is Owned, and any other outcome closes the
+device before returning. `stop()` releases the owner and closes the device. A
+poisoned owner is kept, so the open stays until an independent reset.
+
+- Identity: `providerId` is the card's registry entry ID. `dmaDomainId` is the
+  probe's own registry entry ID, not yet an `IODMACommand` domain, so that link
+  is still open.
+- Properties: `Navi33,OwnerHeld`, `Navi33,OwnerEpoch` and `Navi33,OwnerPhase`.
+- No GPU or config write was added. The change is the PCI open and its close.
+- Checks run: host suites on g++ and clang++ with sanitizers, the bootstrap
+  tests, the manifest (which now requires the hold gate and `releaseOwner`), and
+  a kernel `-fsyntax-only` of `Navi33DarwinPciOwner.cpp` and `Navi33Probe.cpp`
+  against the RDNA4FB headers, which pass.
+
+**Not run.** Holding the card open has not been run on the card. It blocks other
+clients, including the display stack, while held. A run needs a fresh CI
+artifact, a VM boot with the hold gate set, and a check that the guest's
+probe and release log lines appear. It is on-card work, so it falls under the
+standing card-run scope, and it must not touch the VBIOS.

@@ -121,7 +121,16 @@ bool Navi33Probe::start(IOService *provider) {
     const bool ownerGate=PE_parse_boot_argn("navi33-owner-probe",&ownerOn,sizeof(ownerOn)) && ownerOn==1u;
     const bool ownerKill=PE_parse_boot_argn("navi33-owner-off",&ownerOff,sizeof(ownerOff)) && ownerOff!=0u;
     const bool recovery=PE_parse_boot_argn("navi33-owner-recovery",&recoveryOn,sizeof(recoveryOn)) && recoveryOn==1u;
-    if(ownerGate)
+    // Hold: keeps the PCI open for one owner epoch, only when the decision is
+    // Owned. Off by default; it blocks other clients from the card while held.
+    uint32_t holdOn=0u;
+    const bool holdGate=PE_parse_boot_argn("navi33-owner-hold",&holdOn,sizeof(holdOn)) && holdOn==1u;
+    if(holdGate) {
+        const bool held=navi33::darwin_owner::holdOwner(pci,this,ownerKill,recovery,pciOwner_,pciOwnerTicket_);
+        setProperty("Navi33,OwnerHeld", static_cast<uint64_t>(held ? 1 : 0), 8);
+        setProperty("Navi33,OwnerEpoch", static_cast<uint64_t>(pciOwnerTicket_.epoch), 32);
+        setProperty("Navi33,OwnerPhase", static_cast<uint64_t>(pciOwner_.phase()), 8);
+    } else if(ownerGate)
         navi33::darwin_owner::runOwnerProbe(pci,this,true,ownerKill,recovery);
     // Report any explicitly enabled PSP or SMU write stage.
     uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u, smuOn=0u, smuOff=0u;
@@ -856,6 +865,10 @@ void Navi33Probe::releaseStageOwner(const void *client,uint64_t epoch) {
 }
 
 void Navi33Probe::stop(IOService *provider) {
+    if(pciOwnerTicket_) {
+        navi33::darwin_owner::releaseOwner(OSDynamicCast(IOPCIDevice, provider),this,pciOwner_,pciOwnerTicket_);
+        setProperty("Navi33,OwnerHeld", static_cast<uint64_t>(0), 8);
+    }
     if(stageOwnerLock_) {
         IOLockLock(stageOwnerLock_);
         stageOwner_.shutdown();

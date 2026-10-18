@@ -29,7 +29,7 @@ LDFLAGS := -arch $(ARCH) -target $(ARCH)-apple-macos$(DEPLOY) \
 .PHONY: all clean host-test physical-io-check metal-format-sdk-check
 all: $(KEXT)
 
-$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33DarwinPciOwner.h src/Navi33PciOwner.h src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h src/Navi33LiveMmio.h src/Navi33HwProbeLogic.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33Nbio43Capacity.h src/Navi33VramSurvey.h src/Navi33Psp13Status.h src/Navi33Psp13Firmware.h src/Navi33Sdma6Status.h src/Navi33Sdma6QueueCensus.h src/Navi33MmioPeek.h src/Navi33PeekWindows.h src/Navi33Probe.hpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h src/Navi33DarwinStage.h src/Navi33StageOwner.h src/Navi33DarwinPspLoad.h
+$(BUILD)/Navi33Probe.o: src/Navi33Probe.cpp src/Navi33DarwinPciOwner.h src/Navi33PciOwner.h src/Navi33ProductionOwner.h src/Navi33Identity.h src/Navi33Discovery.h src/Navi33HardwarePlan.h src/Navi33Dcn321.h src/Navi33FirmwareGuard.h src/Navi33Sdma6Packet.h src/Navi33Gmc11Gart.h src/Navi33GpuVaArena.h src/Navi33Sdma6Ring.h src/Navi33DmaScatter.h src/Navi33DarwinDma.h src/Navi33LiveMmio.h src/Navi33HwProbeLogic.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33Nbio43Capacity.h src/Navi33VramSurvey.h src/Navi33Psp13Status.h src/Navi33Psp13Firmware.h src/Navi33Sdma6Status.h src/Navi33Sdma6QueueCensus.h src/Navi33MmioPeek.h src/Navi33PeekWindows.h src/Navi33Probe.hpp src/Navi33NativeClient.hpp src/Navi33NativePolicy.h src/Navi33DarwinStage.h src/Navi33StageOwner.h src/Navi33DarwinPspLoad.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -80,7 +80,7 @@ $(BUILD)/Navi33DarwinPspFw.o: src/Navi33DarwinPspFw.cpp src/Navi33Psp13FwLoad.h 
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD)/Navi33DarwinPciOwner.o: src/Navi33DarwinPciOwner.cpp src/Navi33DarwinPciOwner.h src/Navi33PciOwner.h src/Navi33Identity.h src/Navi33Discovery.h
+$(BUILD)/Navi33DarwinPciOwner.o: src/Navi33DarwinPciOwner.cpp src/Navi33DarwinPciOwner.h src/Navi33PciOwner.h src/Navi33ProductionOwner.h src/Navi33Sdma6Queue1MemoryContract.h src/Navi33Identity.h src/Navi33Discovery.h
 	$(CXX) $(CXXFLAGS) -c src/Navi33DarwinPciOwner.cpp -o $@
 
 $(BUILD)/Navi33DarwinSmu.o: src/Navi33DarwinSmu.cpp src/Navi33Smu13Enable.h src/Navi33DarwinPspLoad.h src/Navi33NativeABI.h src/Navi33HardwarePlan.h src/Navi33Discovery.h

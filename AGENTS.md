@@ -175,6 +175,10 @@ navi33-dma-stage-off=1 navi33-fb-off=1 navi33-psp-off=1 navi33-sdma-off=1`.
   runs one `IOService::open`/`close` on the provider and a framebuffer/accelerator
   child scan, and logs the decision. `navi33-owner-off` kills it,
   `navi33-owner-recovery=1` is the operator's recovery attestation. Config reads only.
+- Owner hold (kext 0.0.16, default off, never on the stick): `navi33-owner-hold=1`
+  keeps `IOService::open` for one production-owner epoch when the decision is Owned,
+  and releases it in `stop()`. While held, other clients cannot open the card. Needs
+  `navi33-owner-recovery=1`. Publishes `Navi33,OwnerHeld`, `OwnerEpoch`, `OwnerPhase`.
 - `--probe` reports "no ROM": the Mac has no `ATY,bin_image` property.
   That is why `rx7600-ipd.bin` (built by `tools/ipd-from-capture.py`) is
   passed explicitly.

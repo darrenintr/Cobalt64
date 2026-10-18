@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include "Navi33NativeABI.h"
 #include "Navi33StageOwner.h"
+#include "Navi33ProductionOwner.h"
 #include <IOKit/IOLib.h>
 
 class Navi33Probe : public IOService {
@@ -62,4 +63,8 @@ private:
     bool pspRingAttempted_ = false; // same for the ring stage
     bool smuAttempted_ = false;
     bool pspFwAttempted_ = false;   // same for the IP firmware stage
+    // Held PCI owner (navi33-owner-hold=1 only). The ticket is nonzero while
+    // IOService::open is held; stop() releases it.
+    navi33::production_owner::Owner pciOwner_{};
+    navi33::production_owner::Ticket pciOwnerTicket_{};
 };

@@ -26,9 +26,11 @@ static bool displayClientAttached(IOPCIDevice *pci) {
     return found;
 }
 
-pci_owner::Decision runOwnerProbe(IOPCIDevice *pci,IOService *self,
-                                  bool gateOn,bool killOn,
-                                  bool recoveryAttested) {
+// Gathers Evidence. keepOpen leaves IOService::open in place on success, so
+// the caller owns the close.
+static pci_owner::Evidence gather(IOPCIDevice *pci,IOService *self,bool gateOn,
+                                  bool killOn,bool recoveryAttested,bool keepOpen,
+                                  navi33::Identity *idOut) {
     pci_owner::Evidence e{};
     e.gateOn=gateOn;
     e.killOn=killOn;
@@ -38,19 +40,69 @@ pci_owner::Decision runOwnerProbe(IOPCIDevice *pci,IOService *self,
             pci->configRead32(kIOPCIConfigVendorID),
             pci->configRead32(kIOPCIConfigRevisionID));
         e.identityOk=navi33::isSupported(id);
+        if(idOut) *idOut=id;
         // IOService::open fails while another client holds the device, so a
         // true result is an observation that nobody else held it right now.
-        // The matching close returns it at once.
         e.openSucceeded=pci->open(self);
-        if(e.openSucceeded) pci->close(self);
+        if(e.openSucceeded && !keepOpen) pci->close(self);
         e.displayClientAttached=displayClientAttached(pci);
     }
+    return e;
+}
+
+pci_owner::Decision runOwnerProbe(IOPCIDevice *pci,IOService *self,
+                                  bool gateOn,bool killOn,
+                                  bool recoveryAttested) {
+    const pci_owner::Evidence e=gather(pci,self,gateOn,killOn,recoveryAttested,false,nullptr);
     const pci_owner::Decision d=pci_owner::decide(e);
     IOLog("Navi33Probe: owner probe gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x\n",
           int(e.gateOn), int(e.killOn), int(e.identityOk), int(e.openSucceeded),
           int(e.displayClientAttached), int(e.recoveryAttested),
           static_cast<unsigned>(d.code), d.refusalMask);
     return d;
+}
+
+bool holdOwner(IOPCIDevice *pci,IOService *self,bool killOn,bool recoveryAttested,
+               production_owner::Owner &owner,production_owner::Ticket &ticket) {
+    navi33::Identity id{};
+    const pci_owner::Evidence e=gather(pci,self,true,killOn,recoveryAttested,true,&id);
+    const pci_owner::Decision d=pci_owner::decide(e);
+    IOLog("Navi33Probe: owner hold gate=%d kill=%d identity=%d open=%d display=%d recovery=%d -> code %u mask 0x%x\n",
+          int(e.gateOn), int(e.killOn), int(e.identityOk), int(e.openSucceeded),
+          int(e.displayClientAttached), int(e.recoveryAttested),
+          static_cast<unsigned>(d.code), d.refusalMask);
+    if(d.code!=pci_owner::Code::Owned) {
+        if(e.openSucceeded && pci) pci->close(self);
+        return false;
+    }
+    // providerId: the kernel's registry identity for the card. dmaDomainId is
+    // the probe's own registry identity; it is not yet an IODMACommand domain.
+    production_owner::Attestation a{};
+    a.pciDecision=d;
+    a.providerId=pci->getRegistryEntryID();
+    a.dmaDomainId=self->getRegistryEntryID();
+    a.vendorId=id.vendorId;
+    a.deviceId=id.deviceId;
+    a.revisionId=id.revisionId;
+    a.independentResetAvailable=recoveryAttested;
+    ticket=owner.acquire(a);
+    if(!ticket) {
+        IOLog("Navi33Probe: owner acquire refused, mask 0x%x\n", owner.lastRefusal());
+        pci->close(self);
+        return false;
+    }
+    IOLog("Navi33Probe: owner held, epoch %llu\n", static_cast<unsigned long long>(ticket.epoch));
+    return true;
+}
+
+void releaseOwner(IOPCIDevice *pci,IOService *self,
+                  production_owner::Owner &owner,production_owner::Ticket &ticket) {
+    if(!ticket) return;
+    const bool released=owner.release(ticket);
+    IOLog("Navi33Probe: owner release epoch %llu -> %s\n", static_cast<unsigned long long>(ticket.epoch),
+          released ? "released" : "kept (poisoned)");
+    ticket=production_owner::Ticket{};
+    if(pci && self) pci->close(self);
 }
 
 } } // namespace navi33::darwin_owner
