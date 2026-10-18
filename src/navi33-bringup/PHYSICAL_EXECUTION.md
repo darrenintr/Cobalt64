@@ -110,7 +110,7 @@ decoded against upstream `psp_v13_0.c`, `smu_v13_0.c`, `imu_v11_0.c`,
   (`FB_LOCATION` `0x8000/0x81ff`), with the system aperture over the same
   range. NBIO memsize reads 8176 MiB.
 
-### PSP13 sOS load stage (Navi33Probe 0.0.6, N33N ABI 9; not yet run)
+### PSP13 sOS load stage (Navi33Probe 0.0.7, N33N ABI 9; not yet run)
 
 The first GPU write, approved by the user on 2026-10-18 with SSH as the
 recovery path. `N33_SEL_PSP_LOAD` has two modes:
@@ -127,9 +127,12 @@ The plan refuses unless all of these hold:
    (SHA-256), and it holds exactly KDB, SPL, SYS_DRV, TOC and sOS.
 2. `C2PMSG_81` = 0 (no sOS) and `C2PMSG_35` = `0x80000000` exactly.
 3. MMHUB `FB_LOCATION` is posted. If DCN's copy is set, it agrees.
-4. The GOP console (`getConsoleInfo`) lies inside BAR0, and an active
-   HUBP primary surface sits at MC base + the console's BAR0 offset.
-   This proves BAR0 offset == VRAM offset without writing anything.
+4. The GOP console lies inside BAR0, and an active HUBP primary surface
+   sits at MC base + the console's BAR0 offset. This proves BAR0 offset
+   == VRAM offset without writing anything. The console's physical base
+   comes from `boot_args->Video`. 0.0.6 used `getConsoleInfo()`, which
+   on the Mac returned the kernel's virtual mapping
+   (`0xffffffa06a800000`), so its plan refused with state 11.
 5. `fw_pri` at VRAM offset 240 MiB keeps 16 MiB clear of the console
    and of every active surface (each counted as at least 32 MiB). It
    must also lie inside VRAM.

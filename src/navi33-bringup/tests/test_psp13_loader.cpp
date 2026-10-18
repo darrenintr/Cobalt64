@@ -209,6 +209,16 @@ int main(int argc,char **argv) {
     assert(pl::plan(s,console,bar0).state==N33_PSPL_BAD_FB_LOCATION); // DCN disagrees
     s.dcnFbTop=0x8000u;
     assert(pl::plan(s,console,bar0).state==N33_PSPL_NO_WINDOW);
+    // 2026-10-18, kext 0.0.6: getConsoleInfo() gave the kernel's mapping of
+    // the console, so the plan refused. Only a physical address may pass.
+    pl::Range c=pl::bootConsole(0xffffffa06a800000ull,7680u,1080u);
+    assert(!c.phys && !c.bytes);
+    assert(pl::plan(measured(),c,bar0).state==N33_PSPL_NO_CONSOLE);
+    assert(!pl::bootConsole(pl::kPhysLimit,7680u,1080u).phys);
+    c=pl::bootConsole(0x830000001ull,7680u,1080u);           // flag bit
+    assert(c.phys==0x830000000ull && c.bytes==8100ull*1024u);
+    p=pl::plan(measured(),c,{0x830000000ull,kBar0});          // this Mac's BAR0
+    assert(p.state==N33_PSPL_PLAN_OK && p.fwPriMc==0x800f000000ull);
     assert(pl::clearOf(240ull<<20,0u,kConsole));
     assert(!pl::clearOf(240ull<<20,(240ull<<20)+(1ull<<20)+(15ull<<20),1u));
 

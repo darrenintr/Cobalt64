@@ -276,6 +276,10 @@ assert 'PE_parse_boot_argn("navi33-psp-off"' in load_fn
 assert "req.attempted=&pspLoadAttempted_;" in load_fn
 assert "IOLockLock(pspLock_)" in load_fn
 assert "navi33::darwin_psp::execute(pci,req)" in load_fn
+# getConsoleInfo() returned a kernel virtual address on hardware (0.0.6);
+# the console must come from boot_args through the physical-only filter.
+assert "PE_state.bootArgs" in load_fn and "psp13load::bootConsole(" in load_fn
+assert "getConsoleInfo" not in load_fn
 writer=(root/"src/Navi33DarwinPspLoad.cpp").read_text()
 assert "$(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/kmod_info.o -o $(EXEC)" in makefile
 wfn=writer[writer.index("bool write32("):]

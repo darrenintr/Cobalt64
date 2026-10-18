@@ -24,6 +24,7 @@
 #include "Navi33Gfx11Command.h"
 #include "Navi33LiveMmio.h"
 #include "Navi33Psp13Status.h"
+#include "Navi33Psp13Loader.h"
 #include "Navi33Sdma6Status.h"
 #include "Navi33Sdma6QueueCensus.h"
 #include "Navi33HwProbeLogic.h"
@@ -654,13 +655,12 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     req.writeGate=PE_parse_boot_argn("navi33-psp-load",&load,sizeof(load)) &&
         load==1u && !(PE_parse_boot_argn("navi33-psp-off",&pspOff,
                                          sizeof(pspOff)) && pspOff!=0u);
-    // The GOP console is the region fw_pri must stay clear of. v_baseAddr
-    // can carry flag bits below the page (RDNA4FB saw 0x840000001).
-    PE_Video video{};
-    IOPlatformExpert *platform=getPlatform();
-    if(platform && platform->getConsoleInfo(&video)==kIOReturnSuccess) {
-        req.consolePhys=static_cast<uint64_t>(video.v_baseAddr)&~0xfffull;
-        req.consoleBytes=static_cast<uint64_t>(video.v_rowBytes)*video.v_height;
+    // The GOP console is the region fw_pri must stay clear of, by physical
+    // address, so from boot_args (see psp13load::bootConsole).
+    if(const auto *ba=static_cast<const boot_args *>(PE_state.bootArgs)) {
+        const navi33::psp13load::Range c=navi33::psp13load::bootConsole(
+            ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_height);
+        req.consolePhys=c.phys;req.consoleBytes=c.bytes;
     }
     IOLockLock(pspLock_);
     req.attempted=&pspLoadAttempted_;

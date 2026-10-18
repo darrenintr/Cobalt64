@@ -224,6 +224,28 @@ parser got two of them wrong:
   - Plan output to check before any load: state 14 (`PLAN_OK`), console
     inside BAR0, an active HUBP surface at the console's offset, and
     `fw_pri` MC `0x80_0F00_0000`.
+- **2026-10-18, kext 0.0.6 (N33N ABI 9): first `n33psp --load`, refused
+  by the plan, no write** (`psp-load-20261018-081128.txt`,
+  `results-20261018-081136-manual.txt`). The loaded UUID `4B6769B0…`
+  matches the artifact. The boot-args had `navi33-psp-load=1` and no
+  `navi33-psp-off`, so the write gate was open (flags `0x19`:
+  fw-pinned, dcn-fb-match, gate open).
+  - State 11 (`NO_CONSOLE`): `getConsoleInfo()` returned
+    `0xffffffa06a800000`, a kernel virtual address, not a physical one.
+    Most likely the framebuffer that owns the console by then has
+    replaced `PE_state.video` with its own mapping (not verified).
+    Navi48 reads it from `stagePSP()` at boot and saw a physical value.
+    The console size, 8100 KiB (1920×1080×4), was right. "pipes 0x0"
+    only means the plan stopped before the HUBP loop.
+  - The other inputs looked right, but the checks after the console
+    check never ran: `C2PMSG_35` = `0x80000000`, `C2PMSG_81` = 0, MMHUB
+    and DCN `FB_LOCATION` `0x8000-0x81ff`, HUBP0 surface MC
+    `0x80_0000_0000` (VRAM offset 0). BAR0 is at `0x8_3000_0000`.
+  - `n33peek --all` is byte-for-byte identical to the 0.0.5 run, so the
+    PSP is in the same bootloader-ready state as on 2026-10-17.
+  - Fixed in 0.0.7: the console comes from `PE_state.bootArgs->Video`,
+    which keeps the physical base, through `psp13load::bootConsole()`.
+    That helper rejects anything at or above 2^52.
 
 ## Adding a register read
 
@@ -285,7 +307,8 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
 
 1. IP discovery and read-only probe (done).
 2. PSP: load sOS (stages 4–8). This is the **first GPU write**.
-   Implemented in kext 0.0.6 (N33N ABI 9); not yet run on hardware.
+   Implemented in kext 0.0.6 (N33N ABI 9). Its plan refused on hardware
+   (console address was virtual, see the log); fixed in 0.0.7.
    - Precondition: `C2PMSG_35` = `0x80000000`. Met on 2026-10-17 (kext
      0.0.5), with no sOS loaded and the SMU already running.
    - Sequence (upstream `psp_v13_0.c`): KDB, SPL (KDB bytes), SYS_DRV,

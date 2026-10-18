@@ -15,7 +15,7 @@ struct Request {
     size_t romBytes=0u;
     const uint8_t *fw=nullptr;    // psp_13_0_7_sos.bin
     size_t fwBytes=0u;
-    uint64_t consolePhys=0u, consoleBytes=0u; // getConsoleInfo()
+    uint64_t consolePhys=0u, consoleBytes=0u; // boot_args->Video, physical
     bool writeGate=false;         // navi33-psp-load=1 and no navi33-psp-off
     bool *attempted=nullptr;      // provider-wide, one load per boot
 };

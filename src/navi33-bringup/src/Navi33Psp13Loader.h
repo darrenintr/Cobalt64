@@ -150,6 +150,15 @@ inline bool readSnapshot(const Registers &r,Read read,void *ctx,Snapshot &s) {
 }
 
 struct Range { uint64_t phys=0u, bytes=0u; };
+// The GOP console as the boot loader handed it over (boot_args->Video).
+// getConsoleInfo() is useless here: once a framebuffer owns the console it
+// returns the kernel's mapping (0xffffffa06a800000 on 2026-10-18). Low bits
+// can carry flags (RDNA4FB saw 0x840000001); x86-64 physical is 52 bits.
+constexpr uint64_t kPhysLimit=1ull<<52u;
+inline Range bootConsole(uint64_t base,uint32_t rowBytes,uint32_t height) {
+    if(base>=kPhysLimit)return Range{};
+    return Range{base&~0xfffull,static_cast<uint64_t>(rowBytes)*height};
+}
 struct Plan {
     n33_psp_load_state state=N33_PSPL_BAD_REQUEST;
     uint32_t flags=0u, activePipes=0u;
