@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 10u /* 9: PSP_LOAD; 10: PSP ring modes + wider result */
+#define N33_ABI_VERSION 11u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -199,7 +199,17 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
 #define N33_PSP_RING_STOP_RING 1u
 #define N33_PSP_RING_STOP_TOC 2u
 #define N33_PSP_RING_STOP_TMR 3u
-#define N33_PSP_LOAD_MAX_INPUT (2u*1024u*1024u)
+/* IP firmware stage (after the ring and TMR exist): LOAD_IP_FW for the records
+ * [start_at, stop_after) of the 26-record list of Navi33Psp13IpFw.h; the input
+ * after the IP Discovery blob is the eight pinned firmware files concatenated
+ * in File order (their sizes are pinned, so no lengths are sent). stop_after
+ * 27 also sends AUTOLOAD_RLC, which needs its own boot-arg. The SMU image is
+ * never sent. FW_PLAN reads only; FW_RUN needs navi33-psp-fw=1. */
+#define N33_PSP_LOAD_FW_PLAN 5u
+#define N33_PSP_LOAD_FW_RUN 6u
+#define N33_PSP_FW_RECORDS 26u
+#define N33_PSP_FW_STOP_AUTOLOAD 27u
+#define N33_PSP_LOAD_MAX_INPUT (4u*1024u*1024u)
 enum n33_psp_load_state {
   N33_PSPL_DISABLED=0, N33_PSPL_BAD_REQUEST=1, N33_PSPL_NO_PROVIDER=2,
   N33_PSPL_BAD_ROM=3, N33_PSPL_BAD_FIRMWARE=4, N33_PSPL_NO_BARS=5,
@@ -215,14 +225,18 @@ enum n33_psp_load_state {
   N33_PSPL_SOS_NOT_ALIVE=21, N33_PSPL_RING_NOT_READY=22,
   N33_PSPL_RING_REGS_UNEXPECTED=23, N33_PSPL_RING_CREATE_TIMEOUT=24,
   N33_PSPL_CMD_TIMEOUT=25, N33_PSPL_CMD_FAILED=26, N33_PSPL_TOC_BAD=27,
-  N33_PSPL_RING_DONE=28
+  N33_PSPL_RING_DONE=28,
+  /* IP firmware stage */
+  N33_PSPL_RING_MISSING=29, N33_PSPL_FW_BAD_IMAGES=30,
+  N33_PSPL_AUTOLOAD_DISABLED=31, N33_PSPL_FW_DONE=32
 };
 /* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
 enum n33_psp_load_step {
   N33_PSPL_STEP_NONE=0, N33_PSPL_STEP_KDB=1, N33_PSPL_STEP_SPL=2,
   N33_PSPL_STEP_SYS_DRV=3, N33_PSPL_STEP_SOS=4,
   N33_PSPL_STEP_RING_CREATE=5, N33_PSPL_STEP_LOAD_TOC=6,
-  N33_PSPL_STEP_SETUP_TMR=7
+  N33_PSPL_STEP_SETUP_TMR=7, N33_PSPL_STEP_FW_LOAD=8,
+  N33_PSPL_STEP_AUTOLOAD=9
 };
 #define N33_PSPL_FLAG_FW_PINNED (1u<<0)
 #define N33_PSPL_FLAG_CONSOLE_FOUND (1u<<1)
@@ -233,8 +247,8 @@ enum n33_psp_load_step {
 #define N33_PSPL_FLAG_WROTE_REGISTERS (1u<<6)
 struct n33_psp_load_request {
   uint32_t abi_version, size, mode, rom_bytes;
-  uint32_t fw_bytes, stop_after; /* stop_after: ring modes only, else 0 */
-  uint64_t reserved1;
+  uint32_t fw_bytes, stop_after; /* stop_after: ring and fw modes only, else 0 */
+  uint64_t start_at;             /* fw modes: first record; else 0 */
 };
 N33_STATIC_ASSERT(sizeof(struct n33_psp_load_request)==32,
                   "N33 PSP load request must be 32 bytes");
@@ -245,9 +259,11 @@ struct n33_psp_load_result {
   uint32_t mm_fb_base, mm_fb_top, dcn_fb_base, active_pipes;
   uint64_t surface_mc[4];
   uint64_t console_phys, console_bytes, bar0_phys, bar0_bytes;
-  uint64_t console_vram_offset, fw_pri_vram_offset, fw_pri_mc, reserved0;
+  uint64_t console_vram_offset, fw_pri_vram_offset, fw_pri_mc;
+  uint64_t fw_tmr_addr;          /* fw modes: TMR address the PSP gave the last record */
   uint32_t fw_sos_version, fw_kdb_bytes, fw_spl_bytes, fw_sys_bytes;
-  uint32_t fw_sos_bytes, elapsed_ms, reserved1, reserved2;
+  uint32_t fw_sos_bytes, elapsed_ms;
+  uint32_t fw_last_record, fw_record_count; /* fw modes: last record sent, list size */
   /* ring stage (zero for the sOS load modes) */
   uint64_t ring_mc, cmd_mc, fence_mc, tmr_mc;
   uint32_t tmr_bytes, toc_bytes, c2pmsg64_last, c2pmsg67_last;
@@ -260,6 +276,9 @@ N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==256,
 #define N33_PSPR_FLAG_TOC_LOADED (1u<<2)
 #define N33_PSPR_FLAG_TMR_SET (1u<<3)
 #define N33_PSPR_FLAG_GATE_OPEN (1u<<4)
+#define N33_PSPR_FLAG_FW_LOADED (1u<<5)     /* at least one record sent */
+#define N33_PSPR_FLAG_AUTOLOAD_SENT (1u<<6)
+#define N33_PSPR_FLAG_AUTOLOAD_GATE (1u<<7) /* navi33-psp-autoload=1 */
 struct n33_capabilities {
   uint32_t abi_version, size, vendor_id, device_id;
   uint32_t gfx_ip_version, family, capabilities, reserved0;

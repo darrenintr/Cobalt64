@@ -271,7 +271,7 @@ int main(int argc,char **argv) {
     assert(res.fw_pri_mc==0x800f000000ull && res.surface_mc[0]==0x8000000000ull);
     assert((res.flags&N33_PSPL_FLAG_WROTE_VRAM) &&
            (res.flags&N33_PSPL_FLAG_WROTE_REGISTERS));
-    assert(!res.reserved0 && !res.reserved1 && !res.reserved2);
+    assert(!res.fw_tmr_addr && !res.fw_last_record && !res.fw_record_count && !res.reserved3);  // unused by the sOS load
 
     // Bootloader never comes back after the KDB command.
     Fake t;t.r=regs;t.neverReady=true;

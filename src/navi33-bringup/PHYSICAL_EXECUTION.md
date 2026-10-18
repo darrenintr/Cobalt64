@@ -257,3 +257,14 @@ the response), then for each command writes the command buffer and a ring
 frame, reads both back, advances `C2PMSG_67` and waits for the fence. A
 non-zero response status or a missing fence stops the run. The register
 writer accepts only `C2PMSG_64/67/69/70/71`.
+
+### PSP13 IP firmware stage (Navi33Probe 0.0.10, N33N ABI 11; not yet run)
+
+Runs after the ring and TMR exist. Modes `FW_PLAN` / `FW_RUN` of
+`N33_SEL_PSP_LOAD`; `n33psp --ip-fw-plan START STOP` / `--ip-fw START STOP
+--i-have-ssh`, with `--fwdir` pointing at the eight decompressed
+linux-firmware files. It sends `LOAD_IP_FW` for records `[START, STOP)` of the
+26-record list in `FIRMWARE_LOAD_DESIGN.md` through our ring; STOP 27 also
+sends `AUTOLOAD_RLC`. The SMU image is never sent. Gate: `navi33-psp-fw=1`,
+no `navi33-psp-off`, once per boot; `AUTOLOAD_RLC` also needs
+`navi33-psp-autoload=1`. The register writer accepts only `C2PMSG_67`.

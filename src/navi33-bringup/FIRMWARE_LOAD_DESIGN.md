@@ -74,22 +74,30 @@ own writable window, kept clear of the console and every surface by the same
 sits at 240-242 MiB; the TMR is far above, at 8128 MiB and written only by the
 PSP). The TMR does not need to be mapped by us.
 
-## What the kext would need (not built yet)
+## What the kext needs (built 2026-10-18, kext 0.0.10, ABI 11; not run on the card)
 
 - A parser (`Navi33Psp13IpFw.h`, pure and host-tested) that produces exactly the
   records in the golden JSON from the eight raw files; every offset and size
   bounds-checked; the eight files pinned by SHA-256 the way `psp_13_0_7_sos.bin`
   is. Test: it must reproduce `rx7600-fw-plan.json` record for record.
-- The input limit `N33_PSP_LOAD_MAX_INPUT` (2 MiB) is too small for eight files
-  (1,796,416 B) plus the IP Discovery blob and header with any margin; raise it
-  (ABI 11) or send the records instead of the files.
-- New modes of the same selector (FW_PLAN, FW_RUN), its own boot-arg
-  (`navi33-psp-fw=1`), its own once-per-boot flag, its own writer file with an
-  allowlist of exactly the ring registers (`C2PMSG_64/67/69/70/71`) and the
-  staging window. `navi33-psp-off` kills it too.
-- `stop_after` counts records, so the first run can be one small image.
-- `AUTOLOAD_RLC` is **not** part of loading records. It needs its own stop
-  value, its own gate, and its own explicit approval.
+- The input limit `N33_PSP_LOAD_MAX_INPUT` was 2 MiB, too small for eight files
+  (1,796,416 B); ABI 11 raises it to 4 MiB. The files are sent concatenated in
+  `File` order and split by their pinned sizes, so no lengths travel.
+- New modes of the same selector (`FW_PLAN` 5, `FW_RUN` 6), its own boot-arg
+  (`navi33-psp-fw=1`), its own once-per-boot flag and its own writer file
+  (`Navi33DarwinPspFw.cpp`). The allowlist is tighter than the ring stage's: **one
+  register, `C2PMSG_67`** (the ring already exists), and two VRAM zones (ring
+  pages, staging area) of an 8 MiB window. `navi33-psp-off` kills it too.
+- A run sends records `[start_at, stop_after)` (0-based, Linux order), so the
+  first run can be just the two SDMA images (`--ip-fw 0 2`). Each record has a
+  fixed page-aligned slot in the staging area, whichever range a run covers.
+- The plan refuses unless our ring exists (`RING_MISSING`), the files are the
+  exact pinned set (`FW_BAD_IMAGES`), the sOS is alive, and the console /
+  aperture / clear-window proof holds for the whole 8 MiB window.
+- `AUTOLOAD_RLC` is **not** part of loading records: stop value 27 only, and the
+  writer refuses it (`AUTOLOAD_DISABLED`, before any record is sent) unless
+  `navi33-psp-autoload=1` is set in addition to `navi33-psp-fw=1`. It needs its
+  own explicit approval.
 
 ## Order of real runs (each needs the user's yes)
 

@@ -12,7 +12,15 @@
  *       2 also sends LOAD_TOC, 3 also SETUP_TMR. --ring-plan writes nothing.
  *       --ring needs navi33-psp-ring=1 and no navi33-psp-off, and runs once
  *       per boot (a rerun resumes the existing ring).
- * Never run --load or --ring from run.sh or the boot autorun.
+ *   sudo n33psp --ip-fw-plan START STOP --rom ... --fwdir DIR
+ *   sudo n33psp --ip-fw START STOP --rom ... --fwdir DIR --i-have-ssh
+ *       The IP firmware stage, after the ring and TMR exist: LOAD_IP_FW for
+ *       the records [START, STOP) of the 26-record list (0-based). STOP 27
+ *       also sends AUTOLOAD_RLC, which needs navi33-psp-autoload=1 on top of
+ *       navi33-psp-fw=1. DIR holds the eight decompressed linux-firmware files
+ *       (gc_11_0_2_{pfp,me,mec,rlc,imu,mes_2,mes1}.bin and sdma_6_0_2.bin);
+ *       the Kext accepts only the pinned ones. The SMU image is never sent.
+ * Never run --load, --ring or --ip-fw from run.sh or the boot autorun.
  */
 #include "../src/Navi33NativeABI.h"
 #include <IOKit/IOKitLib.h>
@@ -53,13 +61,17 @@ static const char *stateText(uint32_t s) {
     case N33_PSPL_CMD_FAILED: return "ring command answered with an error status";
     case N33_PSPL_TOC_BAD: return "TOC missing or the TMR size/address is not acceptable";
     case N33_PSPL_RING_DONE: return "ring stage DONE";
+    case N33_PSPL_RING_MISSING: return "our KM ring does not exist: run the ring stage first";
+    case N33_PSPL_FW_BAD_IMAGES: return "firmware images are not the pinned set, or a header/offset is bad";
+    case N33_PSPL_AUTOLOAD_DISABLED: return "AUTOLOAD_RLC needs navi33-psp-autoload=1 (nothing was sent)";
+    case N33_PSPL_FW_DONE: return "firmware stage DONE";
     default: return "unknown state";
     }
 }
 static const char *stepText(uint32_t s) {
     static const char *names[]={"none","KDB","SPL","SYS_DRV","sOS","RING_CREATE",
-                                "LOAD_TOC","SETUP_TMR"};
-    return s<8u ? names[s] : "?";
+                                "LOAD_TOC","SETUP_TMR","FW_LOAD","AUTOLOAD_RLC"};
+    return s<10u ? names[s] : "?";
 }
 static uint8_t *slurp(const char *path,size_t max,size_t *len) {
     FILE *fp=fopen(path,"rb");
@@ -112,7 +124,20 @@ static void print(const struct n33_psp_load_result *r) {
                (r->ring_flags&N33_PSPR_FLAG_TOC_LOADED) ? " toc-loaded":"",
                (r->ring_flags&N33_PSPR_FLAG_TMR_SET) ? " tmr-set":"",
                (r->ring_flags&N33_PSPR_FLAG_GATE_OPEN) ? " WRITE-GATE-OPEN":"");
-        if(r->steps_done || r->register_writes)
+        if(r->ring_flags&N33_PSPR_FLAG_AUTOLOAD_GATE)puts("autoload gate: OPEN (navi33-psp-autoload=1)");
+        if(r->ring_flags&N33_PSPR_FLAG_FW_LOADED)puts("ring flags: fw-loaded");
+        if(r->fw_record_count) {
+            printf("fw: records %u in the list, last sent %u, staging/TMR address 0x%llx\n",
+                   r->fw_record_count,r->fw_last_record,
+                   (unsigned long long)r->fw_tmr_addr);
+            if(r->steps_done || r->register_writes)
+                printf("fw: reached %s, %u steps done%s, %u register writes, "
+                       "cmd status %08x, fence %u, %u ms\n",
+                       stepText(r->step),r->steps_done,
+                       (r->ring_flags&N33_PSPR_FLAG_AUTOLOAD_SENT) ? " (AUTOLOAD_RLC sent)":"",
+                       r->register_writes,r->cmd_status,r->fence_seen,r->elapsed_ms);
+        }
+        else if(r->steps_done || r->register_writes)
             printf("ring: reached %s, %u steps done, %u register writes, "
                    "cmd status %08x, fence %u, TOC %u B, TMR %u B, %u ms\n",
                    stepText(r->step),r->steps_done,r->register_writes,
@@ -128,14 +153,14 @@ static void print(const struct n33_psp_load_result *r) {
                r->c2pmsg35_last,r->c2pmsg81_after,r->sos_version_after,
                r->elapsed_ms);
 }
-static int call(io_connect_t conn,uint32_t mode,uint32_t stopAfter,
+static int call(io_connect_t conn,uint32_t mode,uint32_t startAt,uint32_t stopAfter,
                 const uint8_t *rom,size_t romLen,
                 const uint8_t *fw,size_t fwLen,struct n33_psp_load_result *r) {
     const size_t total=sizeof(struct n33_psp_load_request)+romLen+fwLen;
     uint8_t *req=malloc(total);
     if(!req)return 0;
     struct n33_psp_load_request h={N33_ABI_VERSION,sizeof(h),mode,
-                                   (uint32_t)romLen,(uint32_t)fwLen,stopAfter,0u};
+                                   (uint32_t)romLen,(uint32_t)fwLen,stopAfter,startAt};
     memcpy(req,&h,sizeof(h));
     memcpy(req+sizeof(h),rom,romLen);
     memcpy(req+sizeof(h)+romLen,fw,fwLen);
@@ -151,47 +176,88 @@ static int call(io_connect_t conn,uint32_t mode,uint32_t stopAfter,
     }
     return 1;
 }
+/* The eight pinned files, in the order Navi33Psp13IpFw.h expects them. */
+static const char *const kIpFwFiles[8]={
+    "gc_11_0_2_pfp","gc_11_0_2_me","gc_11_0_2_mec","gc_11_0_2_rlc",
+    "gc_11_0_2_imu","sdma_6_0_2","gc_11_0_2_mes_2","gc_11_0_2_mes1"};
+static uint8_t *slurpIpFw(const char *dir,size_t *len) {
+    const size_t max=N33_PSP_LOAD_MAX_INPUT-4096u-sizeof(struct n33_psp_load_request);
+    uint8_t *all=malloc(max);
+    size_t used=0u;
+    if(!all)return NULL;
+    for(int k=0;k<8;++k) {
+        char path[1024];
+        size_t n=0u;
+        snprintf(path,sizeof(path),"%s/%s.bin",dir,kIpFwFiles[k]);
+        uint8_t *one=slurp(path,max-used,&n);
+        if(!one || !n) {
+            fprintf(stderr,"Cannot read %s (the eight decompressed firmware files are needed).\n",path);
+            free(one);free(all);return NULL;
+        }
+        memcpy(all+used,one,n);used+=n;free(one);
+    }
+    *len=used;
+    return all;
+}
 int main(int argc,char **argv) {
-    const char *romPath=NULL,*fwPath=NULL;
-    int mode=0,ssh=0,bad=0;          /* mode: 1 plan, 2 load, 3 ring-plan, 4 ring */
-    uint32_t stop=0u;
+    const char *romPath=NULL,*fwPath=NULL,*fwDir=NULL;
+    /* mode: 1 plan, 2 load, 3 ring-plan, 4 ring, 5 ip-fw-plan, 6 ip-fw */
+    int mode=0,ssh=0,bad=0;
+    uint32_t start=0u,stop=0u;
     for(int a=1;a<argc && !bad;++a) {
         const char *arg=argv[a];
         if(!strcmp(arg,"--plan") || !strcmp(arg,"--load") ||
-           !strcmp(arg,"--ring-plan") || !strcmp(arg,"--ring")) {
+           !strcmp(arg,"--ring-plan") || !strcmp(arg,"--ring") ||
+           !strcmp(arg,"--ip-fw-plan") || !strcmp(arg,"--ip-fw")) {
             if(mode) {bad=1;break;}
             mode=!strcmp(arg,"--plan") ? 1 : !strcmp(arg,"--load") ? 2 :
-                 !strcmp(arg,"--ring-plan") ? 3 : 4;
-            if(mode>=3) {
+                 !strcmp(arg,"--ring-plan") ? 3 : !strcmp(arg,"--ring") ? 4 :
+                 !strcmp(arg,"--ip-fw-plan") ? 5 : 6;
+            if(mode==3 || mode==4) {
                 if(a+1>=argc || strlen(argv[a+1])!=1u ||
                    argv[a+1][0]<'1' || argv[a+1][0]>'3') {bad=1;break;}
                 stop=(uint32_t)(argv[++a][0]-'0');
+            } else if(mode>=5) {
+                char *e1=NULL,*e2=NULL;
+                if(a+2>=argc) {bad=1;break;}
+                const unsigned long s1=strtoul(argv[a+1],&e1,10);
+                const unsigned long s2=strtoul(argv[a+2],&e2,10);
+                if(!*argv[a+1] || *e1 || !*argv[a+2] || *e2 || s2<1ul ||
+                   s2>N33_PSP_FW_STOP_AUTOLOAD || s1>=s2) {bad=1;break;}
+                start=(uint32_t)s1;stop=(uint32_t)s2;a+=2;
             }
         }
         else if(!strcmp(arg,"--i-have-ssh"))ssh=1;
         else if(!strcmp(arg,"--rom") && a+1<argc)romPath=argv[++a];
         else if(!strcmp(arg,"--fw") && a+1<argc)fwPath=argv[++a];
+        else if(!strcmp(arg,"--fwdir") && a+1<argc)fwDir=argv[++a];
         else bad=1;
     }
-    const int writes=mode==2 || mode==4;
-    if(bad || !mode || !romPath || !fwPath || (writes && !ssh)) {
+    const int writes=mode==2 || mode==4 || mode==6;
+    const int ipfw=mode>=5;
+    if(bad || !mode || !romPath || (ipfw ? (!fwDir || fwPath) : (!fwPath || fwDir)) ||
+       (writes && !ssh)) {
         fputs("Usage: sudo n33psp --plan --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin\n"
               "       sudo n33psp --load --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin --i-have-ssh\n"
               "       sudo n33psp --ring-plan N --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin\n"
               "       sudo n33psp --ring N --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin --i-have-ssh\n"
+              "       sudo n33psp --ip-fw-plan START STOP --rom rx7600-ipd.bin --fwdir DIR\n"
+              "       sudo n33psp --ip-fw START STOP --rom rx7600-ipd.bin --fwdir DIR --i-have-ssh\n"
               "--plan writes nothing. --load is the first GPU write: run it over SSH;\n"
               "if the card stops answering, power the Mac off fully to reset the PSP.\n"
-              "--ring N (1 ring, 2 +LOAD_TOC, 3 +SETUP_TMR) needs the sOS alive.\n",
+              "--ring N (1 ring, 2 +LOAD_TOC, 3 +SETUP_TMR) needs the sOS alive.\n"
+              "--ip-fw sends records [START, STOP) of 26; STOP 27 adds AUTOLOAD_RLC.\n",
               stderr);
         return 1;
     }
     if(geteuid()!=0) {fputs("N33N requires root/admin.\n",stderr);return 2;}
     size_t romLen=0u,fwLen=0u;
     uint8_t *rom=slurp(romPath,4096u,&romLen);
-    uint8_t *fw=slurp(fwPath,N33_PSP_LOAD_MAX_INPUT-4096u-
+    uint8_t *fw=ipfw ? slurpIpFw(fwDir,&fwLen) :
+                slurp(fwPath,N33_PSP_LOAD_MAX_INPUT-4096u-
                       sizeof(struct n33_psp_load_request),&fwLen);
     if(!rom || romLen<64u || !fw || !fwLen) {
-        fputs("Cannot read the IP Discovery (64 B to 4 KiB) or firmware file.\n",stderr);
+        fputs("Cannot read the IP Discovery (64 B to 4 KiB) or the firmware.\n",stderr);
         free(rom);free(fw);return 8;
     }
     io_service_t svc=IOServiceGetMatchingService(
@@ -212,33 +278,43 @@ int main(int argc,char **argv) {
         fputs("N33N ABI version mismatch (Kext and n33psp must match).\n",stderr);
         IOServiceClose(conn);free(rom);free(fw);return 5;
     }
-    const int ringStage=mode>=3;
+    const int ringStage=mode==3 || mode==4;
+    const uint32_t planMode=ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
+                            N33_PSP_LOAD_PLAN;
+    const uint32_t runMode=ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
+                           N33_PSP_LOAD_RUN;
     struct n33_psp_load_result r;
     int rc=7;
-    puts(ringStage ? "== PSP13 KM ring plan (read-only)" : "== PSP13 sOS load plan (read-only)");
-    if(call(conn,ringStage ? N33_PSP_LOAD_RING_PLAN : N33_PSP_LOAD_PLAN,stop,
-            rom,romLen,fw,fwLen,&r)) {
+    puts(ipfw ? "== PSP13 IP firmware plan (read-only)" :
+         ringStage ? "== PSP13 KM ring plan (read-only)" : "== PSP13 sOS load plan (read-only)");
+    if(call(conn,planMode,start,stop,rom,romLen,fw,fwLen,&r)) {
         print(&r);
         rc=r.state==N33_PSPL_PLAN_OK ? 0 : 7;
     }
     if(writes && rc==0) {
-        const uint32_t gate=ringStage ? (r.ring_flags&N33_PSPR_FLAG_GATE_OPEN)
-                                      : (r.flags&N33_PSPL_FLAG_WRITE_GATE_OPEN);
+        const uint32_t gate=(ringStage||ipfw) ? (r.ring_flags&N33_PSPR_FLAG_GATE_OPEN)
+                                              : (r.flags&N33_PSPL_FLAG_WRITE_GATE_OPEN);
         if(!gate) {
-            puts(ringStage ?
+            puts(ipfw ? "Write gate closed: boot with navi33-psp-fw=1 and without navi33-psp-off=1." :
+                 ringStage ?
                  "Write gate closed: boot with navi33-psp-ring=1 and without navi33-psp-off=1." :
                  "Write gate closed: boot with navi33-psp-load=1 and without navi33-psp-off=1.");
             rc=6;
+        } else if(ipfw && stop==N33_PSP_FW_STOP_AUTOLOAD &&
+                  !(r.ring_flags&N33_PSPR_FLAG_AUTOLOAD_GATE)) {
+            puts("STOP 27 sends AUTOLOAD_RLC: boot with navi33-psp-autoload=1 as well. Nothing was sent.");
+            rc=6;
         } else {
-            puts(ringStage ?
+            puts(ipfw ? "== PSP13 IP FIRMWARE (writes the ring write pointer and the staging area)" :
+                 ringStage ?
                  "== PSP13 KM RING (writes C2PMSG_64/67/69/70/71 and the 2 MiB ring window)" :
                  "== PSP13 sOS LOAD (writes C2PMSG_35/36 and the fw_pri window)");
             fflush(stdout);
             rc=7;
-            if(call(conn,ringStage ? N33_PSP_LOAD_RING_RUN : N33_PSP_LOAD_RUN,stop,
-                    rom,romLen,fw,fwLen,&r)) {
+            if(call(conn,runMode,start,stop,rom,romLen,fw,fwLen,&r)) {
                 print(&r);
-                rc=r.state==(ringStage ? N33_PSPL_RING_DONE : N33_PSPL_SOS_ALIVE) ? 0 : 9;
+                rc=r.state==(ipfw ? N33_PSPL_FW_DONE : ringStage ? N33_PSPL_RING_DONE :
+                             N33_PSPL_SOS_ALIVE) ? 0 : 9;
             }
         }
     } else if(writes) {
@@ -247,6 +323,7 @@ int main(int argc,char **argv) {
     IOServiceClose(conn);
     free(rom);free(fw);
     puts(!writes ? "GPU writes: NONE; plan only." :
+         ipfw ? "GPU writes: PSP13 ring write pointer and the firmware staging area (see flags)." :
          ringStage ? "GPU writes: PSP13 KM ring registers and the ring window (see flags)." :
                      "GPU writes: PSP13 bootloader handshake only (see flags).");
     return rc;

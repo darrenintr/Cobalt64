@@ -25,7 +25,7 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
 
 ## Navi33 hard rules
 
-1. **The kext is read-only except two gated PSP stages.**
+1. **The kext is read-only except three gated PSP stages.**
    - The sOS load (approved and run 2026-10-18) may write only
      `C2PMSG_35`/`C2PMSG_36` and its 1 MiB `fw_pri` window in VRAM. It
      needs `navi33-psp-load=1`, is killed by `navi33-psp-off`, and runs at
@@ -36,6 +36,15 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      at most once per boot. The user approved writing it and running its
      read-only plan on 2026-10-18; its first real run needs a separate
      explicit yes (rule 2).
+   - The IP firmware stage (code since kext 0.0.10, ABI 11; **not yet
+     approved to run**) may write only `C2PMSG_67` (the ring write pointer)
+     and two zones of an 8 MiB window in VRAM (ring pages, staging area). It
+     needs `navi33-psp-fw=1`, is killed by `navi33-psp-off`, and runs at most
+     once per boot. It sends `LOAD_IP_FW` for records of the 26-record list
+     and never the SMU image. `AUTOLOAD_RLC` (stop value 27) is refused
+     unless `navi33-psp-autoload=1` is also set, and needs its own approval.
+     The user approved writing the code on 2026-10-18; every real run needs a
+     separate explicit yes (rule 2).
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -752,10 +761,25 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      leave the PSP state in place).
 3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Next: design
    written** (`src/navi33-bringup/FIRMWARE_LOAD_DESIGN.md`, 2026-10-18, no
-   code on the card): 26 `LOAD_IP_FW` records (SDMA, RS64 CP, MES, IMU, RLC)
+   code on the card until 0.0.10): 26 `LOAD_IP_FW` records (SDMA, RS64 CP, MES, IMU, RLC)
    then `AUTOLOAD_RLC`, **SMU image left out by the user's decision**;
    `tools/fwplan.py` computes the records from the real firmware files and
-   `tests/fixtures/rx7600-fw-plan.json` is the golden list. This
+   `tests/fixtures/rx7600-fw-plan.{json,tsv}` is the golden list.
+   **Built 2026-10-18 (kext 0.0.10, N33N ABI 11), not yet run on the card:**
+   pure parser `src/Navi33Psp13IpFw.h` (tests `test_psp13_ipfw`, which
+   compares the real files with the golden list record for record),
+   planner and runner `src/Navi33Psp13FwLoad.h` (tests `test_psp13_fwload`,
+   fake PSP, seven mutants caught), writer `src/Navi33DarwinPspFw.cpp`.
+   Modes `N33_PSP_LOAD_FW_PLAN` (5) / `FW_RUN` (6): records `[start_at,
+   stop_after)`, stop 27 adds `AUTOLOAD_RLC`; tool `n33psp --ip-fw-plan
+   START STOP --rom .. --fwdir DIR` and `--ip-fw START STOP .. --i-have-ssh`;
+   `vm/make-opencore.sh --psp-fw [--psp-autoload]`; `vm/guest-run.sh` now
+   copies the eight decompressed files to the guest's `~/navi33/fw`.
+   Window: 8 MiB at VRAM 240 MiB: ring pages at +1 MiB, one page-aligned
+   slot per record in list order at +4 MiB (2.42 MiB used). The plan needs
+   our ring to exist (otherwise `RING_MISSING`), the exact pinned files
+   (otherwise `FW_BAD_IMAGES`), and the same console/aperture proof as the
+   other stages. This
    needs its own approval and its own boot-arg (hard rule 2). The KM ring
    (`C2PMSG_64` is already `0x80000000`) and TMR come first, as in
    upstream `psp_hw_start`.

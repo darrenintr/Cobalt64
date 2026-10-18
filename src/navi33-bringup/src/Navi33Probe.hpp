@@ -36,7 +36,8 @@ public:
     // or the ring stage (navi33-psp-ring=1); stopAfter is for the ring modes.
     n33_psp_load_result pspLoad(uint32_t mode,const uint8_t *romBytes,
                                 size_t romLength,const uint8_t *fwBytes,
-                                size_t fwLength,uint32_t stopAfter=0u);
+                                size_t fwLength,uint32_t stopAfter=0u,
+                                uint32_t startAt=0u);
     n33_capabilities nativeCapabilities() const {
         n33_capabilities result{};
         result.abi_version = N33_ABI_VERSION;
@@ -59,4 +60,5 @@ private:
     IOLock *pspLock_ = nullptr; // serializes PSP plans and the one load
     bool pspLoadAttempted_ = false; // set before the first write; never reset
     bool pspRingAttempted_ = false; // same for the ring stage
+    bool pspFwAttempted_ = false;   // same for the IP firmware stage
 };

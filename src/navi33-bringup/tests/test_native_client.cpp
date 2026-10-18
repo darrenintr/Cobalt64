@@ -93,7 +93,7 @@ int main() {
     static_assert(N33_SEL_PSP_LOAD==18 && N33_SEL_COUNT==19,"selector numbering");
     assert(validate(N33_SEL_COUNT,0,0,0,64,
                     false,false,true,false)==Shape::Unsupported);
-    static_assert(N33_ABI_VERSION==10u,"PSP ring modes ABI bump");
+    static_assert(N33_ABI_VERSION==11u,"PSP IP firmware modes ABI bump");
     const n33_capabilities info={N33_ABI_VERSION,sizeof(n33_capabilities),
         N33_PCI_VENDOR,N33_PCI_DEVICE,N33_GFX_IP_VERSION,N33_FAMILY_GFX1102,
         N33_CAP_PCI_INVENTORY|N33_CAP_ROM_DISCOVERY,0u,0u,0u,0u,0u};

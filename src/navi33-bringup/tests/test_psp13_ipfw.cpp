@@ -80,6 +80,7 @@ int main(int argc,char **argv) {
     // sdma 2 + cp 3x(1+stacks 2/2/4) + mes 4 + imu 2 + rlc (gpm, srm, iram, dram, p, v, g) 7
     assert(l.count==2u+3u+8u+4u+2u+7u);
     for(uint32_t i=1;i<l.count;++i)assert(l.rec[i-1u].order<=l.rec[i].order);
+    for(uint32_t i=0;i<l.count;++i)assert(l.rec[i].type!=18u);   // GFX_FW_TYPE_SMU never sent
     assert(has(l,"SDMA_UCODE_TH0",71,fw::File::Sdma,256,100));
     assert(has(l,"SDMA_UCODE_TH1",72,fw::File::Sdma,356,60));
     assert(has(l,"CP_RS64_PFP",87,fw::File::Pfp,256,200));
@@ -180,6 +181,7 @@ int main(int argc,char **argv) {
         }
         std::fclose(g);
         assert(idx==rl.count && rl.count==26u);
+        for(uint32_t i=0;i<rl.count;++i)assert(rl.rec[i].type!=18u);   // the SMU image stays out
         assert(fw::stagingTotal(rl)==2539520u);          // 2.42 MiB, as fwplan.py says
         std::puts("real firmware matches rx7600-fw-plan.tsv record for record");
     }

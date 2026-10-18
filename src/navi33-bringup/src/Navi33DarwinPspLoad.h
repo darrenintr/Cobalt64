@@ -20,11 +20,16 @@ struct Request {
     bool hostConsole=false;
     uint64_t hostConsoleOffset=0u, hostConsoleBytes=0u;
     bool writeGate=false;         // this mode's boot-arg is 1 and no navi33-psp-off
-    uint32_t stopAfter=0u;        // ring modes: 1 ring, 2 +LOAD_TOC, 3 +SETUP_TMR
+    uint32_t stopAfter=0u;        // ring modes: 1 ring, 2 +LOAD_TOC, 3 +SETUP_TMR;
+                                  // fw modes: records [startAt, stopAfter), 27 = +AUTOLOAD_RLC
+    uint32_t startAt=0u;
+    bool autoloadGate=false;      // navi33-psp-autoload=1 (and no navi33-psp-off)
     bool *attempted=nullptr;      // provider-wide, one load per boot
 };
 // Caller holds the provider's PSP lock and has checked the PCI identity.
 n33_psp_load_result execute(IOPCIDevice *pci,const Request &req);
 // Ring stage (modes RING_PLAN / RING_RUN), Navi33DarwinPspRing.cpp.
 n33_psp_load_result executeRing(IOPCIDevice *pci,const Request &req);
+// IP firmware stage (modes FW_PLAN / FW_RUN), Navi33DarwinPspFw.cpp.
+n33_psp_load_result executeFw(IOPCIDevice *pci,const Request &req);
 } } // namespace navi33::darwin_psp

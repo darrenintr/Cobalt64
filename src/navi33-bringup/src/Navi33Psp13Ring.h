@@ -101,6 +101,9 @@ constexpr uint32_t kRespStatusOff=kRespOff+0u;
 constexpr uint32_t kRespTmrSizeOff=kRespOff+16u;
 constexpr uint32_t kCmdSetupTmr=0x00000005u;       // GFX_CMD_ID_SETUP_TMR
 constexpr uint32_t kCmdLoadToc=0x00000020u;        // GFX_CMD_ID_LOAD_TOC
+constexpr uint32_t kCmdLoadIpFw=0x00000006u;       // GFX_CMD_ID_LOAD_IP_FW
+constexpr uint32_t kCmdAutoloadRlc=0x00000021u;    // GFX_CMD_ID_AUTOLOAD_RLC
+constexpr uint32_t kRespFwAddrLoOff=kRespOff+8u;   // resp.fw_addr_lo/hi (LOAD_IP_FW)
 constexpr uint64_t kTmrAlignment=0x100000u;        // PSP_TMR_ALIGNMENT
 // MP0 13.0.7 has boot_time_tmr = false, so Linux runs LOAD_TOC, takes the
 // TMR size from resp.tmr_size (this card, 2026-10-18 journal: 0x1300000 =
@@ -130,6 +133,24 @@ inline bool prepLoadToc(uint8_t (&buf)[kCmdBytes],uint64_t fwPriMc,
     put32(buf,kCmdBodyOff+4u,static_cast<uint32_t>(fwPriMc>>32u));
     put32(buf,kCmdBodyOff+8u,tocBytes);
     return true;
+}
+// psp_prep_load_ip_fw_cmd_buf(): body = {fw address lo, hi, size, fw_type}.
+// The address is the MC address of the staged copy (4 KiB aligned).
+inline bool prepLoadIpFw(uint8_t (&buf)[kCmdBytes],uint64_t stageMc,uint32_t bytes,
+                         uint32_t fwType) {
+    if(!bytes || !fwType || (stageMc&0xfffull))return false;
+    clear(buf);
+    put32(buf,kCmdIdOff,kCmdLoadIpFw);
+    put32(buf,kCmdBodyOff+0u,static_cast<uint32_t>(stageMc));
+    put32(buf,kCmdBodyOff+4u,static_cast<uint32_t>(stageMc>>32u));
+    put32(buf,kCmdBodyOff+8u,bytes);
+    put32(buf,kCmdBodyOff+12u,fwType);
+    return true;
+}
+// psp_rlc_autoload_start(): no body, just the command id.
+inline void prepAutoloadRlc(uint8_t (&buf)[kCmdBytes]) {
+    clear(buf);
+    put32(buf,kCmdIdOff,kCmdAutoloadRlc);
 }
 // Size: non-zero 4 KiB multiple, at most kTmrMaxBytes. Start: PSP_TMR_ALIGNMENT.
 // (The TMR is not a power of two: 19 MiB on this card.)
@@ -255,6 +276,7 @@ struct Outcome {
     uint32_t stepsDone=0u, writes=0u, elapsedMs=0u;
     uint32_t c64Last=0u, c67Last=0u, cmdStatus=0u, fenceSeen=0u;
     uint32_t tocBytes=0u, tmrBytes=0u, flags=0u, fenceIndex=0u;
+    uint32_t fwAddrLo=0u, fwAddrHi=0u;   // resp.fw_addr of the last command
     bool wroteVram=false;
 };
 inline bool vramEquals(const Hw &hw,uint32_t off,const uint8_t *want,uint32_t len) {
@@ -326,6 +348,8 @@ inline bool submit(const Regs &r,const Hw &hw,const Plan &p,Outcome &o,
     o.cmdStatus=get32(resp,kRespStatusOff);
     if(!cmdOk(resp)) {o.state=N33_PSPL_CMD_FAILED;return false;}
     o.tmrBytes=get32(resp,kRespTmrSizeOff);   // only meaningful after LOAD_TOC
+    o.fwAddrLo=get32(resp,kRespFwAddrLoOff);  // only meaningful after LOAD_IP_FW
+    o.fwAddrHi=get32(resp,kRespFwAddrLoOff+4u);
     return true;
 }
 inline Outcome run(const Plan &p,const Regs &r,const psp13load::Part &toc,
