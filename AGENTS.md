@@ -653,6 +653,12 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
    needs its own approval and its own boot-arg (hard rule 2). The KM ring
    (`C2PMSG_64` is already `0x80000000`) and TMR come first, as in
    upstream `psp_hw_start`.
+   - Started 2026-10-18, host-only: `src/Navi33Psp13Ring.h` (KM ring
+     create values, response check, write-pointer and frame layout, from
+     `psp_v13_0.c` and `psp_ring_cmd_submit`) with
+     `tests/test_psp13_ring.cpp`. It is not linked into the kext and
+     writes nothing; the ring stage still needs the user's approval, its
+     own writer, its own boot-arg and a plan, like the sOS load had.
 4. CP, MES, GFX, SDMA (stages 12–15). An SDMA copy is the first real
    GPU work.
 5. PM4 fence and compute dispatch (stages 16–17).
