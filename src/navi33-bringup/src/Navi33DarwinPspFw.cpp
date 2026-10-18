@@ -4,7 +4,7 @@
 // for a range of the 26 records through the existing KM ring, and optionally
 // AUTOLOAD_RLC. The only register it may write is C2PMSG_67, the ring write
 // pointer; the only VRAM it may touch is the ring pages and the staging area
-// of the plan's 8 MiB window. The SMU image is never sent. Every step is logged.
+// of the plan's 8 MiB window. The SMU image is record 26 and Linux sends it first, so it goes alone. Every step is logged.
 #include "Navi33DarwinPspLoad.h"
 #include "Navi33Discovery.h"
 #include "Navi33Psp13FwLoad.h"

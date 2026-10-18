@@ -48,6 +48,8 @@ static Set synthetic() {
         m=image(476,72,1,0,11,220,seed++);
         w32(m,36,150);w32(m,40,256);w32(m,48,70);w32(m,52,406);
     }
+    auto &u=s.f[static_cast<size_t>(fw::File::Smu)];
+    u=image(416,44,2,1,13,100,seed++);
     auto &i=s.f[static_cast<size_t>(fw::File::Imu)];
     i=image(352,48,1,0,11,96,seed++);
     w32(i,32,64);w32(i,36,256);w32(i,40,32);w32(i,44,320);
@@ -195,25 +197,25 @@ int main() {
 
     // ---- planner ----
     fl::Plan p=fl::plan(haveRing(),console,bar0,in,0u,2u,false);
-    assert(p.state==N33_PSPL_PLAN_OK && p.list.count==26u && !p.autoload);
+    assert(p.state==N33_PSPL_PLAN_OK && p.list.count==27u && !p.autoload);
     assert(fl::recordCount(p)==2u && fl::firstRecord(p)==0u && fl::endRecord(p)==2u);
     assert(p.stageMc==0x800f400000ull);                               // fw_pri + 4 MiB
     assert(p.ring.ringMc==0x800f100000ull && p.ring.cmdMc==0x800f101000ull);
-    assert(p.stagingTotal==26u*4096u);                                // synthetic: 1 page each
+    assert(p.stagingTotal==27u*4096u);                                // synthetic: 1 page each
     assert(fl::plan(haveRing(),console,bar0,in,0u,2u,true).state==N33_PSPL_FW_BAD_IMAGES); // not pinned
     {Set bad=synthetic();w32(bad.f[0],8,3);                           // header version wrong
      assert(fl::plan(haveRing(),console,bar0,view(bad),0u,2u,false).state==N33_PSPL_FW_BAD_IMAGES);}
     assert(fl::plan(haveRing(),console,bar0,in,0u,0u,false).state==N33_PSPL_BAD_REQUEST);
     assert(fl::plan(haveRing(),console,bar0,in,2u,2u,false).state==N33_PSPL_BAD_REQUEST);
     assert(fl::plan(haveRing(),console,bar0,in,3u,2u,false).state==N33_PSPL_BAD_REQUEST);
-    assert(fl::plan(haveRing(),console,bar0,in,0u,28u,false).state==N33_PSPL_BAD_REQUEST);
-    assert(fl::plan(haveRing(),console,bar0,in,27u,27u,false).state==N33_PSPL_BAD_REQUEST);
-    assert(fl::plan(haveRing(),console,bar0,in,27u,28u,false).state==N33_PSPL_BAD_REQUEST);
-    p=fl::plan(haveRing(),console,bar0,in,26u,27u,false);             // autoload alone
+    assert(fl::plan(haveRing(),console,bar0,in,0u,29u,false).state==N33_PSPL_BAD_REQUEST);
+    assert(fl::plan(haveRing(),console,bar0,in,28u,28u,false).state==N33_PSPL_BAD_REQUEST);
+    assert(fl::plan(haveRing(),console,bar0,in,28u,29u,false).state==N33_PSPL_BAD_REQUEST);
+    p=fl::plan(haveRing(),console,bar0,in,27u,28u,false);             // autoload alone
     assert(p.state==N33_PSPL_PLAN_OK && p.autoload && fl::recordCount(p)==0u);
-    p=fl::plan(haveRing(),console,bar0,in,0u,27u,false);
-    assert(p.state==N33_PSPL_PLAN_OK && p.autoload && fl::recordCount(p)==26u);
-    assert(fl::plan(haveRing(),console,bar0,in,0u,26u,false).autoload==false);
+    p=fl::plan(haveRing(),console,bar0,in,0u,28u,false);
+    assert(p.state==N33_PSPL_PLAN_OK && p.autoload && fl::recordCount(p)==27u);
+    assert(fl::plan(haveRing(),console,bar0,in,0u,27u,false).autoload==false);
     rg::Snapshot s=haveRing();s.base.c2p81=0u;
     assert(fl::plan(s,console,bar0,in,0u,1u,false).state==N33_PSPL_SOS_NOT_ALIVE);
     s=haveRing();s.c64=0u;
@@ -252,26 +254,33 @@ int main() {
     // only the write pointer register was written, and only the two zones in VRAM
     for(const auto &w:f.writes)assert(w.first==regs.c67);
 
-    // ---- all 26 records, in Linux's order, then autoload after RLC_G ----
-    p=fl::plan(haveRing(),console,bar0,in,0u,27u,false);
+    // ---- all 27 records in list order, then autoload ----
+    p=fl::plan(haveRing(),console,bar0,in,0u,28u,false);
     Fake g;g.r=regs;g.windowMc=p.ring.win.fwPriMc;
     o=fl::run(p,regs,in,hwFor(g));
-    assert(o.r.state==N33_PSPL_FW_DONE && o.recordsDone==26u && o.autoloadSent);
-    assert(g.cmds.size()==27u && o.r.writes==27u);
-    for(uint32_t i=0;i<26u;++i) {
+    assert(o.r.state==N33_PSPL_FW_DONE && o.recordsDone==27u && o.autoloadSent);
+    assert(g.cmds.size()==28u && o.r.writes==28u);
+    for(uint32_t i=0;i<27u;++i) {
         assert(g.cmds[i].id==6u && g.cmds[i].type==p.list.rec[i].type);
         assert(g.cmds[i].size==p.list.rec[i].size);
         assert(g.cmds[i].addr==0x800f400000ull+i*4096ull);            // list order, one page each
     }
-    assert(g.cmds[26].id==0x21u && p.list.rec[25].type==8u);          // RLC_G is the last record
+    assert(g.cmds[27].id==0x21u && p.list.rec[25].type==8u && p.list.rec[26].type==18u); // RLC_G, then the SMU last in the list
     assert(o.r.flags==(N33_PSPR_FLAG_FW_LOADED|N33_PSPR_FLAG_AUTOLOAD_SENT));
-    assert(o.r.stepsDone==27u && o.r.step==N33_PSPL_STEP_AUTOLOAD);
-    assert(o.r.fenceIndex==27u);
+    assert(o.r.stepsDone==28u && o.r.step==N33_PSPL_STEP_AUTOLOAD);
+    assert(o.r.fenceIndex==28u);
     // wptr wrapped nothing yet: 48 + 27 frames * 16 dwords = 480 < 1024
-    assert(g.c67==48u+27u*16u);
+    assert(g.c67==48u+28u*16u);
 
     // ---- autoload alone ----
+    // ---- the SMU first, on its own: record 26 at its fixed slot ----
     p=fl::plan(haveRing(),console,bar0,in,26u,27u,false);
+    {Fake h;h.r=regs;h.windowMc=p.ring.win.fwPriMc;
+     o=fl::run(p,regs,in,hwFor(h));
+     assert(o.r.state==N33_PSPL_FW_DONE && o.recordsDone==1u && !o.autoloadSent);
+     assert(h.cmds.size()==1u && h.cmds[0].type==18u && h.cmds[0].size==100u);
+     assert(h.cmds[0].addr==0x800f400000ull+26ull*4096ull && o.lastRecord==26u);}
+    p=fl::plan(haveRing(),console,bar0,in,27u,28u,false);
     {Fake h;h.r=regs;h.windowMc=p.ring.win.fwPriMc;
      o=fl::run(p,regs,in,hwFor(h));
      assert(o.r.state==N33_PSPL_FW_DONE && o.recordsDone==0u && o.autoloadSent);
@@ -285,7 +294,7 @@ int main() {
      assert(o.r.state==N33_PSPL_FW_DONE && h.writes[0].second==0u && h.writes[1].second==16u);}
 
     // ---- failures stop where they happen ----
-    p=fl::plan(haveRing(),console,bar0,in,0u,27u,false);
+    p=fl::plan(haveRing(),console,bar0,in,0u,28u,false);
     {Fake h;h.r=regs;h.windowMc=p.ring.win.fwPriMc;h.noFence=true;     // PSP never answers
      o=fl::run(p,regs,in,hwFor(h));
      assert(o.r.state==N33_PSPL_CMD_TIMEOUT && o.recordsDone==0u && h.cmds.size()==1u);
@@ -310,7 +319,7 @@ int main() {
     p=fl::plan(haveRing(),console,bar0,in,0u,2u,false);
     n33_psp_load_result out=pl::blank(N33_PSPL_BAD_REQUEST);
     fl::report(out,haveRing(),p);
-    assert(out.fw_record_count==26u && out.fw_last_record==0u && out.ring_mc==0x800f100000ull);
+    assert(out.fw_record_count==27u && out.fw_last_record==0u && out.ring_mc==0x800f100000ull);
     {Fake h;h.r=regs;h.windowMc=p.ring.win.fwPriMc;
      o=fl::run(p,regs,in,hwFor(h));fl::report(out,o);
      assert(out.state==N33_PSPL_FW_DONE && out.steps_done==2u && out.fw_last_record==1u &&

@@ -42,6 +42,8 @@ static Set synthetic() {
         m=image(476,72,1,0,11,220);
         w32(m,36,150);w32(m,40,256);w32(m,48,70);w32(m,52,406);
     }
+    auto &u=s.f[static_cast<size_t>(fw::File::Smu)];
+    u=image(416,44,2,1,13,100);
     auto &i=s.f[static_cast<size_t>(fw::File::Imu)];
     i=image(352,48,1,0,11,96);
     w32(i,32,64);w32(i,36,256);w32(i,40,32);w32(i,44,320);
@@ -72,15 +74,16 @@ static bool has(const fw::List &l,const char *name,uint32_t type,fw::File f,
 }
 
 int main(int argc,char **argv) {
-    static_assert(fw::kFileCount==8u,"eight images");
+    static_assert(fw::kFileCount==9u,"nine images");
     // ---- synthetic images ----
     Set s=synthetic();
     fw::List l;
     assert(fw::build(view(s),l));
     // sdma 2 + cp 3x(1+stacks 2/2/4) + mes 4 + imu 2 + rlc (gpm, srm, iram, dram, p, v, g) 7
-    assert(l.count==2u+3u+8u+4u+2u+7u);
+    assert(l.count==2u+3u+8u+4u+2u+7u+1u);
     for(uint32_t i=1;i<l.count;++i)assert(l.rec[i-1u].order<=l.rec[i].order);
-    for(uint32_t i=0;i<l.count;++i)assert(l.rec[i].type!=18u);   // GFX_FW_TYPE_SMU never sent
+    assert(has(l,"SMC",18,fw::File::Smu,256,100));                 // the SMU image, sent first by Linux
+    assert(l.rec[l.count-1u].order==52u && l.rec[l.count-2u].order==50u);   // SMC sorts last, RLC_G before it
     assert(has(l,"SDMA_UCODE_TH0",71,fw::File::Sdma,256,100));
     assert(has(l,"SDMA_UCODE_TH1",72,fw::File::Sdma,356,60));
     assert(has(l,"CP_RS64_PFP",87,fw::File::Pfp,256,200));
@@ -102,8 +105,7 @@ int main(int argc,char **argv) {
     assert(has(l,"RLC_P",25,fw::File::Rlc,540,16));
     assert(has(l,"RLC_V",7,fw::File::Rlc,556,24));
     assert(has(l,"RLC_G",8,fw::File::Rlc,256,100));
-    assert(!find(l,"SMC") && !find(l,"AUTOLOAD_RLC"));          // SMU out; autoload is no record
-    assert(l.rec[l.count-1u].order==50u);                       // RLC_G last: autoload follows it
+    assert(!find(l,"AUTOLOAD_RLC"));                            // autoload is no record
     // staging: each record page-aligned, offsets in list order
     assert(fw::stagedBytes(l.rec[0])==4096u && fw::stagingOffset(l,3)==3u*4096u);
     assert(fw::stagingTotal(l)==static_cast<uint64_t>(l.count)*4096u); // all synthetic < 1 page
@@ -114,6 +116,8 @@ int main(int argc,char **argv) {
         Set m=synthetic();w32(m.f[static_cast<size_t>(f)],at,v);
         fw::List x;return fw::build(view(m),x);
     };
+    assert(!mutate(fw::File::Smu,20,1000));             // SMU ucode runs past the file
+    assert(!mutate(fw::File::Smu,12,11));               // SMU header says IP 11, not 13
     assert(!mutate(fw::File::Sdma,52,1000));            // TH1 runs past the file
     assert(!mutate(fw::File::Sdma,48,40));              // TH1 inside the header
     assert(!mutate(fw::File::Sdma,36,0));               // empty TH0
@@ -172,7 +176,7 @@ int main(int argc,char **argv) {
             const fw::Record &r=rl.rec[idx++];
             assert(r.order==order && !strcmp(r.name,name) && r.type==type &&
                    r.offset==off && r.size==size);
-            const char *keys[]={"pfp","me","mec","rlc","imu","sdma","mes","mes1"};
+            const char *keys[]={"pfp","me","mec","rlc","imu","sdma","mes","mes1","smu"};
             assert(!strcmp(keys[static_cast<size_t>(r.file)],key));
             // the record's own bytes hash to the golden digest
             const sha256::Digest d=sha256::hash(in.f[static_cast<size_t>(r.file)].data+r.offset,r.size);
@@ -180,9 +184,9 @@ int main(int argc,char **argv) {
             assert(!strcmp(hex,sha));
         }
         std::fclose(g);
-        assert(idx==rl.count && rl.count==26u);
-        for(uint32_t i=0;i<rl.count;++i)assert(rl.rec[i].type!=18u);   // the SMU image stays out
-        assert(fw::stagingTotal(rl)==2539520u);          // 2.42 MiB, as fwplan.py says
+        assert(idx==rl.count && rl.count==27u);
+        assert(rl.rec[26].type==18u && !strcmp(rl.rec[26].name,"SMC"));   // the SMU is the last record
+        assert(fw::stagingTotal(rl)==2801664u);          // 2.42 MiB, as fwplan.py says
         std::puts("real firmware matches rx7600-fw-plan.tsv record for record");
     }
     std::puts("PSP13 IP firmware record tests passed");

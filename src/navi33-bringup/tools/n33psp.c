@@ -15,11 +15,12 @@
  *   sudo n33psp --ip-fw-plan START STOP --rom ... --fwdir DIR
  *   sudo n33psp --ip-fw START STOP --rom ... --fwdir DIR --i-have-ssh
  *       The IP firmware stage, after the ring and TMR exist: LOAD_IP_FW for
- *       the records [START, STOP) of the 26-record list (0-based). STOP 27
+ *       the records [START, STOP) of the 27-record list (0-based). STOP 28
  *       also sends AUTOLOAD_RLC, which needs navi33-psp-autoload=1 on top of
  *       navi33-psp-fw=1. DIR holds the eight decompressed linux-firmware files
- *       (gc_11_0_2_{pfp,me,mec,rlc,imu,mes_2,mes1}.bin and sdma_6_0_2.bin);
- *       the Kext accepts only the pinned ones. The SMU image is never sent.
+ *       (gc_11_0_2_{pfp,me,mec,rlc,imu,mes_2,mes1}.bin, sdma_6_0_2.bin and
+ *       smu_13_0_7.bin); the Kext accepts only the pinned ones. Record 26 is
+ *       the SMU image, which Linux sends FIRST: run `26 27` before `0 26`.
  * Never run --load, --ring or --ip-fw from run.sh or the boot autorun.
  */
 #include "../src/Navi33NativeABI.h"
@@ -177,15 +178,15 @@ static int call(io_connect_t conn,uint32_t mode,uint32_t startAt,uint32_t stopAf
     return 1;
 }
 /* The eight pinned files, in the order Navi33Psp13IpFw.h expects them. */
-static const char *const kIpFwFiles[8]={
+static const char *const kIpFwFiles[9]={
     "gc_11_0_2_pfp","gc_11_0_2_me","gc_11_0_2_mec","gc_11_0_2_rlc",
-    "gc_11_0_2_imu","sdma_6_0_2","gc_11_0_2_mes_2","gc_11_0_2_mes1"};
+    "gc_11_0_2_imu","sdma_6_0_2","gc_11_0_2_mes_2","gc_11_0_2_mes1","smu_13_0_7"};
 static uint8_t *slurpIpFw(const char *dir,size_t *len) {
     const size_t max=N33_PSP_LOAD_MAX_INPUT-4096u-sizeof(struct n33_psp_load_request);
     uint8_t *all=malloc(max);
     size_t used=0u;
     if(!all)return NULL;
-    for(int k=0;k<8;++k) {
+    for(int k=0;k<9;++k) {
         char path[1024];
         size_t n=0u;
         snprintf(path,sizeof(path),"%s/%s.bin",dir,kIpFwFiles[k]);
@@ -246,7 +247,7 @@ int main(int argc,char **argv) {
               "--plan writes nothing. --load is the first GPU write: run it over SSH;\n"
               "if the card stops answering, power the Mac off fully to reset the PSP.\n"
               "--ring N (1 ring, 2 +LOAD_TOC, 3 +SETUP_TMR) needs the sOS alive.\n"
-              "--ip-fw sends records [START, STOP) of 26; STOP 27 adds AUTOLOAD_RLC.\n",
+              "--ip-fw sends records [START, STOP) of 27 (26 = SMU, send it first); STOP 28 adds AUTOLOAD_RLC.\n",
               stderr);
         return 1;
     }
@@ -302,7 +303,7 @@ int main(int argc,char **argv) {
             rc=6;
         } else if(ipfw && stop==N33_PSP_FW_STOP_AUTOLOAD &&
                   !(r.ring_flags&N33_PSPR_FLAG_AUTOLOAD_GATE)) {
-            puts("STOP 27 sends AUTOLOAD_RLC: boot with navi33-psp-autoload=1 as well. Nothing was sent.");
+            puts("STOP 28 sends AUTOLOAD_RLC: boot with navi33-psp-autoload=1 as well. Nothing was sent.");
             rc=6;
         } else {
             puts(ipfw ? "== PSP13 IP FIRMWARE (writes the ring write pointer and the staging area)" :

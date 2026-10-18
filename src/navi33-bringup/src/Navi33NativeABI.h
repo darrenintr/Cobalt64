@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 11u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes */
+#define N33_ABI_VERSION 12u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -200,15 +200,16 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
 #define N33_PSP_RING_STOP_TOC 2u
 #define N33_PSP_RING_STOP_TMR 3u
 /* IP firmware stage (after the ring and TMR exist): LOAD_IP_FW for the records
- * [start_at, stop_after) of the 26-record list of Navi33Psp13IpFw.h; the input
- * after the IP Discovery blob is the eight pinned firmware files concatenated
+ * [start_at, stop_after) of the 27-record list of Navi33Psp13IpFw.h; the input
+ * after the IP Discovery blob is the nine pinned firmware files concatenated
  * in File order (their sizes are pinned, so no lengths are sent). stop_after
- * 27 also sends AUTOLOAD_RLC, which needs its own boot-arg. The SMU image is
- * never sent. FW_PLAN reads only; FW_RUN needs navi33-psp-fw=1. */
+ * 28 also sends AUTOLOAD_RLC, which needs its own boot-arg. Record 26 is the
+ * SMU image: Linux sends it first, so it is sent alone ([26,27)) before the
+ * others. FW_PLAN reads only; FW_RUN needs navi33-psp-fw=1. */
 #define N33_PSP_LOAD_FW_PLAN 5u
 #define N33_PSP_LOAD_FW_RUN 6u
-#define N33_PSP_FW_RECORDS 26u
-#define N33_PSP_FW_STOP_AUTOLOAD 27u
+#define N33_PSP_FW_RECORDS 27u
+#define N33_PSP_FW_STOP_AUTOLOAD 28u
 #define N33_PSP_LOAD_MAX_INPUT (4u*1024u*1024u)
 enum n33_psp_load_state {
   N33_PSPL_DISABLED=0, N33_PSPL_BAD_REQUEST=1, N33_PSPL_NO_PROVIDER=2,

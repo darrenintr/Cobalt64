@@ -353,7 +353,7 @@ ipfw=(root/"src/Navi33Psp13IpFw.h").read_text()
 for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(", "mapDeviceMemory",
                   "setMemoryEnable", "IOConnectCallMethod(", "IOLog(", "write32"):
     assert forbidden not in ipfw, f"Navi33Psp13IpFw.h gained hardware I/O: {forbidden}"
-assert "SMC" not in ipfw.replace("// ","//") or "left out" in ipfw   # SMU stays out
+assert ipfw.count("kTypeSmu")>=2 and "File::Smu" in ipfw            # the SMU is record 26, last in the list
 assert "Navi33Psp13IpFw.h" not in source and "Navi33Psp13IpFw.h" not in client
 # PSP13 IP firmware stage (kext 0.0.10+): its own boot-arg, its own one-shot flag,
 # a second boot-arg for AUTOLOAD_RLC, its own writer with a one-register allowlist.
@@ -388,8 +388,9 @@ fwl=(root/"src/Navi33Psp13FwLoad.h").read_text()
 for forbidden in ("<IOKit/", "->configWrite", "WREG32(", "RREG32(", "mapDeviceMemory",
                   "setMemoryEnable", "IOConnectCallMethod(", "IOLog("):
     assert forbidden not in fwl, f"Navi33Psp13FwLoad.h gained hardware I/O: {forbidden}"
-for text,name in ((fwl,"FwLoad.h"),(fwc,"DarwinPspFw.cpp"),(ipfw,"IpFw.h")):
-    assert "GFX_FW_TYPE_SMU" not in text and "kTypeSmu" not in text, f"{name} names the SMU type"
+# The SMU image is only ever a record of the pinned list (IpFw.h); the writer and runner never name it.
+for text,name in ((fwl,"FwLoad.h"),(fwc,"DarwinPspFw.cpp")):
+    assert "kTypeSmu" not in text and "GFX_FW_TYPE_SMU" not in text, f"{name} names the SMU type"
 # Hard rule 5: our scripts and sources never modify the VBIOS (reading is allowed).
 for rel in ("vm/prepare-card.sh","vm/run-vm.sh","vm/host-setup.sh","vm/reboot-to-vm.sh",
             "vm/guest-run.sh","vm/make-opencore.sh","vm/host-peek.py"):

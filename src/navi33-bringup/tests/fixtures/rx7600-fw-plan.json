@@ -55,6 +55,13 @@
    "sha256": "5f8f0b50b7a9f8c34f68ee516a51968ed190cb0d0fb36c99e5301799dd65097c",
    "header": "1.0",
    "version": "0x0"
+  },
+  "smu": {
+   "name": "smu_13_0_7",
+   "bytes": 287080,
+   "sha256": "6046f6379f42b4d3618151eace413d8c076ea374944afb770a8871ad79fcec55",
+   "header": "2.1",
+   "version": "0x526100"
   }
  },
  "items": [
@@ -291,6 +298,15 @@
    "offset": 256,
    "size": 25088,
    "sha256": "b38f1bdef891a15129a8b05d990f728ce4bd959b9f0e995c6474a963c4db358e"
+  },
+  {
+   "order": 52,
+   "name": "SMC",
+   "type": 18,
+   "file": "smu_13_0_7",
+   "offset": 256,
+   "size": 261632,
+   "sha256": "e2b32bcf6e50bb1357b10cfa05b54d97344267109ac25491568b443782307776"
   }
  ]
 }

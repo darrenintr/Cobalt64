@@ -6,9 +6,11 @@ rules Linux uses to turn each image into PSP LOAD_IP_FW records
 (amdgpu_ucode_init_single_fw, amdgpu_gfx_cp_init_microcode, amdgpu_rlc.c,
 amdgpu_sdma.c, amdgpu_mes.c, imu_v11_0.c; psp_load_non_psp_fw for the order),
 checks every offset against the file size, and prints the list with SHA-256
-pins. It never touches the card. The SMU image is excluded on purpose (user's
-decision, 2026-10-18): Linux sends it first, but this card's SMU is already
-running from the VBIOS and re-sending it is a bigger commitment.
+pins. It never touches the card. The SMU image (smu_13_0_7.bin) is the last
+record (enum order 52); Linux sends it FIRST, so a run sends it on its own
+before the others. It was left out at first (user's decision, 2026-10-18) and
+added after the RLC bootload stayed 0 following AUTOLOAD_RLC; the user then
+chose to reproduce Linux's order.
 
   python3 -I tools/fwplan.py [--dir /lib/firmware/amdgpu] [--json]
 """
@@ -22,10 +24,10 @@ T = dict(SDMA_UCODE_TH0=71, SDMA_UCODE_TH1=72, RS64_PFP=87, RS64_ME=88,
          CP_MES=33, MES_STACK=34, CP_MES_KIQ=81, MES_KIQ_STACK=82, IMU_I=68,
          IMU_D=69, RLC_RESTORE_LIST_SRM_CNTL=22, RLC_RESTORE_LIST_GPM_MEM=20,
          RLC_RESTORE_LIST_SRM_MEM=21, RLC_IRAM=26, RLC_DRAM_BOOT=48, RLC_P=25,
-         RLC_V=7, RLC_G=8)
+         RLC_V=7, RLC_G=8, SMU=18)
 FILES = dict(pfp="gc_11_0_2_pfp", me="gc_11_0_2_me", mec="gc_11_0_2_mec",
              rlc="gc_11_0_2_rlc", imu="gc_11_0_2_imu", sdma="sdma_6_0_2",
-             mes="gc_11_0_2_mes_2", mes1="gc_11_0_2_mes1")
+             mes="gc_11_0_2_mes_2", mes1="gc_11_0_2_mes1", smu="smu_13_0_7")
 PAGE = 4096
 
 
@@ -117,6 +119,10 @@ def plan(dirpath):
     add(48, "RLC_P", T["RLC_P"], r, r.u32(v23 + 12), r.u32(v23 + 8))
     add(49, "RLC_V", T["RLC_V"], r, r.u32(v23 + 28), r.u32(v23 + 24))
     add(50, "RLC_G", T["RLC_G"], r, r.uoff, r.usz)
+    # SMU 13.0.7, header v2.1 (44 B): the PSP path sends ucode_size_bytes at the array offset
+    u = f["smu"]
+    assert (u.maj, u.min, u.ipmaj) == (2, 1, 13)
+    add(52, "SMC", T["SMU"], u, u.uoff, u.usz)
     out.sort(key=lambda e: e["order"])
     return f, out
 
@@ -143,13 +149,13 @@ def main():
     print("files (decompressed):")
     for k, v in files.items():
         print(f"  {v.name:18} {v.size:7} B  header {v.maj}.{v.min}  ucode {v.ver:#x}  sha256 {v.sha[:16]}…")
-    print("\nPSP LOAD_IP_FW records, in Linux's order (SMU left out):")
+    print("\nPSP LOAD_IP_FW records, in enum order (Linux sends SMC first):")
     tot = 0
     for e in items:
         pad = (e["size"] + PAGE - 1) // PAGE * PAGE
         tot += pad
         print(f"  {e['order']:2} {e['name']:22} type {e['type']:3}  {e['file']:16} @{e['offset']:7} {e['size']:7} B")
-    print(f"\n{len(items)} records, then GFX_CMD_ID_AUTOLOAD_RLC after RLC_G.")
+    print(f"\n{len(items)} records, then GFX_CMD_ID_AUTOLOAD_RLC. Linux sends SMC (the last record) FIRST.")
     print(f"staging total, each record page-aligned: {tot} B = {tot / 1048576:.2f} MiB")
 
 

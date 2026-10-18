@@ -18,11 +18,11 @@ cp -r "$ART/navi33" "$WORK/navi33"
 # The kext accepts only the file whose SHA-256 it pins, so a wrong one fails the plan.
 [ -f "$FW" ] && zstd -q -d -c "$FW" > "$WORK/navi33/psp_13_0_7_sos.bin"
 chmod +x "$WORK/navi33/"n33* 2>/dev/null || true
-# The eight decompressed linux-firmware files for n33psp --ip-fw (the SMU image
-# is not among them). The Kext accepts only the pinned versions.
+# The nine decompressed linux-firmware files for n33psp --ip-fw (record 26 is the
+# SMU image). The Kext accepts only the pinned versions.
 mkdir -p "$WORK/navi33/fw"
 for n in gc_11_0_2_pfp gc_11_0_2_me gc_11_0_2_mec gc_11_0_2_rlc gc_11_0_2_imu \
-         sdma_6_0_2 gc_11_0_2_mes_2 gc_11_0_2_mes1; do
+         sdma_6_0_2 gc_11_0_2_mes_2 gc_11_0_2_mes1 smu_13_0_7; do
   [ -f "/lib/firmware/amdgpu/$n.bin.zst" ] &&
     zstd -q -d -c "/lib/firmware/amdgpu/$n.bin.zst" > "$WORK/navi33/fw/$n.bin"
 done

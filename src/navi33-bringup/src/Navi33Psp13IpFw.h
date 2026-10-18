@@ -8,24 +8,26 @@
 //
 // Rules copied from amdgpu_ucode_init_single_fw(), amdgpu_gfx_cp_init_microcode(),
 // amdgpu_rlc.c, amdgpu_sdma.c, amdgpu_mes.c and imu_v11_0.c; the order is the
-// AMDGPU_UCODE_ID enum order (psp_load_non_psp_fw). The SMU image is left out
-// on the user's decision (2026-10-18), and so is AUTOLOAD_RLC: that command is
-// not a record and has its own gate.
+// AMDGPU_UCODE_ID enum order. The SMU image (enum value 52) is therefore the LAST
+// record, but Linux's psp_load_non_psp_fw() sends it FIRST: a run sends the SMU
+// by itself (range [26,27)) before the others. AUTOLOAD_RLC is not a record and
+// has its own gate. (The SMU was left out until 2026-10-18, when the RLC
+// bootload stayed at 0 after AUTOLOAD_RLC and the user chose Linux's order.)
 #pragma once
 #include "Navi33Sha256.h"
 #include <stddef.h>
 #include <stdint.h>
 
 namespace navi33 { namespace psp13ipfw {
-enum class File : uint8_t { Pfp, Me, Mec, Rlc, Imu, Sdma, Mes, Mes1, Count };
+enum class File : uint8_t { Pfp, Me, Mec, Rlc, Imu, Sdma, Mes, Mes1, Smu, Count };
 constexpr size_t kFileCount=static_cast<size_t>(File::Count);
 // Names of the linux-firmware files, decompressed (amdgpu/<name>.bin).
 constexpr const char *kFileNames[kFileCount]={
     "gc_11_0_2_pfp","gc_11_0_2_me","gc_11_0_2_mec","gc_11_0_2_rlc",
-    "gc_11_0_2_imu","sdma_6_0_2","gc_11_0_2_mes_2","gc_11_0_2_mes1"};
+    "gc_11_0_2_imu","sdma_6_0_2","gc_11_0_2_mes_2","gc_11_0_2_mes1","smu_13_0_7"};
 // The exact files this Kext accepts (linux-firmware 20260915, Ubuntu).
 constexpr size_t kPinnedBytes[kFileCount]={
-    234944u, 324080u, 406528u, 178848u, 132352u, 34560u, 263696u, 221408u};
+    234944u, 324080u, 406528u, 178848u, 132352u, 34560u, 263696u, 221408u, 287080u};
 constexpr sha256::Digest kPins[kFileCount]={
     {{
         0x90,0x20,0xf5,0x37,0x88,0xad,0x88,0x1f,
@@ -66,7 +68,12 @@ constexpr sha256::Digest kPins[kFileCount]={
         0x5f,0x8f,0x0b,0x50,0xb7,0xa9,0xf8,0xc3,
         0x4f,0x68,0xee,0x51,0x6a,0x51,0x96,0x8e,
         0xd1,0x90,0xcb,0x0d,0x0f,0xb3,0x6c,0x99,
-        0xe5,0x30,0x17,0x99,0xdd,0x65,0x09,0x7c}}
+        0xe5,0x30,0x17,0x99,0xdd,0x65,0x09,0x7c}},
+    {{
+        0x60,0x46,0xf6,0x37,0x9f,0x42,0xb4,0xd3,
+        0x61,0x81,0x51,0xea,0xce,0x41,0x3d,0x8c,
+        0x07,0x6e,0xa3,0x74,0x94,0x4a,0xfb,0x77,
+        0x0a,0x88,0x71,0xad,0x79,0xfc,0xec,0x55}}
 };
 
 struct Image { const uint8_t *data=nullptr; size_t size=0u; };
@@ -78,7 +85,7 @@ constexpr uint32_t kTypeRs64Pfp=87u, kTypeRs64Me=88u, kTypeRs64Mec=89u;
 constexpr uint32_t kTypePfpP0=90u, kTypePfpP1=91u, kTypeMeP0=92u, kTypeMeP1=93u;
 constexpr uint32_t kTypeMecP0=94u, kTypeMecP1=95u, kTypeMecP2=96u, kTypeMecP3=97u;
 constexpr uint32_t kTypeMes=33u, kTypeMesStack=34u, kTypeMesKiq=81u, kTypeMesKiqStack=82u;
-constexpr uint32_t kTypeImuI=68u, kTypeImuD=69u;
+constexpr uint32_t kTypeImuI=68u, kTypeImuD=69u, kTypeSmu=18u;
 constexpr uint32_t kTypeRlcCntl=22u, kTypeRlcGpm=20u, kTypeRlcSrm=21u;
 constexpr uint32_t kTypeRlcIram=26u, kTypeRlcDram=48u, kTypeRlcP=25u, kTypeRlcV=7u, kTypeRlcG=8u;
 constexpr uint32_t kCmdLoadIpFw=0x6u, kCmdAutoloadRlc=0x21u; // GFX_CMD_ID_*
@@ -192,6 +199,11 @@ inline bool build(const Images &in,List &out) {
            !add(out,m.order,m.n0,m.t0,m.f,im,h,b,a) ||
            !add(out,static_cast<uint8_t>(m.order+1u),m.n1,m.t1,m.f,im,h,d,c))return false;
     }
+    // SMU 13.0.7, header v2.1 (44 B): the PSP path sends ucode_size_bytes at the
+    // array offset (default case of amdgpu_ucode_init_single_fw).
+    const Image &smu=in.f[static_cast<size_t>(File::Smu)];
+    if(!hdr(smu,h,2,1,13,44u) ||
+       !add(out,52,"SMC",kTypeSmu,File::Smu,smu,h,h.arrayOff,h.ucodeSize))return false;
     // IMU v1.0: IRAM size @32 then DRAM size @40; IRAM at the array offset, DRAM after it.
     const Image &imu=in.f[static_cast<size_t>(File::Imu)];
     if(!hdr(imu,h,1,0,11,48u) || !rd32(imu,32u,&a) || !rd32(imu,40u,&b) ||

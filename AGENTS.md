@@ -40,8 +40,10 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      approved to run**) may write only `C2PMSG_67` (the ring write pointer)
      and two zones of an 8 MiB window in VRAM (ring pages, staging area). It
      needs `navi33-psp-fw=1`, is killed by `navi33-psp-off`, and runs at most
-     once per boot. It sends `LOAD_IP_FW` for records of the 26-record list
-     and never the SMU image. `AUTOLOAD_RLC` (stop value 27) is refused
+     once per boot. It sends `LOAD_IP_FW` for records of the 27-record list
+     (record 26 is the SMU image, added in kext 0.0.11 at the user's choice
+     on 2026-10-18; Linux sends it first, so it goes alone as range 26..27
+     before the others). `AUTOLOAD_RLC` (stop value 28) is refused
      unless `navi33-psp-autoload=1` is also set, and needs its own approval.
      The user approved writing the code on 2026-10-18; every real run needs a
      separate explicit yes (rule 2).
@@ -865,6 +867,19 @@ parser got two of them wrong:
     another FULL power-off before any of our own experiments, since amdgpu
     leaves its own sOS in the PSP. The password for `sudo` is the user's own;
     ask if it is not in the conversation.
+- **2026-10-18, decision: reproduce Linux's order including the SMU image.**
+  After the correction entry the user chose to skip the reference boot and to
+  go straight to option (a). Full power-off done at 12:00 (PSP verified fresh:
+  `C2PMSG_81` 0, `C2PMSG_35` `0x80000000`). Kext 0.0.11, N33N ABI 12: the
+  firmware list has 27 records, record 26 = `SMC` (GFX_FW_TYPE_SMU 18,
+  `smu_13_0_7.bin`, 261,632 B at offset 256, header v2.1, firmware 82.97.0), a
+  ninth pinned file; `AUTOLOAD_RLC` is now stop 28. Sequence for the next
+  attempt, each its own VM boot with its own explicit yes: sOS load, ring
+  1/2/3, `--ip-fw 26 27` (SMU **first**, as Linux), `--ip-fw 0 26`, then
+  `--ip-fw 27 28` with `--psp-autoload`. Expected if the hypothesis holds:
+  `RLC_RLCS_BOOTLOAD_STATUS` bit 31 and `IMU_GFX_RESET_CTRL` 0x1f.
+  Open risk: the SMU is already running the VBIOS' copy; re-loading may change
+  clocks or briefly disturb the display.
 
 ## Adding a register read
 

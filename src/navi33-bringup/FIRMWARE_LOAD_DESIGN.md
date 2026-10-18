@@ -7,7 +7,7 @@ amdgpu_ucode.c, amdgpu_gfx.c, amdgpu_rlc.c, amdgpu_sdma.c, amdgpu_mes.c,
 gfx_v11_0.c, imu_v11_0.c, psp_gfx_if.h) and from decompressing the real
 `/lib/firmware/amdgpu/*.bin.zst` files with `tools/fwplan.py`.
 
-Decision by the user (2026-10-18): **the SMU image is left out.** Linux sends it
+**Superseded 2026-10-18 (kext 0.0.11): the SMU image is now record 26, sent first and alone.** Original decision by the user: **the SMU image is left out.** Linux sends it
 first (`psp_load_smu_fw`), but this card's SMU already runs from the VBIOS, and
 re-sending it is a bigger commitment than the rest. Hard rule 5 applies: the
 VBIOS is never modified; this plan never touches it.
