@@ -209,6 +209,19 @@ parser got two of them wrong:
       was clean.
     - Treat it as unrelated unless it recurs. If it does, boot once with
       Navi33Probe disabled.
+- **2026-10-18:** the fixed `run.sh` (`n33vram --read`, `dmesg`) was
+  copied onto the stick next to the 0.0.5 kext.
+- **Kext 0.0.6 (N33N ABI 9, PSP sOS load stage)** is staged on the
+  stick, from CI run 39081053858. Expected UUID:
+  `4B6769B0-5973-3370-A0D4-6E979CB327C5`.
+  - The stick also has the pinned `psp_13_0_7_sos.bin`. The 0.0.5 kext,
+    tools and scripts are in `navi33/backup-0.0.5/`.
+  - With the current boot-args (`navi33-psp-off=1`, no
+    `navi33-psp-load`) it is read-only. Its first boot should produce a
+    `n33psp --plan` section in the results file.
+  - Plan output to check before any load: state 14 (`PLAN_OK`), console
+    inside BAR0, an active HUBP surface at the console's offset, and
+    `fw_pri` MC `0x80_0F00_0000`.
 
 ## Adding a register read
 
