@@ -742,6 +742,26 @@ parser got two of them wrong:
     `AUTOLOAD_RLC`: `--ip-fw 25 27` in a single run sends both, with
     `--psp-fw --psp-autoload`; or `--ip-fw 25 26` first to store `RLC_G`
     alone and `--ip-fw 26 27` for the autoload in a second VM boot.
+- **2026-10-18, kext 0.0.10 in the VM: RLC_G (record 25) loaded alone. All 26
+  IP firmware records are now stored in the PSP.** Run `runs/20261018-115107`
+  (`ipfw-run-25-26-*.txt`, `serial.log`; host reads in
+  `navi33/host/ringregs-before-rlcg.txt`, `ringregs-after-rlcg.txt`,
+  `gcregs-after-rlcg.txt`). The user approved it ("yes, load RLC_G alone").
+  - Setup: `--psp-fw` only (no autoload). The plan for [25,26) was OK first.
+  - `n33psp --ip-fw 25 26`: state 32, flags `0x6f`, **1 register write**
+    (`C2PMSG_67` `0x1c0` -> `0x1d0`), 2 ms, response status 0, fence 1; the PSP
+    gave `0x81_FC90_0000` for RLC_G (inside the TMR).
+  - Host reads afterwards: `C2PMSG_67` `0x1d0`, `C2PMSG_64` `0x80020000`, ring
+    registers unchanged, sOS heartbeat counting, DCN scanning. GC
+    **unchanged**: `IMU_GFX_RESET_CTRL` `0x10`, `RLC_CNTL`,
+    `RLC_BOOTLOAD_STATUS`, `SDMA0_ID`, `GRBM_STATUS` all 0. Gate closed again.
+  - **Next (needs the user's explicit yes, and the user present):**
+    `AUTOLOAD_RLC` = `--ip-fw 26 27` with `--psp-fw --psp-autoload`. It sends
+    one command and no record. Expected to change, if it works:
+    `IMU_GFX_RESET_CTRL` (from `0x10`), `RLC_BOOTLOAD_STATUS`, `RLC_CNTL`,
+    `GRBM_STATUS`, `SDMA0_ID`. If the card hangs, recover with `sudo poweroff`
+    then the power button (a full power-off also resets the PSP, so the whole
+    sOS/ring/TMR/firmware sequence must be redone afterwards).
 
 ## Adding a register read
 
