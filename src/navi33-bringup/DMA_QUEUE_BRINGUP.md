@@ -327,3 +327,21 @@ queue initialization path. No additional register offsets are introduced.
 
 Authoritative register references: Linux AMDGPU headers
 gc_11_0_0_offset.h, mmhub_3_0_2_offset.h and mmhub_3_0_0_offset.h.
+
+## Stage G17: offline GFX11 MEC RS64 enable word
+
+`Navi33Gfx11MecEnable.h` reproduces the value upstream
+`gfx_v11_0_cp_compute_enable()` writes to `CP_MEC_RS64_CNTL` (gc_11_0_0
+dword 0x2904, GC segment 1; the same offset as the N33N peek window). It
+computes the word from the value already read, touching only the ICACHE,
+pipe reset, pipe active and halt fields. Offsets and bit positions come
+from `gc_11_0_0_offset.h` and `gc_11_0_0_sh_mask.h` on
+torvalds/linux master (fetched 2026-10-18). The header performs no register
+I/O. `test_gfx11_mec_enable` checks the enable and disable words, bit
+preservation, and round trips. A mutant that drops the pipe-active bit fails
+it.
+
+Not done: the RS64 microcode load (`gfx_v11_0_cp_compute_load_microcode_rs64`),
+the MQD and HQD programming (`gfx_v11_0_compute_mqd_init`,
+`gfx_v11_0_kiq_init_queue`), and any ownership of the queue itself. Those
+remain behind the Queue0/PCI owner and the physical approvals above.
