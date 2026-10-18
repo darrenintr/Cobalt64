@@ -762,6 +762,47 @@ parser got two of them wrong:
     `GRBM_STATUS`, `SDMA0_ID`. If the card hangs, recover with `sudo poweroff`
     then the power button (a full power-off also resets the PSP, so the whole
     sOS/ring/TMR/firmware sequence must be redone afterwards).
+- **2026-10-18, kext 0.0.10 in the VM: AUTOLOAD_RLC was sent and accepted. The
+  IMU firmware is running.** Run `runs/20261018-115241` (`ipfw-run-26-27-*.txt`,
+  `results-20261018-115324-guest.txt`, `serial.log`; host reads in
+  `navi33/host/*-before-autoload.txt` and `*-after-autoload.txt`,
+  `imuregs-after-autoload.txt`). The user approved it ("yes, run
+  AUTOLOAD_RLC").
+  - Setup: OpenCore disk built with `--psp-fw --psp-autoload` (both gates
+    open, no `navi33-psp-off`). The plan for [26,27) was OK first: zero
+    records, autoload 1, ring flags `0x91`.
+  - `n33psp --ip-fw 26 27`: state 32, flags `0x6f`, ring flags `0xd1`
+    (autoload gate open, autoload sent), **1 register write** (`C2PMSG_67`
+    `0x1d0` -> `0x1e0`), 1 ms, **response status 0 and fence 1**. The VM,
+    the PC and the display all survived.
+  - **What changed on the card** (full `n33peek --all` diff against the
+    snapshot taken right after the sOS load; everything else is identical
+    apart from the ring bookkeeping and the sOS heartbeat):
+    - `IMU_SCRATCH[0]` 0 -> `0x0b214700`: equal to the IMU firmware header's
+      `ucode_version` (`0xb214700`).
+    - `IMU_SCRATCH[1]` 0 -> `0xbabeface`.
+    - `IMU_CORE_STATUS` (GC seg1 `0x40b7`) 0 -> `0x00000002`.
+    Read from the host after the VM stopped, the same values persist.
+  - What did **not** change: `IMU_GFX_RESET_CTRL` is still `0x10` (Linux
+    waits for `0x1f` after starting the IMU), and `RLC_CNTL`, `RLC_STAT`,
+    `RLC_GPM_STAT`, `RLC_BOOTLOAD_STATUS`, `GRBM_STATUS`, `CP_*`, `SDMA0_*`
+    and all GFXHUB/GCVM registers still read 0. The preflight is still
+    reason 9 (GC not answering). DCN kept scanning at 60 Hz.
+  - Interpretation (**not verified beyond the register values**): the
+    scratch dword equal to the IMU image's own version strongly suggests the
+    IMU core is executing the firmware the PSP installed. The matching
+    upstream step is that, after the PSP load, the *driver* runs
+    `imu_v11_0_setup()` (writes `GFX_IMU_C2PMSG_ACCESS_CTRL0/1` and
+    `GFX_IMU_SCRATCH_10`) and `imu_v11_0_start()`, then waits for
+    `GFX_IMU_GFX_RESET_CTRL` & 0x1f == 0x1f (gfx_v11_0.c lines ~1551-1557).
+    That is the next write stage and is not built.
+  - The gate was closed again (`navi33-psp-off=1` is back in
+    `OpenCore-navi33.qcow2`). The firmware stays installed until a full
+    power-off.
+  - **Next:** design `setup_imu` + `start_imu` as a new gated stage (IMU
+    registers from `gc_11_0_0_offset.h`, host-tested first), read-only plan
+    first, then the user's yes. After it: RLC bring-up/`wait_for_rlc_autoload`,
+    then CP/MES/GFX/SDMA.
 
 ## Adding a register read
 
@@ -852,7 +893,10 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
      VBIOS asks).
    - Recovery if the PSP wedges: a full power-off (a warm restart may
      leave the PSP state in place).
-3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Next: design
+3. SMU, IMU, RLC: power the GC block up (stages 9–11). **Progress: all 26
+   firmware records and `AUTOLOAD_RLC` were sent on 2026-10-18 and the IMU
+   firmware is running; the driver-side IMU start is next (findings log).**
+   Earlier note: **design
    written** (`src/navi33-bringup/FIRMWARE_LOAD_DESIGN.md`, 2026-10-18, no
    code on the card until 0.0.10): 26 `LOAD_IP_FW` records (SDMA, RS64 CP, MES, IMU, RLC)
    then `AUTOLOAD_RLC`, **SMU image left out by the user's decision**;
