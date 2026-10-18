@@ -211,6 +211,30 @@ written; the VBIOS flash is never touched.
 
 ## Actual hardware compute remains BLOCKED
 
+**Current status (2026-10-18 evening, supersedes the paragraphs below where
+they differ).** The owner and DMA work since kext 0.0.15 ends at one hardware
+fact: **macOS on this board has no DMA mapper for any device.** The bare-metal
+boot of kext 0.0.19 (`navi33/results-20261018-201032-boot.txt` on the stick)
+shows 0 `IOMapper` and 0 `AppleVTD` instances, the owner probe refused with
+`NoDmaMapper`, and the DMA preflight returned `PhysicalAddressOnly`. The PC's
+IOMMU is AMD-Vi, and Apple's mapper support is for Intel VT-d. The VM has no
+mapper either.
+
+- Proven on the card: identity, an exclusive `IOService::open`/`close` pair,
+  and the owner hold for one epoch in the VM. Release on macOS shutdown is not
+  reached, which is an accepted limitation: a held open lasts until power-off.
+- Not usable as evidence: the probe's display check on bare metal. macOS drives
+  the card through `IONDRVFramebuffer`, which attaches after the probe runs.
+- Offline only, host-tested: the production owner state machine, the MES
+  enable, queue and MQD planners, and the KIQ fallback planners.
+- **Blocked:** the SDMA Queue1 proof needs an owner with a DMA domain, and none
+  can exist on this board as designed. The way forward is a hardware decision
+  (a platform where macOS provides a mapper) or a different design that the
+  user approves. Until then, no write stage beyond those already recorded is
+  planned.
+- Test loop: the stick's boot autorun runs `run.sh` and chimes; the agent mounts
+  the stick from the headless Ubuntu at `/mnt/opencore` without sudo.
+
 Latest physical result (2026-10-18): the approved SCPM EnableAllSmuFeatures
 command returned OK, and read-only snapshots show
 `IMU_GFX_RESET_CTRL=0x1f` and `RLC_BOOTLOAD_STATUS=0xc000001f`. The follow-up
