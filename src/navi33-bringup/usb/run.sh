@@ -42,11 +42,14 @@ run() { "$@"; echo "exit=$?"; }
     echo "IOMapper instances: $(ioreg -w0 -r -c IOMapper | grep -c '+-o')"
     ioreg -w0 -r -c IOMapper | head -20
     echo "AppleVTD instances: $(ioreg -w0 -r -c AppleVTD | grep -c '+-o')"
-    ioreg -l -w0 -r -c AppleACPIPlatformExpert |
-        grep -o '"ACPI Tables" = {[^}]*}' | tr ',' '\n' | cut -d= -f1 | head -60
+    # ACPI table names (IVRS for AMD-Vi, DMAR for VT-d), wherever the property lives.
+    ioreg -l -w0 | grep -o '"ACPI Tables" = {[^}]*}' | head -1 |
+        tr ',' '\n' | cut -d= -f1 | tr -d ' {"' | sed 's/ACPITables//' | head -60
     step "display stack on the card (read-only)"
     echo "IOFramebuffer instances: $(ioreg -w0 -r -c IOFramebuffer | grep -c '+-o')"
     ioreg -w0 -r -c IOFramebuffer | head -20
+    # The framebuffer's place in the tree shows which PCI device it drives.
+    ioreg -w0 -t -r -c IONDRVFramebuffer | grep -E '\+-o' | head -20
     echo "IOAccelerator instances: $(ioreg -w0 -r -c IOAccelerator | grep -c '+-o')"
     ioreg -w0 -r -c IOAccelerator | head -20
     system_profiler SPDisplaysDataType 2>/dev/null | head -60
