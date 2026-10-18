@@ -1359,6 +1359,17 @@ parser got two of them wrong:
   `metal-proof-checks.txt`, `cmdline.txt` and `serial.log` in the run
   directory. The VM was shut down cleanly over SSH.
 
+- **2026-10-18 16:5x, read-only host-peek on the headless VFIO boot** (boot
+  up since 13:37, no VM running, kext not loaded). `sudo -n /usr/bin/python3
+  -I vm/host-peek.py`, PROT_READ on BAR5 only. Results: PSP `C2PMSG_35`
+  `0x80000000`, `C2PMSG_33` 0, `C2PMSG_58` `0x00330024` (sOS version), and
+  `C2PMSG_81` counting (`0x0b9e3338`), so the sOS is still alive. DCN FB
+  `0x8000/0x81ff`, HUBP0 surface MC `0x80_0000_0000`, pitch `0x3ff`, and
+  OTG0 frame count advancing 60 Hz (`0xaf0fc` to `0xaf138` in 1 s). Pipes 1 to
+  3 idle. No write of any kind. This does not read GC, MES or the owner state.
+  Host access note: the SSH host key was verified by fingerprint and stored;
+  the machine running these reads is the test host itself.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
