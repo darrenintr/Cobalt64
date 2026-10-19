@@ -1693,6 +1693,16 @@ parser got two of them wrong:
   - Every stage's VM shut down cleanly; the default `OpenCore-navi33.qcow2` is
     closed again (`navi33-psp-off=1`, `navi33-smu-off=1`). The sOS and GC stay
     up until the next power-off.
+- **2026-10-19, design: the first SDMA work is Linux's own ring test (G30,
+  host-only).** `src/Navi33Sdma6RingTest.h` computes Linux's
+  `sdma_v6_0_gfx_resume_instance` writes for SDMA0 **Queue0 in VMID0** from the
+  live census, then a `WRITE_LINEAR` ring test and a 4 KiB `COPY_LINEAR` +
+  `FENCE`, every buffer in a 1 MiB VRAM window at 248 MiB. The census L1 TLB
+  mode 0 is `PA_ONLY` in radeon `cikd.h`; if that holds on GC11, no page table,
+  hub write or system-memory DMA is needed. 23 setup writes + 2 WPTR + 3 park,
+  all SDMA0 registers (table in `DMA_QUEUE_BRINGUP.md` G30). It replaces the
+  VMID1/Queue1 plan as the first step, so it needs the user's approval of
+  that exact list before a writer is built. No hardware access in this change.
 
 ## Adding a register read
 

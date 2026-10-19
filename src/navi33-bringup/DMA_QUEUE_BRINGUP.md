@@ -725,3 +725,77 @@ Branch: feature/navi33-dma-backend. Software only; nothing runs on the card.
   mode from what is actually missing. Whether only GFXHUB (SDMA's hub) needs
   VMID1, or MMHUB too, is to be decided from upstream and the census; MMHUB
   also serves the display.
+
+## Stage G30: first SDMA work, Linux's own ring test (design + pure plan, no hardware)
+
+`src/Navi33Sdma6RingTest.h`, tested by `tests/test_sdma6_ring_test.cpp` with the
+card's real census (`runs/20261019-143838`). Four mutants abort the test
+(no halted check, unhalt before the ring is described, a GFXHUB register in
+the allowlist, translated mode accepted).
+
+**Why this replaces the VMID1/Queue1 manifest as the first step.** Linux's
+kernel SDMA ring is Queue0 in VMID0 (`sdma_v6_0_gfx_resume_instance` programs
+only `SDMA0_QUEUE0_*` and never sets `RB_VMID`). The census shows
+`GCMC_VM_MX_L1_TLB_CNTL` = `0x501`: L1 TLB on, SYSTEM_ACCESS_MODE 0, which
+radeon `cikd.h` names `PA_ONLY`. If GC11 keeps that meaning, VMID0 accesses to
+framebuffer MC addresses are physical, so a test with every buffer in VRAM
+needs no page table, no hub write and no system-memory DMA. That is the
+hypothesis this test checks; it is not established. Queue1 has no upstream
+MMIO bring-up path at all, and Queue0 reads empty and disabled (nothing else
+on this machine uses SDMA).
+
+**Preconditions (all read-only, from the census windows):** RLC bootload
+complete, sOS alive, `SDMA0_ID` 1, `SDMA0_STATUS_REG.IDLE`, `F32_CNTL.HALT`
+set (nobody runs SDMA), Queue0 disabled with base and pointers 0, IB and
+doorbell off, GFXHUB L1 TLB on in mode 0, FB location sane. Any all-ones read
+refuses.
+
+**Memory:** one 1 MiB VRAM window at offset 248 MiB (MC `0x80_0F80_0000`),
+just above the PSP stages' 240-248 MiB, inside BAR0, far from the console at
+VRAM 0. Ring 4 KiB at +0, RPTR write-back +0x1000, WPTR poll shadow +0x1008,
+test dword +0x2000 (preset `0xcafedead`), fence +0x3000, 4 KiB source pattern
++0x4000, 4 KiB zeroed target +0x5000. Written only through that BAR0 range.
+
+**Register writes, all SDMA0, in Linux's order (values from the live census):**
+
+| # | Register (GC seg, dword) | Value |
+|---|---|---|
+| 1 | SEM_WAIT_FAIL_TIMER_CNTL (0, 0x0022) | 0 |
+| 2 | QUEUE0_RB_CNTL (0, 0x0080) | `0x00840814` (RB_SIZE 10, RB_PRIV) |
+| 3-6 | QUEUE0_RB_RPTR, _HI, _WPTR, _HI | 0 |
+| 7-8 | QUEUE0_RB_WPTR_POLL_ADDR_LO/HI (0xb3/0xb2) | `0x0f801008` / `0x80` |
+| 9-10 | QUEUE0_RB_RPTR_ADDR_HI/LO (0x88/0x89) | `0x80` / `0x0f801000` |
+| 11-12 | QUEUE0_RB_BASE/_HI (0x81/0x82) | `0x800f8000` / 0 |
+| 13 | QUEUE0_MINOR_PTR_UPDATE (0xb5) | 1 |
+| 14-15 | QUEUE0_RB_WPTR/_HI | 0 |
+| 16 | QUEUE0_DOORBELL (0x92) | 0 (ENABLE off) |
+| 17 | QUEUE0_MINOR_PTR_UPDATE | 0 |
+| 18 | WATCHDOG_CNTL (0, 0x002e) | 1 (QUEUE_HANG_COUNT) |
+| 19 | UTCL1_CNTL (0, 0x003c) | `0x1f000689` (RESP_MODE 3, REDO_DELAY 9) |
+| 20 | UTCL1_PAGE (0, 0x003f) | `0x010cec20` (already this value) |
+| 21 | F32_CNTL (1, 0x589a) | `0x08084000` (unhalt) |
+| 22 | QUEUE0_RB_CNTL | `0x00841815` (+RPTR_WB, F32 poll, ENABLE) |
+| 23 | QUEUE0_IB_CNTL (0x8a) | `0x101` (IB_ENABLE) |
+
+Then two submissions, each a 16-dword ring block (align_mask 0xf, NOP pad):
+A) `WRITE_LINEAR` of `0xdeadbeef` to the test dword, `RB_WPTR` = 64 bytes;
+success = test dword `0xdeadbeef` and RPTR 64 within 100 ms (Linux's
+`sdma_v6_0_ring_test_ring`). B) only if A passed: `COPY_LINEAR` 4 KiB source ->
+target and a UC `FENCE` `0xc0b1606a`, `RB_WPTR` = 128; success = fence value,
+RPTR 128, and all 4096 target bytes equal the source. Finally park, as
+`sdma_v6_0_gfx_stop` + `enable(false)`: RB_CNTL `0x00841814`, IB_CNTL `0x100`,
+F32_CNTL `0x08084001` (HALT). 28 register writes on success (23 + 2 WPTR + 3).
+
+**Not touched:** MMHUB (the display's hub), GFXHUB, every VM context, page
+tables, system memory, doorbells, interrupts, other queues, SDMA1.
+
+**Failure behaviour (for the writer, not built yet):** stop at the first
+failed read-back or timeout, park the queue, report. A hung engine or a VM
+fault is recovered by a full power-off (the sOS -> SCPM sequence is then
+redone, as on 2026-10-19).
+
+**Still needed before any run:** the user's explicit approval of this exact
+write list (it differs from the 2026-10-18 VMID1/Queue1 approval), then a
+gated kext writer (own boot-arg, `navi33-sdma-off` kill switch, once per
+boot, register allowlist = `sdma6_test::allowed`), a read-only plan mode, a
+CI build, and the sOS -> SCPM sequence redone in the same power cycle.
