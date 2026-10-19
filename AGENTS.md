@@ -365,10 +365,10 @@ output survives a hang and Linux can inspect a stuck guest.
   cached in `navi33/cache/artifact-0.0.25`.
 - **B2 step 1 built (G36, kext 0.0.26, ABI 18, CI run 39267533049):** GFXHUB set up as
   `gfxhub_v3_0`, VMID 1 flat page table (reversed pages), a VMID 1 queue whose ring and
-  fence live at virtual addresses. Not run yet. Needs the autostart state of this power
-  cycle (MEC queue up, hub untouched): `vm/stage.sh vm "--vm-queue" "--vm-plan"
-  "--vm-queue"`. The artifact download hit GitHub's account egress limit on 2026-10-19
-  22:19; retry `gh run download 39267533049 -n navi33-usb-macos-26-intel`.
+  fence live at virtual addresses. **Ran at 22:19: state 60** (findings log). It needs
+  the autostart state of the power cycle with an untouched hub: `vm/stage.sh vm
+  "--vm-queue" "--vm-plan" "--vm-queue"`. GitHub's artifact egress limit refused a
+  download once (22:19) and passed on the retry two minutes later.
 - **Next (Phase B):** B2 GPU memory management (page tables per process,
   VRAM allocator, GTT), B3 interrupts (IH ring), B4 per-client submission
   through N33N, then the graphics pipe; bare metal needs the console/BAR0
@@ -1880,6 +1880,25 @@ parser got two of them wrong:
     `0x0c0b1601`.
   - After boot the read-only gradient plan passed (state 14: MEC running, G34
     evidence present), so the card is left ready for work, as designed.
+- **2026-10-19 22:19, kext 0.0.26 (ABI 18, UUID `874E3429-2990-3B4E-BEB0-F07A4A842267`,
+  CI run 39267533049) in the VM: THE FIRST TRANSLATED GPU ADDRESS SPACE. G36 VMID 1,
+  state 60.** Run `runs/20261019-221939` (`vm-plan.txt`, `vm-run.txt`, `serial.log`),
+  same host boot `78eb16aa-…` as the 22:03 autostart (its MEC queue was the
+  precondition). The agent ran it after the user's "Continue" for Phase B2.
+  - Plan: state 14; GFXHUB still at reset values (L1 `0x501`, L2 `0x00080602`,
+    context 1 `0x01fffe00`), `SCRATCH_REG0` `0xdeadbeef` from the autostart, no fault.
+  - Run: **5/5 steps, 87 register writes, 1 ms.** Hub set as `gfxhub_v3_0` (L1
+    `0x1859`, L2 `0x00080e01`, CNTL3/4/5, identity aperture off), context 1 enabled
+    with the flat reversed table at VRAM `0x0fb10000`.
+  - **Queue 1 in VMID 1 fetched its ring from virtual addresses** (`SCRATCH_REG0`
+    preset `0xcafedead` -> `0xdeadbeef`), **and its RELEASE_MEM fence `0x0c0b1636` to
+    VA 0x4000 landed on window page 11**, the page the table maps it to (VA page p ->
+    physical page 15-p). RPTR 16 (whole ring consumed), queue active, and
+    `GCVM_L2_PROTECTION_FAULT_STATUS` 0.
+  - So GFXHUB translation works on this card with our page table, and VMID 0 kept
+    working alongside it (the preflight still reads the autostart state). Display
+    unaffected (MMHUB untouched). Next in B2: a real VRAM allocator and per-VMID
+    multi-level tables; the gradient dispatched from a VMID 1 queue.
 
 ## Adding a register read
 
