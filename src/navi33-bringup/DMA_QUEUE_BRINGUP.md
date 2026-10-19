@@ -825,3 +825,26 @@ CI build, and the sOS -> SCPM sequence redone in the same power cycle.
 - Still missing before this kernel can run: a compute queue (MES or the KIQ
   fallback, G18-G25 offline) and the PM4 dispatch stream. Both are later write
   stages that need their own approval; nothing here touches the card.
+
+## Stage G32: PM4 dispatch stream for the gradient kernel (host only)
+
+`src/Navi33Gfx11Dispatch.h` encodes one compute dispatch for a parsed
+code object, as dwords only: `SET_SH_REG` COMPUTE_PGM_LO/HI (code address >> 8,
+256-byte aligned), PGM_RSRC1/2 and RSRC3 from the kernel descriptor,
+RESOURCE_LIMITS 0, TMPRING_SIZE 0 (no scratch), START_X/Y/Z 0, NUM_THREAD 8x8x1,
+USER_DATA_0..13 with the kernarg pointer in 0/1; `DISPATCH_DIRECT` with
+COMPUTE_SHADER_EN | FORCE_START_AT_000 | CS_W32_EN (wave32); then the 8-dword
+`RELEASE_MEM` of `gfx_v11_0_ring_emit_fence` (CACHE_FLUSH_AND_INV_TS_EVENT, index
+5, GCR SEQ/GL2_WB/GLM_INV/GLM_WB, bypass, 32-bit data, no interrupt). Plain
+`PACKET3` as in `gfx_v9_0.c`'s compute-ring dispatches. SET_SH_REG offsets are
+the absolute GC register (IP Discovery base 0x1260 + `gc_11_0_0_offset.h`)
+minus `PACKET3_SET_SH_REG_START` 0x2c00, e.g. COMPUTE_PGM_LO = 0x20c.
+`gradientKernargs()` lays out the 24 kernarg bytes. `tests/test_gfx11_dispatch.cpp`
+checks all 56 dwords for a 1024x768 frame (128x96 groups) and the refusals; a
+mutant without CS_W32_EN aborts it.
+
+What is still between this stream and a GPU-calculated frame: a compute
+queue that executes PM4 (MES map or the KIQ path, offline in G18-G25), the
+shader code and kernargs copied into VRAM, and the same VMID0 physical-access
+question G30 tests for SDMA. Each of those is a later write stage with its own
+approval.
