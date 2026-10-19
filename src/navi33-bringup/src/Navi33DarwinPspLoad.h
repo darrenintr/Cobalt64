@@ -37,4 +37,6 @@ n33_psp_load_result executeSmu(IOPCIDevice *pci,const Request &req);
 n33_psp_load_result executeMes(IOPCIDevice *pci,const Request &req);
 // MEC queue (modes MEC_QUEUE_PLAN / MEC_QUEUE_RUN), Navi33DarwinMecQueue.cpp.
 n33_psp_load_result executeMec(IOPCIDevice *pci,const Request &req);
+// Gradient (modes GRADIENT_PLAN / GRADIENT_RUN), Navi33DarwinGradient.cpp.
+n33_psp_load_result executeGradient(IOPCIDevice *pci,const Request &req);
 } } // namespace navi33::darwin_psp

@@ -26,6 +26,8 @@ for n in gc_11_0_2_pfp gc_11_0_2_me gc_11_0_2_mec gc_11_0_2_rlc gc_11_0_2_imu \
   [ -f "/lib/firmware/amdgpu/$n.bin.zst" ] &&
     zstd -q -d -c "/lib/firmware/amdgpu/$n.bin.zst" > "$WORK/navi33/fw/$n.bin"
 done
+# The gradient kernel for n33psp --gradient (the Kext pins its SHA-256).
+cp "$(dirname "$0")/../shaders/gradient.co" "$WORK/navi33/gradient.co"
 ssh -o BatchMode=yes "$HOST" 'rm -rf ~/navi33.new' || die "cannot reach $HOST over ssh"
 scp -q -r "$WORK/navi33" "$HOST:navi33.new"
 ssh -o BatchMode=yes "$HOST" 'mkdir -p ~/navi33 && cp -R ~/navi33.new/ ~/navi33/ && rm -rf ~/navi33.new'

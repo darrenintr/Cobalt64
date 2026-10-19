@@ -916,3 +916,27 @@ compute HQD directly and kicks it with a one-shot WPTR poll from memory.
   `--mec-queue`. Four mutants caught.
 - Next (G35): the gradient dispatch on this queue (SH_MEM setup from
   `gfx_v11_0_constants_init`, shader and kernargs in VRAM, G32 stream).
+
+## Stage G35: first GPU-calculated pixels (kext 0.0.24, ABI 17)
+
+`src/Navi33Gfx11Gradient.h` (runner), `src/Navi33DarwinGradient.cpp` (writer),
+`tests/test_gfx11_gradient.cpp` (a fake CP that interprets the PM4 and emulates the
+dispatch only when program address, thread masks, SH_MEM_CONFIG and kernargs are
+right). Runs on the queue G34 left active in the same power cycle; the plan
+requires G34's evidence (MEC `0x3c000000`, `SCRATCH_REG0` `0xdeadbeef`, fence
+`0x0c0b1601`, WPTR 16 in VRAM) and the pinned `shaders/gradient.co` (SHA-256
+`11485a75…7fd800`).
+
+- `SH_MEM_CONFIG` VMID 0 = `DEFAULT_SH_MEM_CONFIG` `0xc00c` (`gfx_v11_0_constants_init`).
+- Each submission: `COMPUTE_STATIC_THREAD_MGMT_SE0..3` = all ones (RADV's compute
+  preamble) as SET_SH_REG, then the G32 stream, NOP-padded; appended to the ring
+  from dword 16, WPTR written to VRAM, one-shot `CP_PQ_WPTR_POLL_CNTL1` as in G34.
+  If the RPTR has not moved after 200 ms, `CP_HQD_PQ_WPTR_LO/HI` once (fallback).
+- First a 64x64 image in the window (+0x20000), every pixel compared with
+  `gradientPixel()`; only if all 4096 match, the full 1024x768 gradient into the
+  console framebuffer (VRAM 0 in the VM, proven by the HUBP check), 64 samples read
+  back through a read-only map. States 53 (test only) / 54 (on screen).
+- Register writes: 9 on success (13 with both fallbacks). Gate `navi33-gradient=1`,
+  kill `navi33-gradient-off`/`navi33-psp-off`, own latch; `make-opencore.sh
+  --gradient`; `n33psp --gradient-plan` / `--gradient ... --fw gradient.co`
+  (`guest-run.sh` copies the code object). Five mutants caught.

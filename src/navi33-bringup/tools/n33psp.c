@@ -82,6 +82,12 @@ static const char *stateText(uint32_t s) {
     case N33_PSPL_MEC_NO_FETCH: return "queue loaded but the ring never ran (SCRATCH_REG0 unchanged); full power-off required";
     case N33_PSPL_MEC_NO_FENCE: return "ring ran (SCRATCH_REG0 set) but the VRAM fence never arrived; full power-off required";
     case N33_PSPL_MEC_QUEUE_OK: return "MEC QUEUE OK: ring test passed and the GPU wrote the VRAM fence";
+    case N33_PSPL_GRAD_BAD_PRECONDITION: return "gradient needs the G34 queue from this power cycle (MEC running, ring test done)";
+    case N33_PSPL_GRAD_WRITE_FAILED: return "gradient register write failed; full power-off required";
+    case N33_PSPL_GRAD_NO_FENCE: return "dispatch fence never arrived; full power-off required";
+    case N33_PSPL_GRAD_BAD_PIXELS: return "the shader ran but pixels differ from the CPU reference";
+    case N33_PSPL_GRAD_OK: return "GRADIENT OK: the GPU computed all 4096 test pixels exactly (no screen pass)";
+    case N33_PSPL_GRAD_ON_SCREEN: return "GRADIENT ON SCREEN: the GPU computed the test image and the whole screen";
     default: return "unknown state";
     }
 }
@@ -101,6 +107,19 @@ static uint8_t *slurp(const char *path,size_t max,size_t *len) {
 }
 static void print(const struct n33_psp_load_result *r) {
     printf("state %u: %s\n",r->state,stateText(r->state));
+    if(r->grad_marker==N33_GRAD_MARKER) {
+        printf("write gate %s; shader %s; SH_MEM_CONFIG before %08x; G34 fence %08x\n",
+               (r->flags&N33_PSPL_FLAG_WRITE_GATE_OPEN) ? "OPEN" : "closed",
+               (r->flags&N33_PSPL_FLAG_FW_PINNED) ? "pinned" : "NOT pinned",
+               r->grad_shmem_before,r->grad_g34_fence);
+        printf("screen %ux%u; queue RPTR %u->%u; WPTR fallbacks %u\n",r->grad_screen>>16,
+               r->grad_screen&0xffffu,r->grad_rptr_before,r->grad_rptr_after,r->grad_fallbacks);
+        printf("test image: fence %08x, %u of 4096 pixels wrong, pixel(1,1) %08x\n",
+               r->grad_fence_a,r->grad_bad_pixels,r->grad_first_pixel);
+        printf("screen: fence %08x, %u of 64 samples wrong\n",r->grad_fence_b,r->grad_screen_bad);
+        printf("completed %u/5, writes %u, %u ms\n",r->steps_done,r->register_writes,r->elapsed_ms);
+        return;
+    }
     if(r->mec_marker==N33_MEC_MARKER) {
         printf("write gate %s; sOS heartbeat %08x; RLC %08x; window MC 0x%llx\n",
                (r->flags&N33_PSPL_FLAG_WRITE_GATE_OPEN) ? "OPEN" : "closed",
@@ -270,7 +289,8 @@ int main(int argc,char **argv) {
            !strcmp(arg,"--smu-plan") || !strcmp(arg,"--smu-enable") ||
            !strcmp(arg,"--smu-scpm-plan") || !strcmp(arg,"--smu-scpm-enable") ||
            !strcmp(arg,"--mes-plan") || !strcmp(arg,"--mes-start") ||
-           !strcmp(arg,"--mec-plan") || !strcmp(arg,"--mec-queue")) {
+           !strcmp(arg,"--mec-plan") || !strcmp(arg,"--mec-queue") ||
+           !strcmp(arg,"--gradient-plan") || !strcmp(arg,"--gradient")) {
             if(mode) {bad=1;break;}
             mode=!strcmp(arg,"--plan") ? 1 : !strcmp(arg,"--load") ? 2 :
                  !strcmp(arg,"--ring-plan") ? 3 : !strcmp(arg,"--ring") ? 4 :
@@ -278,7 +298,8 @@ int main(int argc,char **argv) {
                  !strcmp(arg,"--smu-plan") ? 7 : !strcmp(arg,"--smu-enable") ? 8 :
                  !strcmp(arg,"--smu-scpm-plan") ? 9 : !strcmp(arg,"--smu-scpm-enable") ? 10 :
                  !strcmp(arg,"--mes-plan") ? 11 : !strcmp(arg,"--mes-start") ? 12 :
-                 !strcmp(arg,"--mec-plan") ? 13 : 14;
+                 !strcmp(arg,"--mec-plan") ? 13 : !strcmp(arg,"--mec-queue") ? 14 :
+                 !strcmp(arg,"--gradient-plan") ? 15 : 16;
             if(mode==3 || mode==4) {
                 if(a+1>=argc || strlen(argv[a+1])!=1u ||
                    argv[a+1][0]<'1' || argv[a+1][0]>'3') {bad=1;break;}
@@ -299,7 +320,9 @@ int main(int argc,char **argv) {
         else if(!strcmp(arg,"--fwdir") && a+1<argc)fwDir=argv[++a];
         else bad=1;
     }
-    const int writes=mode==2 || mode==4 || mode==6 || mode==8 || mode==10 || mode==12 || mode==14;
+    const int writes=mode==2 || mode==4 || mode==6 || mode==8 || mode==10 || mode==12 || mode==14 ||
+                     mode==16;
+    const int grad=mode==15 || mode==16;
     const int mes=mode==11 || mode==12;
     const int mec=mode==13 || mode==14;
     const int ipfw=mode==5 || mode==6;
@@ -315,6 +338,8 @@ int main(int argc,char **argv) {
               "       sudo n33psp --ip-fw START STOP --rom rx7600-ipd.bin --fwdir DIR --i-have-ssh\n"
               "       sudo n33psp --smu-scpm-plan --rom rx7600-ipd.bin\n"
               "       sudo n33psp --smu-scpm-enable --rom rx7600-ipd.bin --i-have-ssh\n"
+              "       sudo n33psp --gradient-plan --rom rx7600-ipd.bin --fw gradient.co\n"
+              "       sudo n33psp --gradient --rom rx7600-ipd.bin --fw gradient.co --i-have-ssh\n"
               "       sudo n33psp --mec-plan --rom rx7600-ipd.bin\n"
               "       sudo n33psp --mec-queue --rom rx7600-ipd.bin --i-have-ssh\n"
               "       sudo n33psp --mes-plan --rom rx7600-ipd.bin\n"
@@ -358,13 +383,13 @@ int main(int argc,char **argv) {
         IOServiceClose(conn);free(rom);free(fw);return 5;
     }
     const int ringStage=mode==3 || mode==4;
-    const uint32_t planMode=mec ? N33_MEC_QUEUE_PLAN : mes ? N33_MES_START_PLAN :scpm ? N33_SMU_SCPM_PLAN : smu ? N33_SMU_ENABLE_PLAN : ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
+    const uint32_t planMode=grad ? N33_GRADIENT_PLAN : mec ? N33_MEC_QUEUE_PLAN :mes ? N33_MES_START_PLAN :scpm ? N33_SMU_SCPM_PLAN : smu ? N33_SMU_ENABLE_PLAN : ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
                             N33_PSP_LOAD_PLAN;
-    const uint32_t runMode=mec ? N33_MEC_QUEUE_RUN : mes ? N33_MES_START_RUN :scpm ? N33_SMU_SCPM_RUN : smu ? N33_SMU_ENABLE_RUN : ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
+    const uint32_t runMode=grad ? N33_GRADIENT_RUN : mec ? N33_MEC_QUEUE_RUN :mes ? N33_MES_START_RUN :scpm ? N33_SMU_SCPM_RUN : smu ? N33_SMU_ENABLE_RUN : ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
                            N33_PSP_LOAD_RUN;
     struct n33_psp_load_result r;
     int rc=7;
-    puts(mec ? "== GFX11 MEC queue plan (read-only)" : mes ? "== GFX11 MES start plan (read-only)" :scpm ? "== SMU13 SCPM enable-only plan (read-only)" : smu ? "== SMU13 feature enable plan (read-only)" : ipfw ? "== PSP13 IP firmware plan (read-only)" :
+    puts(grad ? "== GFX11 gradient plan (read-only)" : mec ? "== GFX11 MEC queue plan (read-only)" :mes ? "== GFX11 MES start plan (read-only)" :scpm ? "== SMU13 SCPM enable-only plan (read-only)" : smu ? "== SMU13 feature enable plan (read-only)" : ipfw ? "== PSP13 IP firmware plan (read-only)" :
          ringStage ? "== PSP13 KM ring plan (read-only)" : "== PSP13 sOS load plan (read-only)");
     if(call(conn,planMode,start,stop,rom,romLen,fw,fwLen,&r)) {
         print(&r);
@@ -374,7 +399,8 @@ int main(int argc,char **argv) {
         const uint32_t gate=(ringStage||ipfw) ? (r.ring_flags&N33_PSPR_FLAG_GATE_OPEN)
                                               : (r.flags&N33_PSPL_FLAG_WRITE_GATE_OPEN);
         if(!gate) {
-            puts(mec ? "Write gate closed: needs navi33-mec-queue=1, no navi33-mec-off or navi33-psp-off." :
+            puts(grad ? "Write gate closed: needs navi33-gradient=1, no navi33-gradient-off or navi33-psp-off." :
+                 mec ? "Write gate closed: needs navi33-mec-queue=1, no navi33-mec-off or navi33-psp-off." :
                  mes ? "Write gate closed: needs navi33-mes-start=1, no navi33-mes-off or navi33-psp-off." :
                  scpm ? "Write gate closed: needs navi33-smu-enable=1 and navi33-smu-scpm=1, no SMU/PSP kill switches." :
                  smu ? "Write gate closed: needs navi33-smu-enable=1, no navi33-smu-off or navi33-psp-off." :
@@ -388,7 +414,8 @@ int main(int argc,char **argv) {
             puts("STOP 28 sends AUTOLOAD_RLC: boot with navi33-psp-autoload=1 as well. Nothing was sent.");
             rc=6;
         } else {
-            puts(mec ? "== GFX11 MEC QUEUE (writes MEC/HQD registers, SCRATCH_REG0 and the 1 MiB VRAM window at 250 MiB)" :
+            puts(grad ? "== GFX11 GRADIENT (writes GRBM select, SH_MEM_CONFIG, the poll trigger and the MEC window; the GPU draws the screen)" :
+                 mec ? "== GFX11 MEC QUEUE (writes MEC/HQD registers, SCRATCH_REG0 and the 1 MiB VRAM window at 250 MiB)" :
                  mes ? "== GFX11 MES START (writes GRBM_GFX_CNTL, CP_MES_CNTL, CP_MES_PRGRM_CNTR_START/_HI)" :
                  smu ? "== SMU13 ENABLE (writes MP1 C2PMSG_66/82/90; full power-off after attempt)" :
                  ipfw ? "== PSP13 IP FIRMWARE (writes the ring write pointer and the staging area)" :
@@ -399,7 +426,8 @@ int main(int argc,char **argv) {
             rc=7;
             if(call(conn,runMode,start,stop,rom,romLen,fw,fwLen,&r)) {
                 print(&r);
-                rc=mec ? (r.state==N33_PSPL_MEC_QUEUE_OK ? 0 : 9) :
+                rc=grad ? ((r.state==N33_PSPL_GRAD_ON_SCREEN || r.state==N33_PSPL_GRAD_OK) ? 0 : 9) :
+                   mec ? (r.state==N33_PSPL_MEC_QUEUE_OK ? 0 : 9) :
                    mes ? (r.state==N33_PSPL_MES_RUNNING ? 0 : 9) :
                    smu ? (r.state==N33_PSPL_SMU_GC_READY ? 0 : 9) : r.state==(ipfw ? N33_PSPL_FW_DONE : ringStage ? N33_PSPL_RING_DONE :
                              N33_PSPL_SOS_ALIVE) ? 0 : 9;
@@ -411,6 +439,7 @@ int main(int argc,char **argv) {
     IOServiceClose(conn);
     free(rom);free(fw);
     puts(!writes ? "GPU writes: NONE; plan only." :
+         grad ? "GPU writes: GRBM/SH_MEM/poll registers and the MEC window; the GPU wrote the pixels." :
          mec ? "GPU writes: MEC/HQD registers and the MEC VRAM window only (see write count and flags)." :
          mes ? "GPU writes: GC GRBM select and CP_MES registers only (see write count)." :
          smu ? "GPU writes: SMU mailbox only (see write count); full power-off after an attempt." :

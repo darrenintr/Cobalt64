@@ -508,3 +508,25 @@ for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert '--mec-queue' not in code and 'N33_MEC_QUEUE_RUN' not in code
 print('Navi33 MEC queue allowlist, window, independent gate and plan boundary: passed')
+
+# Gradient: own gate and latch, pinned shader, writes only through the runner's allowlist.
+grad=(root/'src/Navi33DarwinGradient.cpp').read_text()
+gradh=(root/'src/Navi33Gfx11Gradient.h').read_text()
+assert 'if(gradMode)req.attempted=&gradAttempted_;' in load_fn
+assert 'if(gradMode)req.writeGate=!killed && !gradKilled &&' in load_fn
+assert 'PE_parse_boot_argn("navi33-gradient"' in load_fn
+assert 'bool gradAttempted_ = false;' in (root/'src/Navi33Probe.hpp').read_text()
+assert 'return executeGradient(pci,req);' in writer
+assert 'if(!gr::allowed(io->r,off)' in grad
+assert 'kIOMapInhibitCache|kIOMapReadOnly' in grad          # the screen is only read by the CPU
+assert 'gr::Hw hw{&io,read32,nullptr,nullptr,vramRead,nullptr,sleepMs};' in grad
+assert 'sha256::equal(sha256::hash(co,bytes),kCodeObjectSha256)' in gradh
+assert 'Navi33DarwinGradient.o' in makefile
+for forbidden in ('->configWrite','setMemoryEnable','setBusMasterEnable','setPowerState','WREG32('):
+    assert forbidden not in grad, f'gradient stage gained {forbidden}'
+for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory'):
+    assert forbidden not in gradh
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert '--gradient' not in code and 'N33_GRADIENT_RUN' not in code
+print('Navi33 gradient allowlist, pinned shader, independent gate and plan boundary: passed')

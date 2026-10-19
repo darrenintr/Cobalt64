@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 16u /* 16: MEC queue modes/result;9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
+#define N33_ABI_VERSION 17u /* 17: gradient modes/result; 16: MEC queue modes/result; 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -226,6 +226,13 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
 #define N33_MEC_QUEUE_PLAN 13u
 #define N33_MEC_QUEUE_RUN 14u
 #define N33_MEC_MARKER 0x4d454331u
+/* First GPU-calculated pixels (G35): shaders/gradient.co (pinned) on the G34
+ * queue, a 64x64 test image, then the screen. RUN needs navi33-gradient=1, no
+ * navi33-gradient-off or navi33-psp-off, once per boot. Input: IP Discovery
+ * then the code object. */
+#define N33_GRADIENT_PLAN 15u
+#define N33_GRADIENT_RUN 16u
+#define N33_GRAD_MARKER 0x47524431u
 #define N33_PSP_FW_RECORDS 27u
 #define N33_PSP_FW_STOP_AUTOLOAD 28u
 #define N33_PSP_LOAD_MAX_INPUT (4u*1024u*1024u)
@@ -256,7 +263,11 @@ enum n33_psp_load_state {
   N33_PSPL_MES_NO_VERSION=42, N33_PSPL_MES_RUNNING=43,
   /* MEC queue */
   N33_PSPL_MEC_BAD_PRECONDITION=44, N33_PSPL_MEC_WRITE_FAILED=45,
-  N33_PSPL_MEC_NO_FETCH=46, N33_PSPL_MEC_NO_FENCE=47, N33_PSPL_MEC_QUEUE_OK=48
+  N33_PSPL_MEC_NO_FETCH=46, N33_PSPL_MEC_NO_FENCE=47, N33_PSPL_MEC_QUEUE_OK=48,
+  /* gradient */
+  N33_PSPL_GRAD_BAD_PRECONDITION=49, N33_PSPL_GRAD_WRITE_FAILED=50,
+  N33_PSPL_GRAD_NO_FENCE=51, N33_PSPL_GRAD_BAD_PIXELS=52, N33_PSPL_GRAD_OK=53,
+  N33_PSPL_GRAD_ON_SCREEN=54
 };
 /* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
 enum n33_psp_load_step {
@@ -312,9 +323,14 @@ struct n33_psp_load_result {
   uint32_t mec_marker, mec_cntl_before, mec_cntl_after, mec_rlc, mec_scratch;
   uint32_t mec_fence, mec_rptr, mec_hqd_active_before, mec_hqd_active_after, mec_reserved;
   uint64_t mec_window_mc;
+  /* gradient: zero for the other modes. bad_pixels counts mismatches in the
+   * 64x64 test image, screen_bad in the screen samples; screen is w<<16|h. */
+  uint32_t grad_marker, grad_shmem_before, grad_g34_fence, grad_rptr_before;
+  uint32_t grad_rptr_after, grad_fence_a, grad_fence_b, grad_bad_pixels;
+  uint32_t grad_screen_bad, grad_fallbacks, grad_first_pixel, grad_screen;
 };
-N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==432,
-                  "N33 PSP load result must be 432 bytes");
+N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==480,
+                  "N33 PSP load result must be 480 bytes");
 #define N33_PSPR_FLAG_RESUMED (1u<<0) /* ring already existed, not recreated */
 #define N33_PSPR_FLAG_RING_CREATED (1u<<1)
 #define N33_PSPR_FLAG_TOC_LOADED (1u<<2)

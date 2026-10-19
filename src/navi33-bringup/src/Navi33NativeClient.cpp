@@ -284,7 +284,8 @@ IOReturn Navi33NativeClient::externalMethod(
              req.mode!=N33_SMU_ENABLE_PLAN && req.mode!=N33_SMU_ENABLE_RUN &&
              req.mode!=N33_SMU_SCPM_PLAN && req.mode!=N33_SMU_SCPM_RUN &&
              req.mode!=N33_MES_START_PLAN && req.mode!=N33_MES_START_RUN &&
-             req.mode!=N33_MEC_QUEUE_PLAN && req.mode!=N33_MEC_QUEUE_RUN) ||
+             req.mode!=N33_MEC_QUEUE_PLAN && req.mode!=N33_MEC_QUEUE_RUN &&
+             req.mode!=N33_GRADIENT_PLAN && req.mode!=N33_GRADIENT_RUN) ||
             ((req.mode==N33_PSP_LOAD_RING_PLAN || req.mode==N33_PSP_LOAD_RING_RUN) ?
                  (req.stop_after<N33_PSP_RING_STOP_RING ||
                   req.stop_after>N33_PSP_RING_STOP_TMR) :
