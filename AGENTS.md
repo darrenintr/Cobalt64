@@ -1655,6 +1655,44 @@ parser got two of them wrong:
   - 0.0.21 appends 20 `n33peek` windows for those registers, checked against
     the upstream offset headers; `tools/queue1-census.py` decodes them (see
     `DMA_QUEUE_BRINGUP.md` stage G29). No ABI change, no new write path.
+- **2026-10-19 14:23-14:39, kext 0.0.21 in the VM: the sOS -> SMU sequence
+  redone after a full power-off, then the first Queue1 census.** Host boot
+  `0b192ba7-aba1-4067-9d6e-0466d353663a` (poweroff.target 14:20:26, power-on
+  14:21:12), card on vfio-pci, BAR0 256 MiB. Approved by the user ("yes please
+  go", 2026-10-19). Since the Claude Code permission check blocks the agent
+  from running guest write commands over SSH, the user ran the stage scripts
+  with `!` (the agent wrote them; each runs the read-only plan first, one VM boot
+  per stage, and stops at the first stage that misses its success state).
+  - sOS `runs/20261019-142341`: plan state 14 (flags `0x1f`), load state 20,
+    4 parts, 8 writes, 25 ms, sOS `00330024`, heartbeat `1d912adc`.
+  - Ring `runs/20261019-143459`: state 28, 6 writes, fence 2, TOC 2304 B, TMR
+    19,922,944 B at `0x81fc000000`, `_64` `80020000`, `_67` `0x20`.
+  - SMU image `runs/20261019-143542` ([26,27)), the other 26 records
+    `runs/20261019-143625`, AUTOLOAD_RLC `runs/20261019-143712`: state 32 each,
+    `_67` up to `0x1e0`.
+  - SCPM `runs/20261019-143755`: state 39, 3 writes, 33 ms, message 6 arg 0,
+    response 1; reset `0x10` -> `0x1f`, `RLC_BOOTLOAD_STATUS` 0 -> `0xc000001f`.
+    So the whole sequence reproduces exactly on a second power cycle.
+  - **Census** `runs/20261019-143838` (all gates closed,
+    `results-20261019-143904-guest.txt`, `tools/queue1-census.py`): GC up, sOS
+    alive, SDMA0_ID 1.
+    - `SDMA0_F32_CNTL` `0x08084001`: **HALT set** (bit 0), TH1_ENABLE set.
+      sdma_v6_0 clears HALT before any ring runs.
+    - Both hubs: `MX_L1_TLB_CNTL` `0x501` (ENABLE_L1_TLB 1, SYSTEM_ACCESS_MODE 0,
+      ADVANCED_DRIVER_MODEL 0, ECO_BITS 0xa; Linux sets mode 3, ADM 1, ECO 0);
+      `VM_L2_CNTL` `0x00080602` (L2 cache **off**); `VM_L2_CNTL3` MMHUB
+      `0x80100007`, GFXHUB `0x80120007`; every context `0x01fffe00`
+      (disabled); system aperture `0x200000-0x207fff`, default address 0, AGP 0.
+    - GFXHUB fault control `0x3ffffffc`/`0x00020000`, fault status 0.
+    - SDMA0 `CNTL` `0x2440`, `UTCL1_CNTL` `0x1f000288`, `UTCL1_PAGE`
+      `0x010cec20`, watchdog 0, `QUEUE_STATUS0` `0x22222222`, `STATUS3`
+      `0x03f00000`. Queue1 `RB_CNTL` `0x00040800` (disabled), all pointers 0.
+    - So a Queue1 COPY/FENCE also needs, at least: GFXHUB L1 TLB mode, L2 cache
+      enable, VMID1 context, invalidation, and SDMA unhalt, none of which the
+      G15 manifest has. That is the input for the run-mode design.
+  - Every stage's VM shut down cleanly; the default `OpenCore-navi33.qcow2` is
+    closed again (`navi33-psp-off=1`, `navi33-smu-off=1`). The sOS and GC stay
+    up until the next power-off.
 
 ## Adding a register read
 
