@@ -27,7 +27,7 @@ VM_DIR="${VM_DIR:-$HOME/macos tahoe}"
 die() { echo "make-opencore: $*" >&2; exit 1; }
 [ $# -ge 1 ] || die "usage: $0 ARTIFACT_DIR [--oc OPENCORE_RELEASE_DIR] [--hostfb FILE] [--dma-preflight] [--output FILE.qcow2] [--psp-load]"
 ART="$(cd -- "$1" && pwd)"; shift
-PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; SMU_SCPM=0; MES_START=0; MEC_QUEUE=0; GRADIENT=0
+PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; SMU_SCPM=0; MES_START=0; MEC_QUEUE=0; GRADIENT=0; AUTOSTART=0
 OWNER_PROBE=0; OWNER_RECOVERY=0; OWNER_HOLD=0; OWNER_PHYSICAL=0; DMA_PREFLIGHT=0; OCREL=""; HOSTFB=""; OUT_NAME="OpenCore-navi33.qcow2"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,6 +36,7 @@ while [ $# -gt 0 ]; do
     --mes-start) MES_START=1 ;;
     --mec-queue) MEC_QUEUE=1 ;;
     --gradient) GRADIENT=1 ;;
+    --autostart) AUTOSTART=1 ;;   # kext 0.0.25+: the whole bring-up from start()
     --psp-load) PSP_LOAD=1 ;;
     --psp-ring) PSP_RING=1 ;;
     --psp-fw) PSP_FW=1 ;;
@@ -57,7 +58,7 @@ done
   die "--output must be a plain .qcow2 filename"
 [ -z "$OCREL" ] || [ -f "$OCREL/X64/EFI/OC/OpenCore.efi" ] || die "no X64/EFI/OC/OpenCore.efi in $OCREL"
 [ -z "$HOSTFB" ] || [ -r "$HOSTFB" ] || die "cannot read $HOSTFB"
-[ $((PSP_LOAD + PSP_RING + PSP_FW + SMU_ENABLE + MES_START + MEC_QUEUE + GRADIENT)) -le 1 ] || die "open one write gate at a time: --psp-load, --psp-ring, --psp-fw, --smu-enable, --mes-start, --mec-queue or --gradient"
+[ $((PSP_LOAD + PSP_RING + PSP_FW + SMU_ENABLE + MES_START + MEC_QUEUE + GRADIENT + AUTOSTART)) -le 1 ] || die "open one write gate at a time: --psp-load, --psp-ring, --psp-fw, --smu-enable, --mes-start, --mec-queue, --gradient or --autostart"
 [ "$PSP_AUTOLOAD" = 0 ] || [ "$PSP_FW" = 1 ] || die "--psp-autoload (AUTOLOAD_RLC) only together with --psp-fw"
 KEXT="$ART/EFI/OC/Kexts/Navi33Probe.kext"
 SRC="$VM_DIR/boot/OpenCore.qcow2"
@@ -90,7 +91,7 @@ if [ -n "$OCREL" ]; then
   OCVER="$(basename "$OCREL"), OpenCore.efi sha256 $(sha256sum "$OCREL/X64/EFI/OC/OpenCore.efi" | cut -c1-16)…"
 fi
 python3 -I - "$WORK/config.plist" "$PSP_LOAD" "$KEXT/Contents/MacOS/Navi33Probe" \
-  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" "$OWNER_HOLD" "$OWNER_PHYSICAL" "$MES_START" "$MEC_QUEUE" "$GRADIENT" <<'EOF'
+  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" "$OWNER_HOLD" "$OWNER_PHYSICAL" "$MES_START" "$MEC_QUEUE" "$GRADIENT" "$AUTOSTART" <<'EOF'
 import plistlib,struct,sys,uuid
 path,psp_load,binary,manifest,ocver,hostfb=sys.argv[1],sys.argv[2]=="1",sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6]
 psp_ring=sys.argv[7]=="1"
@@ -106,6 +107,7 @@ owner_physical=len(sys.argv)>16 and sys.argv[16]=="1"
 mes_start=len(sys.argv)>17 and sys.argv[17]=="1"
 mec_queue=len(sys.argv)>18 and sys.argv[18]=="1"
 gradient=len(sys.argv)>19 and sys.argv[19]=="1"
+autostart=len(sys.argv)>20 and sys.argv[20]=="1"
 c=plistlib.load(open(path,"rb"))
 add=[k for k in c["Kernel"]["Add"] if k.get("BundlePath")!="Navi33Probe.kext"]
 add.append({"Arch":"x86_64","BundlePath":"Navi33Probe.kext",
@@ -125,15 +127,17 @@ args+=["-v","debug=0x108","serial=3","msgbuf=1048576",
        "navi33-psp-load=1" if psp_load else "navi33-psp-ring=1" if psp_ring else
        "navi33-psp-fw=1" if psp_fw else "navi33-smu-enable=1" if smu_enable else
        "navi33-mes-start=1" if mes_start else "navi33-mec-queue=1" if mec_queue else
-       "navi33-gradient=1" if gradient else "navi33-psp-off=1"]
+       "navi33-gradient=1" if gradient else
+       "navi33-autostart=1" if autostart else "navi33-psp-off=1"]
 args.append("navi33-dma-preflight=1" if dma_preflight else "navi33-dma-off=1")
 if owner_probe: args.append("navi33-owner-probe=1")
 if owner_recovery: args.append("navi33-owner-recovery=1")
 if owner_hold: args.append("navi33-owner-hold=1")
 if owner_physical: args.append("navi33-owner-physical=1")
-if not smu_enable: args.append("navi33-smu-off=1")
-if not mes_start: args.append("navi33-mes-off=1")
-if not mec_queue: args.append("navi33-mec-off=1")
+# Autostart runs the SMU, MES and MEC stages itself, so their kill switches go too.
+if not smu_enable and not autostart: args.append("navi33-smu-off=1")
+if not mes_start and not autostart: args.append("navi33-mes-off=1")
+if not mec_queue and not autostart: args.append("navi33-mec-off=1")
 if not gradient: args.append("navi33-gradient-off=1")
 if smu_scpm: args.append("navi33-smu-scpm=1")
 if psp_autoload: args.append("navi33-psp-autoload=1")   # AUTOLOAD_RLC: its own gate

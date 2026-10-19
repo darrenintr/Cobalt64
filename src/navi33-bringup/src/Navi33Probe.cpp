@@ -32,7 +32,11 @@
 #include "Navi33MmioPeek.h"
 #include "Navi33Gmc11VramLive.h"
 #include "Navi33VramSurvey.h"
+#include "Navi33Autostart.h"
+#include "Navi33EmbeddedFirmware.h"
+#include <kern/thread_call.h>
 #include <libkern/c++/OSData.h>
+static bool bootArgOn(const char *name);
 #include <libkern/libkern.h>
 
 
@@ -341,6 +345,22 @@ bool Navi33Probe::start(IOService *provider) {
     IOLog("Navi33Probe: RX 7600 %04x:%04x rev %02x, inventory only; GPU untouched\n",
           id.vendorId, id.deviceId, id.revisionId);
     registerService();
+    // Phase B1 boot-time bring-up: off unless navi33-autostart=1, and any kill
+    // switch of a stage it runs (or of the hardware probe) closes it.
+    navi33::autostart::Gates gates{};
+    gates.on=bootArgOn("navi33-autostart");gates.autostartOff=bootArgOn("navi33-autostart-off");
+    gates.pspOff=bootArgOn("navi33-psp-off");gates.smuOff=bootArgOn("navi33-smu-off");
+    gates.mesOff=bootArgOn("navi33-mes-off");gates.mecOff=bootArgOn("navi33-mec-off");
+    gates.hwProbe=bootArgOn("navi33-hw-probe");gates.hwOff=bootArgOn("navi33-hw-off");
+    if(!navi33::autostart::allowed(gates)) {
+        setProperty("Navi33,Autostart",gates.on ? "refused by a kill switch or a closed hw probe" : "off");
+    } else if((autostartCall_=thread_call_allocate(&Navi33Probe::autostartThunk,this))) {
+        setProperty("Navi33,GpuWritesEnabled",static_cast<uint64_t>(1),32);
+        setProperty("Navi33,Autostart","running");
+        thread_call_enter(autostartCall_);
+    } else {
+        setProperty("Navi33,Autostart","no thread call");
+    }
     return true;
 }
 
@@ -678,6 +698,89 @@ n33_peek_result Navi33Probe::peekRegisters(uint32_t window,uint32_t first,
     return result;
 }
 
+// The GOP console is the region fw_pri must stay clear of, by physical address,
+// so from boot_args (see psp13load::bootConsole). A guest with no GOP gets the
+// host's view of the firmware console (vm/prepare-card.sh); the executors use it
+// only when boot_args has none.
+static void fillConsole(navi33::darwin_psp::Request &req) {
+    if(const auto *ba=static_cast<const boot_args *>(PE_state.bootArgs)) {
+        const navi33::psp13load::Range c=navi33::psp13load::bootConsole(
+            ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_height);
+        req.consolePhys=c.phys;req.consoleBytes=c.bytes;
+    }
+    uint64_t hostOffset=0u,hostBytes=0u;
+    req.hostConsole=PE_parse_boot_argn("navi33-hostfb-offset",&hostOffset,
+                                       sizeof(hostOffset)) &&
+        PE_parse_boot_argn("navi33-hostfb-bytes",&hostBytes,sizeof(hostBytes));
+    req.hostConsoleOffset=hostOffset;req.hostConsoleBytes=hostBytes;
+}
+
+static bool bootArgOn(const char *name) {
+    uint32_t v=0u;
+    return PE_parse_boot_argn(name,&v,sizeof(v)) && v!=0u;
+}
+
+// Phase B1: the whole bring-up from start(), on a thread call, with the
+// embedded firmware. navi33-autostart=1 opens it; every kill switch of a stage
+// it runs closes it. Each stage goes through its own executor, plan check and
+// one-shot latch, so the N33N tools cannot repeat a stage it ran.
+void Navi33Probe::autostartThunk(thread_call_param_t self,thread_call_param_t) {
+    static_cast<Navi33Probe *>(self)->runAutostart();
+}
+
+void Navi33Probe::runAutostart() {
+    namespace as=navi33::autostart;
+    namespace em=navi33::embedded;
+    auto *pci=OSDynamicCast(IOPCIDevice,getProvider());
+    if(!pci || !pspLock_)return;
+    struct Ctx { Navi33Probe *self; IOPCIDevice *pci; bool fwLatch2=false, fwLatch3=false; unsigned fwRuns=0; };
+    Ctx ctx{this,pci};
+    IOLog("Navi33Probe: autostart begins (embedded firmware: IPD %lu B, sOS %lu B, IP %lu B)\n",
+          static_cast<unsigned long>(em::kIpdBytes),static_cast<unsigned long>(em::kSosBytes),
+          static_cast<unsigned long>(em::kIpFwBytes));
+    auto step=[](void *c,const as::Step &s,uint32_t *writes)->uint32_t {
+        Ctx &x=*static_cast<Ctx *>(c);
+        Navi33Probe *p=x.self;
+        navi33::darwin_psp::Request req{};
+        req.mode=s.mode;req.rom=em::kIpd;req.romBytes=em::kIpdBytes;
+        static const uint8_t zero=0u;
+        req.fw=s.payload==as::Payload::Sos ? em::kSos : s.payload==as::Payload::IpFw ? em::kIpFw : &zero;
+        req.fwBytes=s.payload==as::Payload::Sos ? em::kSosBytes : s.payload==as::Payload::IpFw ?
+            em::kIpFwBytes : 1u;
+        req.writeGate=true;req.autoloadGate=s.autoload;
+        req.stopAfter=s.stopAfter;req.startAt=s.startAt;
+        fillConsole(req);
+        switch(s.mode) {
+        case N33_PSP_LOAD_RUN: req.attempted=&p->pspLoadAttempted_;break;
+        case N33_PSP_LOAD_RING_RUN: req.attempted=&p->pspRingAttempted_;break;
+        case N33_PSP_LOAD_FW_RUN:   // three record ranges: one provider latch, then two local ones
+            req.attempted=x.fwRuns==0 ? &p->pspFwAttempted_ : x.fwRuns==1 ? &x.fwLatch2 : &x.fwLatch3;
+            break;
+        case N33_SMU_SCPM_RUN: req.attempted=&p->smuAttempted_;break;
+        case N33_MES_START_RUN: req.attempted=&p->mesAttempted_;break;
+        case N33_MEC_QUEUE_RUN: req.attempted=&p->mecAttempted_;break;
+        default: return N33_PSPL_BAD_REQUEST;
+        }
+        IOLockLock(p->pspLock_);
+        const bool before=*req.attempted;
+        const n33_psp_load_result r=navi33::darwin_psp::execute(x.pci,req);
+        IOLockUnlock(p->pspLock_);
+        if(s.mode==N33_PSP_LOAD_FW_RUN && !before && *req.attempted)++x.fwRuns;
+        *writes=r.register_writes;
+        IOLog("Navi33Probe: autostart %s: state %u, %u register writes\n",s.name,r.state,r.register_writes);
+        return r.state;
+    };
+    auto sleep=[](void *,uint32_t ms){IOSleep(ms);};
+    const as::Report rep=as::run(&ctx,step,sleep);
+    char text[256];int n=snprintf(text,sizeof(text),"%s reached %u/%u:",rep.done ? "DONE" : "STOPPED",
+                                  rep.reached,as::kStepCount);
+    for(unsigned i=0;i<as::kStepCount && n>0 && static_cast<size_t>(n)<sizeof(text);++i)
+        if(rep.tries[i])n+=snprintf(text+n,sizeof(text)-n," %s=%u/%uw%s",as::kSteps[i].name,
+                                    rep.state[i],rep.writes[i],rep.tries[i]>1u ? "+retry" : "");
+    setProperty("Navi33,Autostart",text);
+    IOLog("Navi33Probe: autostart %s\n",text);
+}
+
 // PLAN shares the hardware-preflight gate and only reads. RUN additionally
 // needs navi33-psp-load=1 with no navi33-psp-off, and runs once per boot:
 // a half-loaded PSP keeps its state until the card loses power.
@@ -745,20 +848,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     req.autoloadGate=!killed && fwMode &&
         PE_parse_boot_argn("navi33-psp-autoload",&autoOn,sizeof(autoOn)) && autoOn==1u;
     req.stopAfter=stopAfter;req.startAt=startAt;
-    // The GOP console is the region fw_pri must stay clear of, by physical
-    // address, so from boot_args (see psp13load::bootConsole).
-    if(const auto *ba=static_cast<const boot_args *>(PE_state.bootArgs)) {
-        const navi33::psp13load::Range c=navi33::psp13load::bootConsole(
-            ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_height);
-        req.consolePhys=c.phys;req.consoleBytes=c.bytes;
-    }
-    // A guest with no GOP gets the host's view of the firmware console
-    // (vm/prepare-card.sh); execute() uses it only when boot_args has none.
-    uint64_t hostOffset=0u,hostBytes=0u;
-    req.hostConsole=PE_parse_boot_argn("navi33-hostfb-offset",&hostOffset,
-                                       sizeof(hostOffset)) &&
-        PE_parse_boot_argn("navi33-hostfb-bytes",&hostBytes,sizeof(hostBytes));
-    req.hostConsoleOffset=hostOffset;req.hostConsoleBytes=hostBytes;
+    fillConsole(req);
     IOLockLock(pspLock_);
     req.attempted=ringMode ? &pspRingAttempted_ : fwMode ? &pspFwAttempted_ :
                              &pspLoadAttempted_;
@@ -963,6 +1053,11 @@ bool Navi33Probe::willTerminate(IOService *provider, IOOptionBits options) {
 }
 
 void Navi33Probe::stop(IOService *provider) {
+    if(autostartCall_) {   // never tear down under a running bring-up
+        thread_call_cancel_wait(autostartCall_);
+        thread_call_free(autostartCall_);
+        autostartCall_=nullptr;
+    }
     releaseHeldOwner(provider);
     if(stageOwnerLock_) {
         IOLockLock(stageOwnerLock_);

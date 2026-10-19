@@ -940,3 +940,21 @@ requires G34's evidence (MEC `0x3c000000`, `SCRATCH_REG0` `0xdeadbeef`, fence
   kill `navi33-gradient-off`/`navi33-psp-off`, own latch; `make-opencore.sh
   --gradient`; `n33psp --gradient-plan` / `--gradient ... --fw gradient.co`
   (`guest-run.sh` copies the code object). Five mutants caught.
+
+## Phase B1: the bring-up from the kext's start() (kext 0.0.25)
+
+`src/Navi33Autostart.h` sequences the eight stages proven on 2026-10-19 (G33-G34
+and the PSP/SMU stages) with their success states 20, 28, 32, 32, 32, 39, 43, 48;
+`tests/test_autostart.cpp` pins the order, the firmware ranges ([26,27) first,
+then [0,26), then AUTOLOAD at 28), stop-at-first-failure and the bounded retries
+(only `RING_NOT_READY` and `SMU_BAD_PRECONDITION`, only with zero writes, 20 x
+50 ms). `Navi33Probe::runAutostart()` drives the existing executors through
+`navi33::darwin_psp::execute()` under the PSP lock with the provider's latches
+(two extra local latches for the second and third firmware range).
+
+Firmware: `tools/embed-firmware.py` (run by the Makefile when the Kext is built)
+fetches linux-firmware 1522c78a from the GitLab mirror or git.kernel.org, checks
+every file against `tests/fixtures/rx7600-fw-plan.tsv` and the sOS pin, builds
+the IP Discovery blob from the Linux capture, and writes
+`build/Navi33EmbeddedFirmware.cpp` (about 2.3 MB of const data).
+`make FWDIR=/lib/firmware/amdgpu` uses local files instead.

@@ -59,6 +59,9 @@ public:
     }
 
 private:
+    static void autostartThunk(thread_call_param_t self,thread_call_param_t);
+    void runAutostart();
+    thread_call_t autostartCall_ = nullptr;   // navi33-autostart=1 only
     void releaseHeldOwner(IOService *provider);
     void publishOwnerReport(const navi33::darwin_owner::ProbeReport &r);
     // Written in start() before registerService(), read thereafter.

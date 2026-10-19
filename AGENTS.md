@@ -93,6 +93,18 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      and has its own one-shot latch. The user approved building and running the
      three compute steps on 2026-10-19 ("I approved all the require step and the
      test on these 3 aspect so you can run it yourself").
+   - **Autostart (kext 0.0.25, Phase B1, the user's choice on 2026-10-19):** with
+     `navi33-autostart=1` the kext runs the eight proven stages itself from
+     `start()` on a thread call (sOS, ring/TOC/TMR, SMU image, 26 records,
+     AUTOLOAD_RLC, SCPM, MES start, MEC queue), each through its own executor,
+     plan check, allowlist and latch, with firmware embedded at build time
+     (`tools/embed-firmware.py`, linux-firmware 1522c78a, every file SHA-256
+     pinned). It stops at the first stage that misses its success state and
+     retries only zero-write refusals of the two transients seen on 2026-10-19.
+     Off by default; `navi33-autostart-off` and every kill switch of its stages
+     (`navi33-psp-off`, `-smu-off`, `-mes-off`, `-mec-off`, `navi33-hw-off`) close
+     it. VM first (`make-opencore.sh --autostart`); not on the stick unless the
+     user asks. Result in ioreg `Navi33,Autostart`.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing

@@ -281,12 +281,16 @@ assert "IOLockLock(pspLock_)" in load_fn
 assert "navi33::darwin_psp::execute(pci,req)" in load_fn
 # getConsoleInfo() returned a kernel virtual address on hardware (0.0.6);
 # the console must come from boot_args through the physical-only filter.
-assert "PE_state.bootArgs" in load_fn and "psp13load::bootConsole(" in load_fn
-assert "getConsoleInfo" not in load_fn
+# pspLoad() and the autostart share fillConsole() (kext 0.0.25).
+console_fn=source[source.index("static void fillConsole("):]
+console_fn=console_fn[:console_fn.index("\n}\n")]
+assert "fillConsole(req);" in load_fn
+assert "PE_state.bootArgs" in console_fn and "psp13load::bootConsole(" in console_fn
+assert "getConsoleInfo" not in load_fn and "getConsoleInfo" not in console_fn
 # A guest without a GOP (Tahoe VM, 2026-10-18) may name the host's view of
 # the firmware console, but both boot-args are needed and a boot console wins.
-assert 'PE_parse_boot_argn("navi33-hostfb-offset"' in load_fn
-assert 'PE_parse_boot_argn("navi33-hostfb-bytes"' in load_fn
+assert 'PE_parse_boot_argn("navi33-hostfb-offset"' in console_fn
+assert 'PE_parse_boot_argn("navi33-hostfb-bytes"' in console_fn
 writer=(root/"src/Navi33DarwinPspLoad.cpp").read_text()
 assert "const pl::Range console=boot.phys ? boot :" in writer
 assert "pl::hostConsole(boot,req.hostConsole," in writer
@@ -530,3 +534,18 @@ for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert '--gradient' not in code and 'N33_GRADIENT_RUN' not in code
 print('Navi33 gradient allowlist, pinned shader, independent gate and plan boundary: passed')
+
+# Autostart (Phase B1): off by default, one boot-arg, every kill switch of its
+# stages closes it, firmware only from the SHA-checked embed, never from scripts.
+probe_src=(root/'src/Navi33Probe.cpp').read_text()
+emb=(root/'tools/embed-firmware.py').read_text()
+assert 'gates.on=bootArgOn("navi33-autostart")' in probe_src
+for kill in ('navi33-autostart-off','navi33-psp-off','navi33-smu-off','navi33-mes-off','navi33-mec-off','navi33-hw-off'):
+    assert f'bootArgOn("{kill}")' in probe_src, kill
+assert 'if(!navi33::autostart::allowed(gates))' in probe_src
+assert 'thread_call_cancel_wait(autostartCall_);' in probe_src
+assert 'raise SystemExit(f"embed-firmware: {name} is' in emb and 'hashlib.sha256(data)' in emb
+assert 'Navi33EmbeddedFirmware.o' in makefile
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    assert 'navi33-autostart' not in (root/unattended).read_text()
+print('Navi33 autostart gate, kill switches, embedded firmware pins and teardown: passed')
