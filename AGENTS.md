@@ -269,6 +269,16 @@ output survives a hang and Linux can inspect a stuck guest.
   - `guest-run.sh ARTIFACT_DIR` copies the tools and the pinned firmware
     to the guest's `~/navi33`, runs `run.sh` there, and copies the results
     file into the run directory.
+  - `stage.sh NAME "GATES" "PLAN ARGS" ["RUN ARGS"]` builds the default
+    OpenCore disk with one gate, boots the VM, copies the tools, runs the
+    read-only `n33psp` plan and then (only with RUN ARGS) the write command,
+    saves `NAME-plan.txt`/`NAME-run.txt` in the run directory and shuts down.
+    `stage-cont.sh` does the same for a VM that is already running.
+    `scpm-sequence.sh` runs ring/TMR, SMU image, the other 26 records,
+    AUTOLOAD_RLC and SCPM enable after a sOS load, stops at the first stage
+    that misses its success state (28/32/32/32/39), then does a closed-gate
+    census boot. The Claude Code permission check blocks the agent from running
+    guest write commands, so **the user runs these with `!`** (2026-10-19).
   - `host-setup.sh` is a one-time sudo setup, undone with `--remove`. It
     installs openssh-server and tmux, adds the GRUB entry
     `cobalt64-navi33-vm`, an unlimited memlock limit and a vfio udev rule.
@@ -319,6 +329,30 @@ output survives a hang and Linux can inspect a stuck guest.
     `OVMF_VARS=` (a writable copy).
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
+
+## Resume here (state at 2026-10-19 ~15:45)
+
+- **Card:** the headless VFIO boot `0b192ba7-…` from 14:21 is still up, so the
+  sOS is alive and GC is powered (RLC boot complete) until the next power-off.
+  The VM is off; the default `OpenCore-navi33.qcow2` has every gate closed.
+  After a power-off, redo the sequence: `vm/stage.sh sos "--psp-load" "--plan
+  --fw psp_13_0_7_sos.bin" "--load --fw psp_13_0_7_sos.bin"`, then
+  `vm/scpm-sequence.sh` (user runs both with `!`; about 6 minutes in all).
+- **Kext:** 0.0.21 (`48C9C24E-…`, cache `artifact-0.0.21`) adds read-only
+  Queue1/hub/SDMA windows. Branch `feature/navi33-dma-backend`, all pushed.
+- **Next step, approved but blocked:** the SDMA0 Queue0 ring-test writer for the
+  G30 plan (`src/Navi33Sdma6RingTest.h`: 23 setup + 2 WPTR + 3 park writes, SDMA0
+  registers only, VRAM window at 248 MiB). Claude's attempts to write that kext
+  code were stopped twice by a safety filter, so it needs to be written by the
+  user or a collaborator (model: `src/Navi33DarwinSmu.cpp`), then reviewed, CI
+  built, planned read-only and run once in the VM.
+- **After it:** a compute queue (MES, or the KIQ fallback G18-G25), then the
+  gradient dispatch (G31/G32 are ready offline: `shaders/gradient.co` and its
+  56-dword PM4 stream). The first visible result could be the gradient written
+  into the console framebuffer at VRAM 0.
+- **Useful offline tools:** `tools/queue1-census.py RESULTS` (what Linux sets
+  that reads clear), `build/sdma6-ring-plan RESULTS` (the G30 write list or its
+  refusals), `shaders/build.sh` (rebuild the kernel).
 
 ## RX 7600 hardware facts
 
