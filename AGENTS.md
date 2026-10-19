@@ -121,9 +121,15 @@ The Mac boots macOS 26.7.1 through OpenCore from a USB stick labelled
   lets the agent run `mount /mnt/opencore` and `umount /mnt/opencore` without
   sudo or a desktop; the headless boot has no desktop to mount it). Older notes
   say `/run/media/darren/OPENCORE/`. On the Mac it is `/Volumes/OPENCORE/`.
-- The stick's boot-args must include `msgbuf=1048576`: without it the kernel
-  message buffer rolls past the kext's boot IOLog lines before `run.sh` runs
-  (lost the 0.0.18 owner decision). Verdicts are also ioreg properties since 0.0.19.
+- The stick's boot-args include `msgbuf=1048576`, but it does **not** keep the
+  kext's boot-time IOLog lines: no bare-metal results file (20:10, 21:21, 08:47
+  with msgbuf) has them, because the dmesg capture starts at the tool runs. The
+  boot-time verdicts survive only as ioreg properties (since 0.0.19), so put
+  every new boot-time verdict into ioreg.
+- The autorun starts 3 to 5 minutes after boot and takes about 2 minutes (08:47
+  run). Wait about 5 minutes before shutting down: the 21:21 file was cut off
+  after `IOAccelerator instances: 0` (no system_profiler, no kernel log, no
+  `== done`), most likely because the Mac was shut down mid-run (not verified).
 - OpenCore injects `EFI/OC/Kexts/Navi33Probe.kext` from the stick. The
   `config.plist` entry is by path, so replacing the kext needs no config
   edit.
@@ -179,7 +185,9 @@ navi33-dma-stage-off=1 navi33-fb-off=1 navi33-psp-off=1 navi33-sdma-off=1`.
   Restore the kill switch after the attempt.
 - PCI owner probe (kext 0.0.15, default off, never on the stick): `navi33-owner-probe=1`
   runs one `IOService::open`/`close` on the provider and a framebuffer/accelerator
-  child scan, and logs the decision. `navi33-owner-off` kills it,
+  child scan, and logs the decision. `navi33-owner-off` forces a Refused
+  (KillSwitch) decision but does **not** stop the open/close, the scan, the
+  mapper lookup or the 64 KiB physical-candidate allocation (source, 0.0.20),
   `navi33-owner-recovery=1` is the operator's recovery attestation. Config reads only.
   Kext 0.0.18: the owner's DMA domain is the card's IOMapper (`NoDmaMapper`
   refusal when none exists). The VM has no mapper for this device, so an
@@ -197,6 +205,8 @@ navi33-dma-stage-off=1 navi33-fb-off=1 navi33-psp-off=1 navi33-sdma-off=1`.
   proves nothing about whether the GPU can reach those pages. The owner's
   write gates stay closed (`kCanWriteGpu=false`). Any card run still needs
   its own explicit approval.
+  In the VM: `vm/make-opencore.sh ... --owner-probe --owner-recovery --owner-hold
+  --owner-physical` (option added 2026-10-19).
 - Owner hold (kext 0.0.16, default off, never on the stick): `navi33-owner-hold=1`
   keeps `IOService::open` for one production-owner epoch when the decision is Owned,
   and releases it in `stop()`. While held, other clients cannot open the card. Needs
@@ -1521,6 +1531,116 @@ parser got two of them wrong:
     file. A decision of Owned with `PhysicalUnverified` would be the first
     exercise of that mode on bare metal; it still proves nothing about GPU
     reachability.
+  - **2026-10-19 ~08:30, the recovery-attested stick config panicked before
+    macOS came up (no results file).** The panic boot was a cold boot between
+    the Linux poweroff (08:29:33) and the next Linux start (08:31:35). The NVRAM
+    record (boot-args cut at 255 characters) has `navi33-owner-recovery=1`,
+    `navi33-owner-physical=1`, `navi33-owner-probe=1` and the PSP/SMU/SDMA/FB/
+    DMA-stage kill switches. It is the same panic as before: `"The global
+    payload bytes pointer is NULL"` @apfs_vfsops.c:2893 in
+    `apfs_vfsop_mountroot`, kernel UUID `1291D44A…`, APFS 2811.160.7, uptime
+    3.197 s, no Navi33Probe frame. At 08:39 the previous session restored the
+    21:21 config (the panicked one saved in
+    `navi33/backup-0.0.20-recovery-panicked-0831/`), then at 08:46 copied the
+    recovery-attested config back (`cp -p`, checked with `cmp`) for a retry.
+- **2026-10-19 08:47, kext 0.0.20 on bare-metal macOS, boot autorun: the first
+  Owned decision on bare metal, in unmapped mode** (stick file
+  `navi33/results-20261019-085044-boot.txt`). Loaded UUID
+  `8AB407DE-B3E6-3D94-BF59-17D59D0601CD`; the stick's kext is byte-identical to
+  `cache/artifact-0.0.20`, and its OpenCore.efi is the 1.0.8 release.
+  - **The same files that panicked at ~08:30 booted cleanly:** `config.plist`
+    is byte-identical (SHA-256 `efb8f295…`) to the panicked copy, and nothing
+    else under `EFI/` changed since 2026-10-18 21:16. Cold boot after `sudo
+    poweroff`. So no Navi33 setting is enough to cause the APFS panic.
+    Known bare-metal boots: 8 good, 3 panics (P1 2026-10-17 with 0.0.3 or 0.0.5,
+    P2 2026-10-18 with 0.0.7, P3 above), across three kexts and three boot-arg
+    sets, after warm and cold starts. Every panic was at 3.20-3.27 s. The next
+    boot with the same files has always worked. None of the 56 VM boots (same
+    macOS build) panicked. Not excluded: every bare-metal boot loaded
+    Navi33Probe, whose owner probe runs before root mount, so there is no
+    control boot without it. No fix is documented online: the string also
+    appears on Monterey 12.2 Ryzen/OpenCore (AMD-OSX forum) and on a real
+    MacBook Air 2015. The stick loads an older `apfs_aligned.efi`
+    (2332.120.31) with JumpStart on; that is a lead only. **Treat the panic as
+    intermittent: power off and boot again.**
+  - **Owner decision:** `OwnerDecision` 2 (Owned), `OwnerRefusalMask` 0,
+    `OwnerDmaMode` 2 (`PhysicalUnverified`), `OwnerDmaDomain` `0x4e4f4d4150`
+    (`NOMAP`). `OwnerEvidence` 461 = gate, identity, open, recovery, physical
+    opt-in and physical addresses valid; kill, display and mapper 0. (21:21:
+    397, the same bits without recovery. 20:10: 13, gate/identity/open.) The
+    DMA preflight again gave status 16, 1 segment, 16 pages.
+  - The probe opened and closed the card once (IOPCIFamily `handleClose`
+    client Navi33Probe at 08:47:33.878) and held nothing: no `OwnerHeld`,
+    `OwnerEpoch` or `OwnerPhase`. Source trace (0.0.20): with these boot-args an
+    Owned verdict starts no hold, epoch, DMA backend, queue, MMIO write or
+    config write. Nothing reads the verdict back. IOPCIFamily's own work inside
+    open/close was not checked.
+  - Limits: `display 0` was read before `.Display_boot` attached (its registry
+    id comes after Navi33Probe's in both 0.0.20 boots). Under GFX0 it now has
+    IOFramebuffer user clients, so the same scan would refuse with
+    `DisplayClient` later in the boot. `recovery 1` is only the boot-arg.
+    `physicalCandidateReady()` tests the host allocator (contiguous RAM below
+    2^48), not the card. **Nothing here shows the GPU can reach those pages.**
+  - **Hardware unchanged:** all six bare-metal `n33peek --all` dumps (0.0.5
+    22:11 through 08:47) are byte-identical, 485 dwords in 38 windows.
+    `C2PMSG_60..62` stay `00000004 83f00f80 0d1102f4` on bare metal (they varied
+    only in the VM). PSP bootloader-ready, no sOS, GC in reset
+    (`IMU_GFX_RESET_CTRL` `0x10`), MMHUB FB `0x8000-0x81ff`, SMU `C2PMSG_90` 1.
+    Constant non-zero words not listed before: PSP `C2PMSG_73` = 1, SMU
+    `C2PMSG_50/54/96/97` = 1 (meaning unknown). Every GPU-write indicator is 0
+    or NONE.
+  - **Why the bare-metal PSP plan says `NO_CONSOLE` since 0.0.7:** the plan
+    prints `BAR0 0x830000000 + 256 MiB; console 0x7c00000000`.
+    `boot_args->Video` holds the firmware-time console, offset 0 of the
+    firmware's 8 GiB BAR0 at `0x7c00000000` (the same base Linux shows). macOS
+    runs BAR0 at `0x8_3000_0000` with 256 MiB, the bottom of the root bus's
+    64-bit window. The stick sets `ResizeAppleGpuBars=0`, which OpenCore applies
+    in UEFI when it starts the Apple booter. IOPCIFamily's console relocation
+    updates only `PE_state.video` (base | 1), never `boot_args->Video`. Which
+    step moves BAR0 is not verified; a next stick run could capture `dmesg |
+    grep -iE 'console relocated|PCI configuration'` and GFX0 `assigned-addresses`.
+    The plan's `= vram+0x0` at state 11 is an unset field. The HUBP check has
+    never run on bare metal since 0.0.7. `tests/test_psp13_loader.cpp:218-221`
+    assumes a Mac console at `0x830000001` and expects PLAN_OK; the real input
+    is not covered by any test. A host simulation shows a console translated to
+    `0x830000000` gives PLAN_OK with fw_pri MC `0x800f000000`, while 16 MiB off
+    gives APERTURE_MISMATCH. Any bare-metal PSP load is still a new write and
+    needs its own approval (hard rule 2).
+  - `SubsystemPair` is subsystem `1DA2:E452` (Sapphire). `run.sh`'s
+    `IOFramebuffer instances: 8` counts the whole subtree (1 framebuffer). The
+    ACPI-table capture still prints nothing.
+- **2026-10-19 13:46, kext 0.0.20 owner hold in unmapped mode in the VM: Owned,
+  held, epoch 1** (run `~/macos tahoe/navi33/runs/20261019-134614`,
+  `results-20261019-134657-guest.txt`, disk `OpenCore-navi33-physical-hold.qcow2`
+  built with `--owner-probe --owner-recovery --owner-hold --owner-physical` and
+  this boot's hostfb; its manifest is saved as `OpenCore-physical-hold.txt` in
+  the run directory, and the default `OpenCore-navi33.txt` was restored).
+  Kext UUID `8AB407DE-B3E6-3D94-BF59-17D59D0601CD`. PSP/SMU/SDMA/FB/DMA/DMA-stage
+  kill switches all set.
+  - Host: headless VFIO boot `d2866a99-f171-4219-aac0-82992ea1e0dc` reached by a
+    **warm** restart (13:43:06 to 13:43:28) from a normal amdgpu boot. The card
+    was on vfio-pci, BAR0 256 MiB at `0x8_3000_0000`, reset methods cleared.
+  - Guest log: `owner hold ... display=0 recovery=1 -> code 2 mask 0x0 dma 2`,
+    then `owner held, epoch 1`. ioreg: `OwnerDecision` 2, `OwnerDmaMode` 2
+    (`PhysicalUnverified`), domain `NOMAP`, `OwnerEvidence` 461, `OwnerHeld` 1,
+    `OwnerEpoch` 1, `OwnerPhase` 1. This is the first held owner in unmapped
+    mode (0.0.18 refused `NoDmaMapper` in the VM). The N33N tools still worked
+    while the hold was in place.
+  - **The PSP was fresh after the warm restart from amdgpu** (fifth such case):
+    `C2PMSG_35` `80000000`, `C2PMSG_81` 0, preflight reason 8. The `n33peek
+    --all` dump is identical to the fresh-card VM run of 2026-10-18 13:01
+    (`runs/20261018-130015`), including `C2PMSG_60..62` = `00000004 83f00f80
+    0d1102f4`, the bare-metal values. `n33psp --plan`: state 14, flags `0x0f`,
+    console host (`0xa0000000`, 3 MiB = vram+0x0), fw_pri MC `0x800f000000`.
+    Nothing was written: `GpuWritesEnabled` 0, plan writes 0.
+  - Shutdown over SSH: still no `owner release` line, as with 0.0.16/0.0.17;
+    the open ended when QEMU exited. Card back on vfio-pci.
+  - What it does not show: in the VM, guest-physical addresses are what the
+    card would use, and VFIO maps all guest RAM in the host IOMMU, so they are
+    probably reachable, but nothing here tested that. The PSP is fresh, so GC is
+    in reset again: the Queue1 COPY/FENCE attempt needs the sOS -> SMU sequence
+    redone first (its approval was consumed), plus an owned VRAM page-table root
+    with readback and a read-only Queue1 plan.
 
 ## Adding a register read
 
