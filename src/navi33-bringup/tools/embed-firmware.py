@@ -17,6 +17,7 @@ Usage: tools/embed-firmware.py OUT.cpp [--from DIR]
 import hashlib
 import pathlib
 import subprocess
+import time
 import sys
 import urllib.request
 
@@ -49,12 +50,15 @@ def load(name, src):
             return subprocess.run(["zstd", "-q", "-d", "-c", str(z)], check=True,
                                   capture_output=True).stdout
         raise SystemExit(f"embed-firmware: {name} not in {src}")
-    for m in MIRRORS:
-        try:
-            with urllib.request.urlopen(m.format(c=COMMIT, n=name), timeout=60) as r:
-                return r.read()
-        except OSError as e:
-            print(f"embed-firmware: {m.format(c=COMMIT, n=name)}: {e}", file=sys.stderr)
+    # CI runners sometimes lose DNS for a while: five rounds over both mirrors.
+    for attempt in range(5):
+        for m in MIRRORS:
+            try:
+                with urllib.request.urlopen(m.format(c=COMMIT, n=name), timeout=60) as r:
+                    return r.read()
+            except OSError as e:
+                print(f"embed-firmware: {m.format(c=COMMIT, n=name)}: {e}", file=sys.stderr)
+        time.sleep(10 * (attempt + 1))
     raise SystemExit(f"embed-firmware: cannot fetch {name}")
 
 
