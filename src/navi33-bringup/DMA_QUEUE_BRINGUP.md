@@ -799,3 +799,29 @@ write list (it differs from the 2026-10-18 VMID1/Queue1 approval), then a
 gated kext writer (own boot-arg, `navi33-sdma-off` kill switch, once per
 boot, register allowlist = `sdma6_test::allowed`), a read-only plan mode, a
 CI build, and the sOS -> SCPM sequence redone in the same power cycle.
+
+## Stage G31: offline groundwork for the first GPU-calculated frame (host only)
+
+- `tools/sdma6_ring_plan.cpp` (`build/sdma6-ring-plan RESULTS`) runs the G30 plan
+  on any results file: the 14:39 census gives plan OK and the 23 writes; the
+  pre-sOS census refuses (`GcNotUp`, `SosNotAlive`, ...); files older than kext
+  0.0.21 report the missing windows instead of guessing.
+- `shaders/gradient.cl` is the first compute kernel: one XRGB8888 gradient pixel
+  per work-item, 8x8 workgroups, no device libraries and no HSA dispatch
+  packet (IDs from `__builtin_amdgcn_workgroup_id_*`/`workitem_id_*`), so a
+  bare PM4 `DISPATCH_DIRECT` with the kernarg pointer in user SGPRs can run
+  it. `shaders/build.sh` builds `gradient.co` reproducibly with Ubuntu LLVM 22
+  (`-mcpu=gfx1102`), 4824 bytes, SHA-256 `11485a75...`; the binary is committed
+  so CI needs no AMDGPU toolchain.
+- `src/Navi33Gfx11Shader.h` parses the code object (EM_AMDGPU, mach gfx1102,
+  `<kernel>.kd`) and refuses anything a bare dispatch cannot run: scratch, LDS,
+  HSA inputs (dispatch/queue pointer, dispatch id), wave64, a bad entry offset,
+  no `s_endpgm`. The kernel: wave32, 11 VGPRs, 24-byte kernargs, RSRC1
+  `0xe0af0001`, RSRC2 `0x0000099c` (14 user SGPRs, TGID X/Y, 2D thread IDs),
+  RSRC3 `0x40`; kernarg pointer in `COMPUTE_USER_DATA_0/1`, workgroup IDs in
+  s14/s15. `gradientPixel()` is the CPU reference for a readback.
+  `tests/test_gfx11_shader.cpp` checks all of it plus each refusal on edited
+  copies.
+- Still missing before this kernel can run: a compute queue (MES or the KIQ
+  fallback, G18-G25 offline) and the PM4 dispatch stream. Both are later write
+  stages that need their own approval; nothing here touches the card.
