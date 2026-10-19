@@ -1641,8 +1641,10 @@ parser got two of them wrong:
     in reset again: the Queue1 COPY/FENCE attempt needs the sOS -> SMU sequence
     redone first (its approval was consumed), plus an owned VRAM page-table root
     with readback and a read-only Queue1 plan.
-- **2026-10-19, kext 0.0.21 (code, CI build pending): Queue1 preflight
-  windows, read-only.** Step 1 of the Queue1 work the user approved ("yes",
+- **2026-10-19, kext 0.0.21: Queue1 preflight windows, read-only.** Commit
+  `b79355b`, CI run 39208404724 passed (host tests, both macOS builds). The
+  macOS 26 artifact is cached in `navi33/cache/artifact-0.0.21`, kext UUID
+  `48C9C24E-6392-30A3-8E0E-5986FF93A16A`. Not booted yet. Step 1 of the Queue1 work the user approved ("yes",
   after the VM owner hold): a read-only plan first, the gated run mode only after
   it passes on the card. The user also approved redoing the sOS -> SMU sequence
   in the next headless boot (after a full power-off).
