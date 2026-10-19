@@ -549,3 +549,22 @@ assert 'Navi33EmbeddedFirmware.o' in makefile
 for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     assert 'navi33-autostart' not in (root/unattended).read_text()
 print('Navi33 autostart gate, kill switches, embedded firmware pins and teardown: passed')
+
+# VMID1 queue (G36): own gate and latch; GFXHUB only, never MMHUB (the display's hub).
+vmw=(root/'src/Navi33DarwinVmid.cpp').read_text()
+vmh=(root/'src/Navi33Gfx11Vmid.h').read_text()
+assert 'if(vmMode)req.attempted=&vmAttempted_;' in load_fn
+assert 'if(vmMode)req.writeGate=!killed && !vmKilled &&' in load_fn
+assert 'PE_parse_boot_argn("navi33-vm-queue"' in load_fn
+assert 'return executeVm(pci,req);' in writer
+assert 'if(!vm::allowed(io->r,off)' in vmw
+assert 'mmhub' not in vmh.lower().replace("mmhub, which the display uses, is not touched","")
+assert 'Navi33DarwinVmid.o' in makefile
+for forbidden in ('->configWrite','setMemoryEnable','setBusMasterEnable','setPowerState','WREG32('):
+    assert forbidden not in vmw, f'VMID1 stage gained {forbidden}'
+for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory'):
+    assert forbidden not in vmh
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert '--vm-queue' not in code and 'N33_VM_QUEUE_RUN' not in code
+print('Navi33 VMID1 queue allowlist (GFXHUB only), independent gate and plan boundary: passed')

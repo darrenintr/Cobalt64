@@ -145,7 +145,7 @@ bool Navi33Probe::start(IOService *provider) {
     }
     // Report any explicitly enabled PSP or SMU write stage.
     uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u, smuOn=0u, smuOff=0u, mesOn=0u, mesOff=0u,
-             mecOn=0u, mecOff=0u, gradOn=0u, gradOff=0u;
+             mecOn=0u, mecOff=0u, gradOn=0u, gradOff=0u, vmOn=0u, vmOff=0u;
     const bool pspKilled=PE_parse_boot_argn("navi33-psp-off", &pspOff,
                                             sizeof(pspOff)) && pspOff!=0u;
     const bool pspWrites=!pspKilled &&
@@ -167,8 +167,11 @@ bool Navi33Probe::start(IOService *provider) {
     const bool gradWrites=!pspKilled &&
         !(PE_parse_boot_argn("navi33-gradient-off",&gradOff,sizeof(gradOff)) && gradOff!=0u) &&
         PE_parse_boot_argn("navi33-gradient",&gradOn,sizeof(gradOn)) && gradOn==1u;
+    const bool vmWrites=!pspKilled &&
+        !(PE_parse_boot_argn("navi33-vm-off",&vmOff,sizeof(vmOff)) && vmOff!=0u) &&
+        PE_parse_boot_argn("navi33-vm-queue",&vmOn,sizeof(vmOn)) && vmOn==1u;
     setProperty("Navi33,GpuWritesEnabled",
-                static_cast<uint64_t>(pspWrites || smuWrites || mesWrites || mecWrites || gradWrites), 32);
+                static_cast<uint64_t>(pspWrites || smuWrites || mesWrites || mecWrites || gradWrites || vmWrites), 32);
     setProperty("Navi33,FirmwareLoadingImplemented",
                 "PSP13 sOS bootloader, KM ring (TOC, TMR) and IP firmware records only");
     setProperty("Navi33,GpuQueuesImplemented", static_cast<uint64_t>(0), 8);
@@ -790,7 +793,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     n33_psp_load_result result{};
     result.abi_version=N33_ABI_VERSION;result.size=sizeof(result);
     uint32_t enabled=0u,off=0u,load=0u,ring=0u,fwOn=0u,autoOn=0u,pspOff=0u,smuOn=0u,smuOff=0u,
-             mesOn=0u,mesOff=0u,mecOn=0u,mecOff=0u,gradOn=0u,gradOff=0u;
+             mesOn=0u,mesOff=0u,mecOn=0u,mecOff=0u,gradOn=0u,gradOff=0u,vmOn=0u,vmOff=0u;
     const bool allowed=PE_parse_boot_argn("navi33-hw-probe",
                                          &enabled,sizeof(enabled)) && enabled==1u;
     const bool stopped=PE_parse_boot_argn("navi33-hw-off",
@@ -818,6 +821,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     const bool mecKilled=PE_parse_boot_argn("navi33-mec-off",&mecOff,sizeof(mecOff)) && mecOff!=0u;
     const bool gradMode=mode==N33_GRADIENT_PLAN || mode==N33_GRADIENT_RUN;
     const bool gradKilled=PE_parse_boot_argn("navi33-gradient-off",&gradOff,sizeof(gradOff)) && gradOff!=0u;
+    const bool vmMode=mode==N33_VM_QUEUE_PLAN || mode==N33_VM_QUEUE_RUN;
+    const bool vmKilled=PE_parse_boot_argn("navi33-vm-off",&vmOff,sizeof(vmOff)) && vmOff!=0u;
     const bool killed=PE_parse_boot_argn("navi33-psp-off",&pspOff,
                                          sizeof(pspOff)) && pspOff!=0u;
     // Each write stage has its own boot-arg; navi33-psp-off kills all of them.
@@ -844,6 +849,9 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     // Gradient: its own boot-arg; navi33-gradient-off and navi33-psp-off both stop it.
     if(gradMode)req.writeGate=!killed && !gradKilled &&
         PE_parse_boot_argn("navi33-gradient",&gradOn,sizeof(gradOn)) && gradOn==1u;
+    // VMID1 queue: its own boot-arg; navi33-vm-off and navi33-psp-off both stop it.
+    if(vmMode)req.writeGate=!killed && !vmKilled &&
+        PE_parse_boot_argn("navi33-vm-queue",&vmOn,sizeof(vmOn)) && vmOn==1u;
     // AUTOLOAD_RLC powers up the graphics engine: a second, separate boot-arg.
     req.autoloadGate=!killed && fwMode &&
         PE_parse_boot_argn("navi33-psp-autoload",&autoOn,sizeof(autoOn)) && autoOn==1u;
@@ -856,6 +864,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     if(mesMode)req.attempted=&mesAttempted_;
     if(mecMode)req.attempted=&mecAttempted_;
     if(gradMode)req.attempted=&gradAttempted_;
+    if(vmMode)req.attempted=&vmAttempted_;
     result=navi33::darwin_psp::execute(pci,req);
     IOLockUnlock(pspLock_);
     char raw[320];
@@ -897,7 +906,14 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
         result.register_writes,result.grad_shmem_before,result.grad_rptr_before,
         result.grad_rptr_after,result.grad_fence_a,result.grad_fence_b,result.grad_bad_pixels,
         result.grad_screen_bad,result.grad_fallbacks,result.grad_first_pixel,result.grad_screen);
-    setProperty(mode==N33_GRADIENT_RUN ? "Navi33,LastGradient" :
+    if(vmMode)snprintf(raw,sizeof(raw),
+        "mode %u state %u steps %u writes %u L1 %x L2 %x ctx1 %x scratch %x fence %x rptr %u "
+        "active %x fault %x/%x window %x",mode,result.state,result.steps_done,result.register_writes,
+        result.vm_l1_before,result.vm_l2_before,result.vm_ctx_before,result.vm_scratch,result.vm_fence,
+        result.vm_rptr,result.vm_active,result.vm_fault_status,result.vm_fault_addr,result.vm_window);
+    setProperty(mode==N33_VM_QUEUE_RUN ? "Navi33,LastVmQueue" :
+                mode==N33_VM_QUEUE_PLAN ? "Navi33,LastVmPlan" :
+                mode==N33_GRADIENT_RUN ? "Navi33,LastGradient" :
                 mode==N33_GRADIENT_PLAN ? "Navi33,LastGradientPlan" :
                 mode==N33_MEC_QUEUE_RUN ? "Navi33,LastMecQueue" :
                 mode==N33_MEC_QUEUE_PLAN ? "Navi33,LastMecPlan" :

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # vm/stage.sh: one VM boot per write stage (used by vm/scpm-sequence.sh).
-# ARTIFACT=DIR overrides the cached kext artifact (default 0.0.25).
+# ARTIFACT=DIR overrides the cached kext artifact (default 0.0.26).
 # One VM boot per stage: build the OpenCore disk with exactly one gate set,
 # boot, copy tools, run the read-only plan, then (only if a run command is
 # given) the write command, capture everything, shut down.
@@ -8,7 +8,7 @@
 set -euo pipefail
 NAME=$1 GATES=$2 PLAN=$3 RUN=${4:-}
 VM="/home/darren/macos tahoe"; N="$VM/navi33"
-ART="${ARTIFACT:-$N/cache/artifact-0.0.25}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
+ART="${ARTIFACT:-$N/cache/artifact-0.0.26}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
 V=/home/darren/Cobalt64/src/navi33-bringup/vm
 # shellcheck disable=SC2086
 "$V/make-opencore.sh" "$ART" --oc "$OC" --hostfb /var/lib/cobalt64-navi33/hostfb.txt $GATES | grep -E "UUID|boot-args"

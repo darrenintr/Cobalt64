@@ -958,3 +958,32 @@ every file against `tests/fixtures/rx7600-fw-plan.tsv` and the sOS pin, builds
 the IP Discovery blob from the Linux capture, and writes
 `build/Navi33EmbeddedFirmware.cpp` (about 2.3 MB of const data).
 `make FWDIR=/lib/firmware/amdgpu` uses local files instead.
+
+## Stage G36: first translated GPU address space, VMID 1 (kext 0.0.26, ABI 18, Phase B2)
+
+`src/Navi33Gfx11Vmid.h` (runner), `src/Navi33DarwinVmid.cpp` (writer),
+`tests/test_gfx11_vmid.cpp` (a fake GFXHUB that walks the page table in fake VRAM
+and translates VMID 1 only once the hub is set up as Linux does). Upstream
+`gfxhub_v3_0.c` (torvalds master, 2026-10-19), GFXHUB only; MMHUB (display) untouched.
+
+- Hub words from the reset values the census matched: `GCMC_VM_MX_L1_TLB_CNTL`
+  `0x501` -> `0x1859` (L1 on, SYSTEM_ACCESS_MODE 3, ADM 1, MTYPE UC), `GCVM_L2_CNTL`
+  `0x00080602` -> `0x00080e01` (L2 cache on, fragment processing off, default page
+  out to system), `CNTL2` invalidate L1/L2, `CNTL3` `0x80130009`, `CNTL4` `0x01`,
+  `CNTL5` `0x3fe0`, identity aperture disabled (low `0xF_FFFFFFFF` > high 0).
+- Context 1: flat table (depth 0, a deviation from Linux's 3 levels), pages 0..15,
+  base = table VRAM offset | VALID, `CNTL` `0x01fffe01` (Linux's fault defaults,
+  noretry). Context 0 and the system aperture stay as the VBIOS left them, so VMID 0
+  keeps the physical path G34/G35 proved.
+- Window: 1 MiB at VRAM 251 MiB. VA page p maps to window page 15-p (VA 0 invalid);
+  page table on page 16, MQD (fetched in VMID 0) on page 17. PTE = VRAM offset |
+  VALID|EXECUTABLE|READABLE|WRITEABLE, SYSTEM 0, MTYPE NC.
+- Queue me 1 pipe 0 queue 1, `CP_HQD_VMID` 1, EOP/ring/RPTR/WPTR at VA
+  0x1000/0x2000/0x3000/0x3008, loaded as `hqd_load_v11`, poll bit 1. Ring: Linux's
+  ring test (`SCRATCH_REG0`) and a RELEASE_MEM fence `0x0c0b1636` to VA 0x4000,
+  which must land on window page 11. A hub fault (`GCVM_L2_PROTECTION_FAULT_STATUS`)
+  reports state 59. 87 register writes on success.
+- Gate `navi33-vm-queue=1`, kill `navi33-vm-off`/`navi33-psp-off`, own latch;
+  `make-opencore.sh --vm-queue`; `n33psp --vm-plan` / `--vm-queue`. Four mutants caught
+  (identity page map, L2 untouched, empty range, VMID 0 queue). The test also caught two
+  wrong hand-computed hub words before any run.

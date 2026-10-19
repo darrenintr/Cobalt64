@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 17u /* 17: gradient modes/result; 16: MEC queue modes/result; 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
+#define N33_ABI_VERSION 18u /* 18: VMID1 queue modes/result; 17: gradient modes/result; 16: MEC queue modes/result; 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -233,6 +233,13 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
 #define N33_GRADIENT_PLAN 15u
 #define N33_GRADIENT_RUN 16u
 #define N33_GRAD_MARKER 0x47524431u
+/* First translated address space (G36, Phase B2): GFXHUB TLB/L2/identity set up as
+ * gfxhub_v3_0, VMID 1 with a flat page table, and a VMID 1 queue whose ring and
+ * fence live at virtual addresses. RUN needs navi33-vm-queue=1, no navi33-vm-off or
+ * navi33-psp-off, once per boot. Input: IP Discovery then one zero byte. */
+#define N33_VM_QUEUE_PLAN 17u
+#define N33_VM_QUEUE_RUN 18u
+#define N33_VM_MARKER 0x564d4931u
 #define N33_PSP_FW_RECORDS 27u
 #define N33_PSP_FW_STOP_AUTOLOAD 28u
 #define N33_PSP_LOAD_MAX_INPUT (4u*1024u*1024u)
@@ -267,7 +274,10 @@ enum n33_psp_load_state {
   /* gradient */
   N33_PSPL_GRAD_BAD_PRECONDITION=49, N33_PSPL_GRAD_WRITE_FAILED=50,
   N33_PSPL_GRAD_NO_FENCE=51, N33_PSPL_GRAD_BAD_PIXELS=52, N33_PSPL_GRAD_OK=53,
-  N33_PSPL_GRAD_ON_SCREEN=54
+  N33_PSPL_GRAD_ON_SCREEN=54,
+  /* VMID 1 queue */
+  N33_PSPL_VM_BAD_PRECONDITION=55, N33_PSPL_VM_WRITE_FAILED=56, N33_PSPL_VM_NO_FETCH=57,
+  N33_PSPL_VM_NO_FENCE=58, N33_PSPL_VM_FAULT=59, N33_PSPL_VM_QUEUE_OK=60
 };
 /* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
 enum n33_psp_load_step {
@@ -328,9 +338,13 @@ struct n33_psp_load_result {
   uint32_t grad_marker, grad_shmem_before, grad_g34_fence, grad_rptr_before;
   uint32_t grad_rptr_after, grad_fence_a, grad_fence_b, grad_bad_pixels;
   uint32_t grad_screen_bad, grad_fallbacks, grad_first_pixel, grad_screen;
+  /* VMID 1 queue: zero for the other modes. fence is read on the page the
+   * reversed table maps the fence VA to; window is the window MC >> 20. */
+  uint32_t vm_marker, vm_l1_before, vm_l2_before, vm_ctx_before, vm_scratch, vm_fence;
+  uint32_t vm_rptr, vm_active, vm_fault_status, vm_fault_addr, vm_window, vm_reserved;
 };
-N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==480,
-                  "N33 PSP load result must be 480 bytes");
+N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==528,
+                  "N33 PSP load result must be 528 bytes");
 #define N33_PSPR_FLAG_RESUMED (1u<<0) /* ring already existed, not recreated */
 #define N33_PSPR_FLAG_RING_CREATED (1u<<1)
 #define N33_PSPR_FLAG_TOC_LOADED (1u<<2)
