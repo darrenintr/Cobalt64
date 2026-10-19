@@ -1822,7 +1822,9 @@ parser got two of them wrong:
     gradient was written by the shader into the console framebuffer at VRAM 0.
   - So gfx1102 waves launch and run our code object in VMID0 with physical VRAM
     access, the CU masks from the ring and `DEFAULT_SH_MEM_CONFIG`. Phase A of the
-    road to compute is done. Preflight still reason 11 (by design, no caps changed). **Next:** the MES KIQ-pipe queue (`kiq_setting`,
+    road to compute is done. Preflight still reason 11 (by design, no caps changed).
+  - **The user confirmed it on the physical monitor:** "I see a gradient on my PC
+    screen" (2026-10-19, right after the run). **Next:** the MES KIQ-pipe queue (`kiq_setting`,
     `mes_v11_0_queue_init` with the G25 MQD in VRAM), then the scheduler ring and
     `SET_HW_RESOURCES`; each is a new write stage.
 
