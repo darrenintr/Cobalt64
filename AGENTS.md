@@ -1641,6 +1641,18 @@ parser got two of them wrong:
     in reset again: the Queue1 COPY/FENCE attempt needs the sOS -> SMU sequence
     redone first (its approval was consumed), plus an owned VRAM page-table root
     with readback and a read-only Queue1 plan.
+- **2026-10-19, kext 0.0.21 (code, CI build pending): Queue1 preflight
+  windows, read-only.** Step 1 of the Queue1 work the user approved ("yes",
+  after the VM owner hold): a read-only plan first, the gated run mode only after
+  it passes on the card. The user also approved redoing the sOS -> SMU sequence
+  in the next headless boot (after a full power-off).
+  - The offline G15 manifest misses the hub-wide setup Linux does before an SDMA
+    ring runs (system aperture, L1 TLB, L2 cache, SDMA unhalt). After the SCPM
+    sequence both hubs read `VM_L2_CNTL` `0x00080602`: ENABLE_L2_CACHE (bit 0)
+    clear, per `mmhub_3_0_2_sh_mask.h` / `gc_11_0_0_sh_mask.h`.
+  - 0.0.21 appends 20 `n33peek` windows for those registers, checked against
+    the upstream offset headers; `tools/queue1-census.py` decodes them (see
+    `DMA_QUEUE_BRINGUP.md` stage G29). No ABI change, no new write path.
 
 ## Adding a register read
 

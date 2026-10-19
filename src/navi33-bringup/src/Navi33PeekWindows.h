@@ -7,7 +7,8 @@
  * listed BASE_IDX, with no holes. Excluded on purpose because reading
  * them is not side-effect free: *_INVALIDATE_ENG*_SEM (a read acquires a
  * VM invalidation semaphore), *_ACK, DATA/INDEX pairs, SDMA0 SCRATCH_RAM,
- * INT_STATUS, EDC counters and QUEUE_RESET_REQ. Offsets are specific to
+ * INT_STATUS, EDC counters, QUEUE_RESET_REQ, SDMA0 PROGRAM, UTCL1_INV*
+ * and ERROR_LOG. Offsets are specific to
  * the IP versions below; the Kext refuses any other version.
  */
 #ifndef COBALT_NAVI33_PEEK_WINDOWS_H
@@ -78,7 +79,31 @@ static const struct n33_peek_window n33_peek_windows[] = {
   N33_PEEK_MM("MMMC_FB_LOCATION",0x086cu,2u),
   N33_PEEK_MM("MMMC_SYS_APERTURE",0x0871u,2u),
   /* NBIO 4.3.1 RCC_CONFIG_MEMSIZE (BASE_IDX 2) */
-  N33_PEEK_NBIF("NBIO_MEMSIZE",2u,0x00c3u,1u)
+  N33_PEEK_NBIF("NBIO_MEMSIZE",2u,0x00c3u,1u),
+  /* Queue1 preflight (kext 0.0.21): the hub-wide VM state Linux sets in
+   * mmhub_v3_0_2/gfxhub_v3_0 gart_enable (system aperture, L1 TLB, L2) and
+   * the SDMA engine controls sdma_v6_0 sets before a ring runs. Appended
+   * so the indices above keep their meaning. */
+  N33_PEEK_MM("MMVM_L2_CNTL2",0x0681u,3u),          /* CNTL2, CNTL3, STATUS */
+  N33_PEEK_MM("MMVM_L2_FAULT_CNTL",0x0688u,4u),
+  N33_PEEK_MM("MMVM_L2_FAULT_ADDR",0x068du,4u),     /* fault, default addr */
+  N33_PEEK_MM("MMVM_L2_IDENTITY_CNTL4",0x0692u,14u),/* ..CNTL4..CNTL5, GCR */
+  N33_PEEK_MM("MMMC_VM_APERTURE_DEFAULT",0x0858u,3u),
+  N33_PEEK_MM("MMMC_VM_LOCAL_RANGES",0x085du,8u),
+  N33_PEEK_MM("MMMC_VM_AGP",0x086eu,3u),            /* TOP, BOT, BASE */
+  N33_PEEK_MM("MMMC_VM_MX_L1_TLB_CNTL",0x0873u,1u),
+  N33_PEEK_GC("GCMC_VM_APERTURE_DEFAULT",0u,0x15a8u,3u),
+  N33_PEEK_GC("GCMC_VM_LOCAL_RANGES",0u,0x15adu,8u),
+  N33_PEEK_GC("GCVM_L2_CNTL2",0u,0x15bdu,3u),
+  N33_PEEK_GC("GCVM_L2_FAULT",0u,0x15c4u,9u),
+  N33_PEEK_GC("GCVM_L2_IDENTITY_CNTL4",0u,0x15ceu,14u),
+  N33_PEEK_GC("GCMC_VM_AGP",0u,0x167au,3u),
+  N33_PEEK_GC("GCMC_VM_MX_L1_TLB_CNTL",0u,0x167fu,1u),
+  N33_PEEK_GC("SDMA0_CNTL",0u,0x001cu,4u),          /* CNTL..GB_ADDR_CONFIG_READ */
+  N33_PEEK_GC("SDMA0_WATCHDOG",0u,0x002bu,5u),      /* FREEZE..QUEUE_STATUS0 */
+  N33_PEEK_GC("SDMA0_UTCL1",0u,0x003cu,6u),         /* CNTL..WR_STATUS, no INV */
+  N33_PEEK_GC("SDMA0_STATUS3",0u,0x004cu,1u),
+  N33_PEEK_GC("SDMA0_F32_CNTL",1u,0x589au,1u)       /* HALT is bit 0 */
 };
 #define N33_PEEK_WINDOW_COUNT \
   ((uint32_t)(sizeof(n33_peek_windows)/sizeof(n33_peek_windows[0])))

@@ -60,6 +60,11 @@ int main() {
                                   0x0070u,0x0077u,0x0078u,0x007bu};
     for(uint32_t r:sdmaHazards)              // EDC, EA_DBIT, INT, SCRATCH_RAM
         assert(!covered(N33_HWID_GC,0u,r));
+    const uint32_t sdmaControlHazards[]={0x0024u,0x0042u,0x0043u,0x0044u,0x0050u};
+    for(uint32_t r:sdmaControlHazards)       // PROGRAM, UTCL1_INV0..2, ERROR_LOG
+        assert(!covered(N33_HWID_GC,0u,r));
+    assert(!covered(N33_HWID_GC,1u,0x5880u) && // SDMA0_UCODE_ADDR/DATA
+           !covered(N33_HWID_GC,1u,0x5881u));
 
     const std::vector<uint8_t> bytes=rx7600_fixture::blob();
     IPDiscovery disc{};
@@ -92,6 +97,11 @@ int main() {
     assert(at("RLC_BOOTLOAD_STATUS",0u)==0x3ba08u); // GC BASE_IDX 1
     assert(at("MMVM_CONTEXT_CNTL",0u)==0x69b00u);   // MMVM_CONTEXT0_CNTL
     assert(at("NBIO_MEMSIZE",0u)==0x378cu);         // RCC_CONFIG_MEMSIZE
+    assert(at("MMVM_L2_CNTL2",0u)==0x69a04u);       // MMVM_L2_CNTL2
+    assert(at("MMMC_VM_MX_L1_TLB_CNTL",0u)==0x6a1ccu);
+    assert(at("GCVM_L2_CNTL2",0u)==0xa074u);        // GCVM_L2_CNTL2
+    assert(at("GCMC_VM_MX_L1_TLB_CNTL",0u)==0xa37cu);
+    assert(at("SDMA0_F32_CNTL",0u)==0x3e268u);      // GC BASE_IDX 1
     // Every window resolves inside BAR5 and away from MM_INDEX/MM_DATA.
     for(uint32_t i=0;i<N33_PEEK_WINDOW_COUNT;++i) {
         const n33_peek_window &w=n33_peek_windows[i];

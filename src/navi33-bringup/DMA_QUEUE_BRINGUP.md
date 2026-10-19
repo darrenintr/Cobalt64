@@ -698,3 +698,30 @@ Branch: feature/navi33-dma-backend. Software only; nothing runs on the card.
 - NOT established: that the GPU can DMA to those physical pages. The owner
   says only that the decision and the pages are consistent. Any write stage
   still needs its own approval.
+
+## Stage G29: Queue1 preflight windows (kext 0.0.21, read-only)
+
+- The G15 manifest programs only the VMID1 context, the invalidation and the
+  Queue1 ring registers. Linux does more before an SDMA ring runs. Each hub's
+  `gart_enable` (`mmhub_v3_0_2.c`, `gfxhub_v3_0.c`) sets the system aperture,
+  `MX_L1_TLB_CNTL` (ENABLE_L1_TLB, SYSTEM_ACCESS_MODE 3, advanced driver
+  model), `VM_L2_CNTL`..`CNTL5` (ENABLE_L2_CACHE) and the identity aperture.
+  `sdma_v6_0.c` sets UTCL1, the watchdog and clears `SDMA0_F32_CNTL.HALT`.
+- After the 2026-10-18 SCPM sequence both hubs read `VM_L2_CNTL` =
+  `0x00080602`: ENABLE_L2_CACHE (bit 0) is clear on MMHUB and GFXHUB, and every
+  VM context is `0x01fffe00` (disabled). So the hubs have never been set up.
+  The L1 TLB and F32 halt state were not readable before this stage.
+- Kext 0.0.21 appends 20 `n33peek` windows (every dword checked against the
+  upstream offset headers, no holes, the SEM/ACK/INV/UCODE/ERROR_LOG hazards
+  excluded and asserted in `test_mmio_peek`): MMHUB and GFXHUB L2
+  CNTL2..CNTL5, fault control/address, identity aperture, system aperture
+  default and local ranges, AGP, `MX_L1_TLB_CNTL`; SDMA0 CNTL, watchdog, UTCL1,
+  STATUS3 and `F32_CNTL` (GC BASE_IDX 1). No N33N ABI change: windows are
+  appended, so earlier indices keep their meaning.
+- `tools/queue1-census.py RESULTS` decodes those windows offline and lists the
+  bits Linux sets that read clear. GC values count only after the RLC bootload
+  has completed (hard rule 4). Tests: `bootstrap/tests/test_queue1_census.py`.
+- Next: after the sOS -> SMU sequence, read the full set, then design the run
+  mode from what is actually missing. Whether only GFXHUB (SDMA's hub) needs
+  VMID1, or MMHUB too, is to be decided from upstream and the census; MMHUB
+  also serves the display.
