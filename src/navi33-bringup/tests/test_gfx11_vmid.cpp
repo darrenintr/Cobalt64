@@ -54,7 +54,7 @@ struct Fake {
         const uint32_t s=mq::grbmSelect(1,0,1);
         if(ran || !(mem[r.q.poll1]&2u) || !(bank[{s,mq::hqd(r.q,kiq::kCpHqdActive)}]&1u))return;
         ran=true;
-        assert(bank[{s,mq::hqd(r.q,kiq::kCpHqdVmid)}]==1u);
+        assert((bank[{s,mq::hqd(r.q,kiq::kCpHqdVmid)}]==1u));
         // The MQD is fetched in VMID 0, physically.
         const uint64_t mqd=bank[{s,mq::hqd(r.q,0x1fa9u)}]|(uint64_t(bank[{s,mq::hqd(r.q,0x1faau)}])<<32);
         assert(mqd==l.windowMc+4096u*vm::kMqdPage);
