@@ -1865,7 +1865,17 @@ to port the Navi48 ladder (`src/navi48-bringup/src/amd/amdgpu_init.h`,
    card (`enable_mes` is set for GC 11.0.2, `amdgpu_discovery.c`), not
    the legacy KIQ MAP_QUEUES path. Offline KIQ/MQD planners G18/G19 are
    the fallback. See `DMA_QUEUE_BRINGUP.md` for the MES sequence.
-5. PM4 fence and compute dispatch (stages 16–17).
+   **2026-10-19:** the first SDMA work is planned as Linux's own Queue0/VMID0
+   ring test, VRAM only (`Navi33Sdma6RingTest.h`, G30; write list approved by the
+   user, writer not built). `build/sdma6-ring-plan RESULTS` prints the plan or
+   the refusals for any results file (G31).
+5. PM4 fence and compute dispatch (stages 16–17). **Offline groundwork done on
+   2026-10-19:** the first kernel `shaders/gradient.cl` (one gradient pixel per
+   work-item, no device libs, no HSA dispatch packet), built reproducibly for
+   gfx1102 by `shaders/build.sh` (committed `gradient.co`), parsed and checked by
+   `Navi33Gfx11Shader.h` (G31), and its PM4 stream (`SET_SH_REG`,
+   `DISPATCH_DIRECT` wave32, `RELEASE_MEM` fence) by `Navi33Gfx11Dispatch.h`
+   (G32). Still needed: a compute queue (MES or KIQ) and the run itself.
 
 **Gate before each write stage:** the user's explicit approval for GPU
 writes on the only display GPU, and a recovery path. Given for step 2
