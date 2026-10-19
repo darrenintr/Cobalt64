@@ -78,8 +78,8 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      This approval is consumed; further attempts require renewed approval
      and full power-off. The follow-up preflight still reports reason 11
      (GPU memory/queue ownership not established), and Metal remains disabled.
-   - The MES start stage (kext 0.0.22, ABI 15; built 2026-10-19, **not yet
-     approved to run**) may write only GC `GRBM_GFX_CNTL`, `CP_MES_CNTL` and
+   - The MES start stage (kext 0.0.22, ABI 15; built 2026-10-19; one run approved
+     by the user and executed 2026-10-19 21:06, state 43 MES RUNNING) may write only GC `GRBM_GFX_CNTL`, `CP_MES_CNTL` and
      `CP_MES_PRGRM_CNTR_START/_HI`: upstream `mes_v11_0_enable(true)` plus the
      firmware-version readback, 12 writes on success, 18 at most. It needs
      `navi33-mes-start=1`, is killed by `navi33-mes-off` or `navi33-psp-off`, and
@@ -1754,6 +1754,37 @@ parser got two of them wrong:
   - **Approved by the user on 2026-10-19 ("Yes please go")**: this exact write
     list (23 setup + 2 WPTR + 3 park, SDMA0 only, VRAM window at 248 MiB). The
     gated kext writer is **not built yet**; nothing has run on the card.
+- **2026-10-19 20:32-21:01, kext 0.0.22 (ABI 15) in the VM: sOS -> SCPM sequence
+  on the headless boot `d8049a28-…` (20:31), the third time on this card.**
+  - sOS `runs/20261019-203303` (state 20, 8 writes, sOS `00330024`), ring/TOC/TMR
+    `203420` (state 28, 6 writes), SMU image `203503`, the other 26 records
+    `203547`, AUTOLOAD_RLC `203633` (state 32 each).
+  - **SCPM first attempt `runs/20261019-203716` refused, 0 writes:** the plan read
+    `IMU_CORE_STATUS` 2, the run seconds later read `0x11` and stopped with state 34
+    (bad precondition). Every read before and after shows 2 again, so the 0x11 is a
+    transient value not seen in the two earlier sequences; meaning unknown. The
+    precondition did its job.
+  - **SCPM retry `runs/20261019-205948`: state 39**, 3 writes, 32 ms, message 6 arg 0,
+    response 1; reset `0x10` -> `0x1f`, `RLC_BOOTLOAD_STATUS` 0 -> `0xc000001f`.
+    Preflight reason 11. GC is up until the next power-off.
+  - MES start then ran from the host shell (next entry).
+- **2026-10-19 21:06, kext 0.0.22 in the VM: MES is running. First compute-path
+  write stage (G33).** Run `runs/20261019-210607` (`mes-plan.txt`, `mes-run.txt`,
+  `serial.log`). The user approved it ("I approved so just do it") and ran it from
+  the host shell (the agent's permission check blocked it).
+  - Plan (gate open, read-only): state 14, sOS alive, RLC `0xc000001f`, `CP_STAT` 0,
+    `GRBM_GFX_CNTL` 0, `CP_MES_CNTL` `0x40000000` (HALT only, no pipe active).
+  - Run: **state 43, 6/6 steps, 12 writes, 1 ms**, readback round 1. `CP_MES_CNTL`
+    `0x40000000` -> `0x0c000000` (pipes 0+1 active), GRBM back to 0.
+  - **`CP_MES_GP3_LO`: sched `0x01025092`, KIQ `0x06038113`**. Masked with
+    `AMDGPU_MES_VERSION_MASK` (0xfff) these are `0x092` and `0x113`, exactly the MES
+    and MES_KIQ versions amdgpu reported on this card (reference boot 2026-10-18).
+    So both MES pipes execute the PSP-loaded firmware. `CP_MES_INSTR_PNTR` pipe 0
+    `0x74fc`, pipe 1 `0x5264` (non-zero, firmware executing).
+  - Preflight still reason 11; nothing else changed. MES stays running until the
+    next power-off. **Next:** the MES KIQ-pipe queue (`kiq_setting`,
+    `mes_v11_0_queue_init` with the G25 MQD in VRAM), then the scheduler ring and
+    `SET_HW_RESOURCES`; each is a new write stage.
 
 ## Adding a register read
 
