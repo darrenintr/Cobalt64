@@ -485,3 +485,26 @@ for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert '--mes-start' not in code and 'N33_MES_START_RUN' not in code
 print('Navi33 MES start allowlist, independent gate and plan boundary: passed')
+
+# MEC queue: own gate and latch; the writer enforces the runner's allowlist and
+# maps BAR0 only through the planned 1 MiB sub-range.
+mecq=(root/'src/Navi33DarwinMecQueue.cpp').read_text()
+mecqh=(root/'src/Navi33Gfx11MecQueue.h').read_text()
+assert 'if(mecMode)req.attempted=&mecAttempted_;' in load_fn
+assert 'if(mecMode)req.writeGate=!killed && !mecKilled &&' in load_fn
+assert 'PE_parse_boot_argn("navi33-mec-queue"' in load_fn
+assert 'PE_parse_boot_argn("navi33-mec-off"' in load_fn
+assert 'bool mecAttempted_ = false;' in (root/'src/Navi33Probe.hpp').read_text()
+assert 'return executeMec(pci,req);' in writer
+assert 'if(!mq::allowed(io->r,off)' in mecq
+assert 'withSubRange(bar0,win.fwPriOffset+kWindowFromProof' in mecq
+assert 'mq::Hw hw{&io,read32,nullptr,nullptr,vramRead,sleepMs};' in mecq   # the plan cannot write
+assert 'Navi33DarwinMecQueue.o' in makefile
+for forbidden in ('->configWrite','setMemoryEnable','setBusMasterEnable','setPowerState','WREG32('):
+    assert forbidden not in mecq, f'MEC queue stage gained {forbidden}'
+for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory'):
+    assert forbidden not in mecqh
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert '--mec-queue' not in code and 'N33_MEC_QUEUE_RUN' not in code
+print('Navi33 MEC queue allowlist, window, independent gate and plan boundary: passed')

@@ -11,7 +11,7 @@ SCRIPT = pathlib.Path(__file__).resolve().parents[2] / 'vm/make-opencore.sh'
 
 class SmuBootArgsTests(unittest.TestCase):
     def generate(self, load=False, ring=False, fw=False, autoload=False,
-                 smu=False, scpm=False, dma_preflight=False, mes=False):
+                 smu=False, scpm=False, dma_preflight=False, mes=False, mec=False):
         code = SCRIPT.read_text().split("<<'EOF'\n", 1)[1].split('\nEOF', 1)[0]
         guid = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
         with tempfile.TemporaryDirectory() as directory:
@@ -28,7 +28,7 @@ class SmuBootArgsTests(unittest.TestCase):
             args = [str(config), str(int(load)), str(binary), str(tmp / 'manifest'),
                     'test-OC', '', str(int(ring)), str(int(fw)), str(int(autoload)),
                     str(int(smu or scpm)), str(int(scpm)), str(int(dma_preflight)),
-                    '0', '0', '0', '0', str(int(mes))]
+                    '0', '0', '0', '0', str(int(mes)), str(int(mec))]
             subprocess.run([sys.executable, '-I', '-', *args], input=code,
                            text=True, capture_output=True, check=True)
             result = plistlib.loads(config.read_bytes())
@@ -77,11 +77,25 @@ class SmuBootArgsTests(unittest.TestCase):
             self.assertIn('navi33-mes-off=1', closed)
             self.assertNotIn('navi33-mes-start=1', closed)
 
+    def test_mec_opens_only_mec(self):
+        args = self.generate(mec=True)
+        self.assertIn('navi33-mec-queue=1', args)
+        for flag in ('navi33-mes-off=1', 'navi33-smu-off=1'):
+            self.assertIn(flag, args)
+        for flag in ('navi33-mec-off=1', 'navi33-psp-off=1', 'navi33-mes-start=1',
+                     'navi33-smu-enable=1', 'navi33-psp-load=1'):
+            self.assertNotIn(flag, args)
+        for closed in (self.generate(), self.generate(mes=True), self.generate(fw=True)):
+            self.assertIn('navi33-mec-off=1', closed)
+            self.assertNotIn('navi33-mec-queue=1', closed)
+
     def test_mes_refuses_combined_gate(self):
         with tempfile.TemporaryDirectory() as directory:
-            for gate in ('--psp-load', '--psp-ring', '--psp-fw', '--smu-scpm'):
+            for gate, other in (('--psp-load', '--mes-start'), ('--psp-ring', '--mes-start'),
+                                ('--psp-fw', '--mes-start'), ('--smu-scpm', '--mes-start'),
+                                ('--mes-start', '--mec-queue'), ('--psp-fw', '--mec-queue')):
                 result = subprocess.run(['bash', str(SCRIPT), directory,
-                                         gate, '--mes-start'], capture_output=True, text=True)
+                                         gate, other], capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('open one write gate at a time', result.stderr)
 

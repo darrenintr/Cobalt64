@@ -77,6 +77,11 @@ static const char *stateText(uint32_t s) {
     case N33_PSPL_MES_WRITE_FAILED: return "MES register write failed; full power-off required";
     case N33_PSPL_MES_NO_VERSION: return "MES started but reported no firmware version; full power-off required";
     case N33_PSPL_MES_RUNNING: return "MES RUNNING: both pipes report a firmware version";
+    case N33_PSPL_MEC_BAD_PRECONDITION: return "MEC queue needs RLC boot complete, GRBM select 0, a halted MEC and an idle HQD";
+    case N33_PSPL_MEC_WRITE_FAILED: return "MEC register write failed; full power-off required";
+    case N33_PSPL_MEC_NO_FETCH: return "queue loaded but the ring never ran (SCRATCH_REG0 unchanged); full power-off required";
+    case N33_PSPL_MEC_NO_FENCE: return "ring ran (SCRATCH_REG0 set) but the VRAM fence never arrived; full power-off required";
+    case N33_PSPL_MEC_QUEUE_OK: return "MEC QUEUE OK: ring test passed and the GPU wrote the VRAM fence";
     default: return "unknown state";
     }
 }
@@ -96,6 +101,17 @@ static uint8_t *slurp(const char *path,size_t max,size_t *len) {
 }
 static void print(const struct n33_psp_load_result *r) {
     printf("state %u: %s\n",r->state,stateText(r->state));
+    if(r->mec_marker==N33_MEC_MARKER) {
+        printf("write gate %s; sOS heartbeat %08x; RLC %08x; window MC 0x%llx\n",
+               (r->flags&N33_PSPL_FLAG_WRITE_GATE_OPEN) ? "OPEN" : "closed",
+               r->c2pmsg81_after,r->mec_rlc,(unsigned long long)r->mec_window_mc);
+        printf("CP_MEC_RS64_CNTL %08x->%08x; HQD me1 pipe0 queue0 active %x->%x\n",
+               r->mec_cntl_before,r->mec_cntl_after,r->mec_hqd_active_before,r->mec_hqd_active_after);
+        printf("SCRATCH_REG0 %08x (ring test wants deadbeef); fence %08x; RPTR %u dwords\n",
+               r->mec_scratch,r->mec_fence,r->mec_rptr);
+        printf("completed %u/5, writes %u, %u ms\n",r->steps_done,r->register_writes,r->elapsed_ms);
+        return;
+    }
     if(r->mes_marker==N33_MES_MARKER) {
         printf("write gate %s; sOS heartbeat %08x; RLC %08x; CP_STAT %08x\n",
                (r->flags&N33_PSPL_FLAG_WRITE_GATE_OPEN) ? "OPEN" : "closed",
@@ -253,14 +269,16 @@ int main(int argc,char **argv) {
            !strcmp(arg,"--ip-fw-plan") || !strcmp(arg,"--ip-fw") ||
            !strcmp(arg,"--smu-plan") || !strcmp(arg,"--smu-enable") ||
            !strcmp(arg,"--smu-scpm-plan") || !strcmp(arg,"--smu-scpm-enable") ||
-           !strcmp(arg,"--mes-plan") || !strcmp(arg,"--mes-start")) {
+           !strcmp(arg,"--mes-plan") || !strcmp(arg,"--mes-start") ||
+           !strcmp(arg,"--mec-plan") || !strcmp(arg,"--mec-queue")) {
             if(mode) {bad=1;break;}
             mode=!strcmp(arg,"--plan") ? 1 : !strcmp(arg,"--load") ? 2 :
                  !strcmp(arg,"--ring-plan") ? 3 : !strcmp(arg,"--ring") ? 4 :
                  !strcmp(arg,"--ip-fw-plan") ? 5 : !strcmp(arg,"--ip-fw") ? 6 :
                  !strcmp(arg,"--smu-plan") ? 7 : !strcmp(arg,"--smu-enable") ? 8 :
                  !strcmp(arg,"--smu-scpm-plan") ? 9 : !strcmp(arg,"--smu-scpm-enable") ? 10 :
-                 !strcmp(arg,"--mes-plan") ? 11 : 12;
+                 !strcmp(arg,"--mes-plan") ? 11 : !strcmp(arg,"--mes-start") ? 12 :
+                 !strcmp(arg,"--mec-plan") ? 13 : 14;
             if(mode==3 || mode==4) {
                 if(a+1>=argc || strlen(argv[a+1])!=1u ||
                    argv[a+1][0]<'1' || argv[a+1][0]>'3') {bad=1;break;}
@@ -281,12 +299,13 @@ int main(int argc,char **argv) {
         else if(!strcmp(arg,"--fwdir") && a+1<argc)fwDir=argv[++a];
         else bad=1;
     }
-    const int writes=mode==2 || mode==4 || mode==6 || mode==8 || mode==10 || mode==12;
+    const int writes=mode==2 || mode==4 || mode==6 || mode==8 || mode==10 || mode==12 || mode==14;
     const int mes=mode==11 || mode==12;
+    const int mec=mode==13 || mode==14;
     const int ipfw=mode==5 || mode==6;
     const int scpm=mode==9 || mode==10;
     const int smu=mode==7 || mode==8 || scpm;
-    if(bad || !mode || !romPath || ((smu || mes) ? (fwDir || fwPath) : ipfw ? (!fwDir || fwPath) : (!fwPath || fwDir)) ||
+    if(bad || !mode || !romPath || ((smu || mes || mec) ? (fwDir || fwPath) : ipfw ? (!fwDir || fwPath) : (!fwPath || fwDir)) ||
        (writes && !ssh)) {
         fputs("Usage: sudo n33psp --plan --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin\n"
               "       sudo n33psp --load --rom rx7600-ipd.bin --fw psp_13_0_7_sos.bin --i-have-ssh\n"
@@ -296,6 +315,8 @@ int main(int argc,char **argv) {
               "       sudo n33psp --ip-fw START STOP --rom rx7600-ipd.bin --fwdir DIR --i-have-ssh\n"
               "       sudo n33psp --smu-scpm-plan --rom rx7600-ipd.bin\n"
               "       sudo n33psp --smu-scpm-enable --rom rx7600-ipd.bin --i-have-ssh\n"
+              "       sudo n33psp --mec-plan --rom rx7600-ipd.bin\n"
+              "       sudo n33psp --mec-queue --rom rx7600-ipd.bin --i-have-ssh\n"
               "       sudo n33psp --mes-plan --rom rx7600-ipd.bin\n"
               "       sudo n33psp --mes-start --rom rx7600-ipd.bin --i-have-ssh\n"
               "       sudo n33psp --smu-plan --rom rx7600-ipd.bin\n"
@@ -310,10 +331,10 @@ int main(int argc,char **argv) {
     if(geteuid()!=0) {fputs("N33N requires root/admin.\n",stderr);return 2;}
     size_t romLen=0u,fwLen=0u;
     uint8_t *rom=slurp(romPath,4096u,&romLen);
-    uint8_t *fw=(smu || mes) ? calloc(1u,1u) : ipfw ? slurpIpFw(fwDir,&fwLen) :
+    uint8_t *fw=(smu || mes || mec) ? calloc(1u,1u) : ipfw ? slurpIpFw(fwDir,&fwLen) :
                 slurp(fwPath,N33_PSP_LOAD_MAX_INPUT-4096u-
                       sizeof(struct n33_psp_load_request),&fwLen);
-    if(smu || mes)fwLen=1u; // reserved zero byte; SMU and MES have no firmware payload
+    if(smu || mes || mec)fwLen=1u; // reserved zero byte; SMU, MES and MEC have no firmware payload
     if(!rom || romLen<64u || !fw || !fwLen) {
         fputs("Cannot read the IP Discovery (64 B to 4 KiB) or the firmware.\n",stderr);
         free(rom);free(fw);return 8;
@@ -337,13 +358,13 @@ int main(int argc,char **argv) {
         IOServiceClose(conn);free(rom);free(fw);return 5;
     }
     const int ringStage=mode==3 || mode==4;
-    const uint32_t planMode=mes ? N33_MES_START_PLAN : scpm ? N33_SMU_SCPM_PLAN : smu ? N33_SMU_ENABLE_PLAN : ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
+    const uint32_t planMode=mec ? N33_MEC_QUEUE_PLAN : mes ? N33_MES_START_PLAN :scpm ? N33_SMU_SCPM_PLAN : smu ? N33_SMU_ENABLE_PLAN : ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
                             N33_PSP_LOAD_PLAN;
-    const uint32_t runMode=mes ? N33_MES_START_RUN : scpm ? N33_SMU_SCPM_RUN : smu ? N33_SMU_ENABLE_RUN : ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
+    const uint32_t runMode=mec ? N33_MEC_QUEUE_RUN : mes ? N33_MES_START_RUN :scpm ? N33_SMU_SCPM_RUN : smu ? N33_SMU_ENABLE_RUN : ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
                            N33_PSP_LOAD_RUN;
     struct n33_psp_load_result r;
     int rc=7;
-    puts(mes ? "== GFX11 MES start plan (read-only)" : scpm ? "== SMU13 SCPM enable-only plan (read-only)" : smu ? "== SMU13 feature enable plan (read-only)" : ipfw ? "== PSP13 IP firmware plan (read-only)" :
+    puts(mec ? "== GFX11 MEC queue plan (read-only)" : mes ? "== GFX11 MES start plan (read-only)" :scpm ? "== SMU13 SCPM enable-only plan (read-only)" : smu ? "== SMU13 feature enable plan (read-only)" : ipfw ? "== PSP13 IP firmware plan (read-only)" :
          ringStage ? "== PSP13 KM ring plan (read-only)" : "== PSP13 sOS load plan (read-only)");
     if(call(conn,planMode,start,stop,rom,romLen,fw,fwLen,&r)) {
         print(&r);
@@ -353,7 +374,8 @@ int main(int argc,char **argv) {
         const uint32_t gate=(ringStage||ipfw) ? (r.ring_flags&N33_PSPR_FLAG_GATE_OPEN)
                                               : (r.flags&N33_PSPL_FLAG_WRITE_GATE_OPEN);
         if(!gate) {
-            puts(mes ? "Write gate closed: needs navi33-mes-start=1, no navi33-mes-off or navi33-psp-off." :
+            puts(mec ? "Write gate closed: needs navi33-mec-queue=1, no navi33-mec-off or navi33-psp-off." :
+                 mes ? "Write gate closed: needs navi33-mes-start=1, no navi33-mes-off or navi33-psp-off." :
                  scpm ? "Write gate closed: needs navi33-smu-enable=1 and navi33-smu-scpm=1, no SMU/PSP kill switches." :
                  smu ? "Write gate closed: needs navi33-smu-enable=1, no navi33-smu-off or navi33-psp-off." :
                  ipfw ? "Write gate closed: boot with navi33-psp-fw=1 and without navi33-psp-off=1." :
@@ -366,7 +388,8 @@ int main(int argc,char **argv) {
             puts("STOP 28 sends AUTOLOAD_RLC: boot with navi33-psp-autoload=1 as well. Nothing was sent.");
             rc=6;
         } else {
-            puts(mes ? "== GFX11 MES START (writes GRBM_GFX_CNTL, CP_MES_CNTL, CP_MES_PRGRM_CNTR_START/_HI)" :
+            puts(mec ? "== GFX11 MEC QUEUE (writes MEC/HQD registers, SCRATCH_REG0 and the 1 MiB VRAM window at 250 MiB)" :
+                 mes ? "== GFX11 MES START (writes GRBM_GFX_CNTL, CP_MES_CNTL, CP_MES_PRGRM_CNTR_START/_HI)" :
                  smu ? "== SMU13 ENABLE (writes MP1 C2PMSG_66/82/90; full power-off after attempt)" :
                  ipfw ? "== PSP13 IP FIRMWARE (writes the ring write pointer and the staging area)" :
                  ringStage ?
@@ -376,7 +399,8 @@ int main(int argc,char **argv) {
             rc=7;
             if(call(conn,runMode,start,stop,rom,romLen,fw,fwLen,&r)) {
                 print(&r);
-                rc=mes ? (r.state==N33_PSPL_MES_RUNNING ? 0 : 9) :
+                rc=mec ? (r.state==N33_PSPL_MEC_QUEUE_OK ? 0 : 9) :
+                   mes ? (r.state==N33_PSPL_MES_RUNNING ? 0 : 9) :
                    smu ? (r.state==N33_PSPL_SMU_GC_READY ? 0 : 9) : r.state==(ipfw ? N33_PSPL_FW_DONE : ringStage ? N33_PSPL_RING_DONE :
                              N33_PSPL_SOS_ALIVE) ? 0 : 9;
             }
@@ -387,6 +411,7 @@ int main(int argc,char **argv) {
     IOServiceClose(conn);
     free(rom);free(fw);
     puts(!writes ? "GPU writes: NONE; plan only." :
+         mec ? "GPU writes: MEC/HQD registers and the MEC VRAM window only (see write count and flags)." :
          mes ? "GPU writes: GC GRBM select and CP_MES registers only (see write count)." :
          smu ? "GPU writes: SMU mailbox only (see write count); full power-off after an attempt." :
          ipfw ? "GPU writes: PSP13 ring write pointer and the firmware staging area (see flags)." :

@@ -85,6 +85,14 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      `navi33-mes-start=1`, is killed by `navi33-mes-off` or `navi33-psp-off`, and
      has its own one-shot latch. Needs RLC bootload complete (after the SCPM
      stage). See `DMA_QUEUE_BRINGUP.md` G33.
+   - The MEC queue stage (kext 0.0.23, ABI 16, G34; built 2026-10-19) may write
+     only GRBM_GFX_CNTL, CP_MEC_RS64_PRGRM_CNTR_START/_HI, CP_MEC_RS64_CNTL,
+     SCRATCH_REG0, CP_PQ_WPTR_POLL_CNTL1, the HQD block 0x1fa9..0x1fe0 (not the
+     hole 0x1fb9) and a 1 MiB VRAM window at 250 MiB: 84 register writes on success.
+     It needs `navi33-mec-queue=1`, is killed by `navi33-mec-off` or `navi33-psp-off`,
+     and has its own one-shot latch. The user approved building and running the
+     three compute steps on 2026-10-19 ("I approved all the require step and the
+     test on these 3 aspect so you can run it yourself").
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing

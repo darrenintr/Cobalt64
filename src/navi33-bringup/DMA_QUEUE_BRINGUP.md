@@ -880,3 +880,39 @@ approval.
   `--mes-start ... --i-have-ssh`. Three mutants abort the test (no active-pipe
   check, a readback failure that keeps the select, a plan that writes).
 
+
+## Stage G34: first compute queue without MES (kext 0.0.23, ABI 16)
+
+The user chose the direct MEC path over continuing MES (2026-10-19): MES's next
+step needs doorbells (NBIO aperture, CP doorbell ranges, BAR2), while KFD loads a
+compute HQD directly and kicks it with a one-shot WPTR poll from memory.
+`src/Navi33Gfx11MecQueue.h` (runner, callbacks only), `src/Navi33DarwinMecQueue.cpp`
+(writer), `tests/test_gfx11_mec_queue.cpp`. Upstream, torvalds/linux master fetched
+2026-10-19: `gfx_v11_0_config_gfx_rs64()` (MEC half), `gfx_v11_0_cp_compute_enable()`,
+`hqd_load_v11()` (`amdgpu_amdkfd_gfx_v11.c`), `gfx_v11_0_ring_test_ring()`,
+`gfx_v11_0_ring_emit_fence()`.
+
+- MEC program counters from the pinned `gc_11_0_2_mec.bin` header (start lo
+  `0x3000`, hi `0x70000`): `CP_MEC_RS64_PRGRM_CNTR_START` `0xc00`, `_HI` `0x1c000` on
+  pipes 0-3 (GRBM me 1), pipe reset then clear, then unhalt: `CP_MEC_RS64_CNTL`
+  `0x400f0000` (census) -> `0x400f0000` -> `0x40000000` -> `0x3c000000`.
+- Queue me 1 pipe 0 queue 0, VMID 0, MQD = the G19 image
+  (`gfx_v11_0_compute_mqd_init`), copied into `0x1fa9..0x1fe0` (the hole `0x1fb9`
+  skipped), doorbell logic on, WPTR/poll address, `CP_PQ_WPTR_POLL_CNTL1` bit 0,
+  `CP_HQD_EOP_RPTR.INIT_FETCHER`, `CP_HQD_ACTIVE`. `RLC_CP_SCHEDULERS` (HIQ marking)
+  is left out.
+- VRAM window: 1 MiB at 250 MiB (MC `0x80_0FA0_0000` with this FB base), inside the
+  240-256 MiB range proven BAR0 == VRAM by `psp13load::planWindow`. MQD +0, EOP
+  +0x1000, ring +0x2000 (4 KiB), RPTR report +0x3000, WPTR poll +0x3008, fence
+  +0x4000. Written and read back before any register write.
+- Ring (16 dwords): `SET_UCONFIG_REG SCRATCH_REG0 = 0xdeadbeef` (Linux's compute
+  ring test, after `0xcafedead` preset), `RELEASE_MEM` 32-bit fence `0x0c0b1601`,
+  NOPs. Success: scratch `0xdeadbeef` (the MEC fetched and ran the ring from VRAM)
+  and the fence (the GPU wrote VRAM through VMID0): state 48. 84 register writes.
+- Tests the hypothesis from G30 that VMID0 with GFXHUB L1 TLB mode 0 and context0
+  disabled reaches VRAM physically. Never halts, dequeues or retries; recovery is
+  a full power-off. Gate `navi33-mec-queue=1`, kill `navi33-mec-off` or
+  `navi33-psp-off`, own latch; `make-opencore.sh --mec-queue`; `n33psp --mec-plan` /
+  `--mec-queue`. Four mutants caught.
+- Next (G35): the gradient dispatch on this queue (SH_MEM setup from
+  `gfx_v11_0_constants_init`, shader and kernargs in VRAM, G32 stream).

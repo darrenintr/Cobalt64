@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 15u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
+#define N33_ABI_VERSION 16u /* 16: MEC queue modes/result;9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -219,6 +219,13 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
 #define N33_MES_START_PLAN 11u
 #define N33_MES_START_RUN 12u
 #define N33_MES_MARKER 0x4d455331u
+/* First compute queue without MES (G34): MEC program counters and unhalt, one
+ * HQD loaded as KFD hqd_load_v11 does, Linux's ring test and a fence, all in a
+ * 1 MiB VRAM window. RUN needs navi33-mec-queue=1, no navi33-mec-off or
+ * navi33-psp-off, once per boot. Input: IP Discovery then one zero byte. */
+#define N33_MEC_QUEUE_PLAN 13u
+#define N33_MEC_QUEUE_RUN 14u
+#define N33_MEC_MARKER 0x4d454331u
 #define N33_PSP_FW_RECORDS 27u
 #define N33_PSP_FW_STOP_AUTOLOAD 28u
 #define N33_PSP_LOAD_MAX_INPUT (4u*1024u*1024u)
@@ -246,7 +253,10 @@ enum n33_psp_load_state {
   N33_PSPL_SMU_REJECTED=37, N33_PSPL_SMU_ACKED=38, N33_PSPL_SMU_GC_READY=39,
   /* MES start */
   N33_PSPL_MES_BAD_PRECONDITION=40, N33_PSPL_MES_WRITE_FAILED=41,
-  N33_PSPL_MES_NO_VERSION=42, N33_PSPL_MES_RUNNING=43
+  N33_PSPL_MES_NO_VERSION=42, N33_PSPL_MES_RUNNING=43,
+  /* MEC queue */
+  N33_PSPL_MEC_BAD_PRECONDITION=44, N33_PSPL_MEC_WRITE_FAILED=45,
+  N33_PSPL_MEC_NO_FETCH=46, N33_PSPL_MEC_NO_FENCE=47, N33_PSPL_MEC_QUEUE_OK=48
 };
 /* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
 enum n33_psp_load_step {
@@ -297,9 +307,14 @@ struct n33_psp_load_result {
    * read under GRBM me 3 after the enable; samples counts the readback rounds. */
   uint32_t mes_marker, mes_cntl_before, mes_cntl_after, mes_grbm_before;
   uint32_t mes_rlc, mes_cp_stat, mes_version[2], mes_pc[2], mes_samples, mes_reserved;
+  /* MEC queue: zero for the other modes. scratch is SCRATCH_REG0 (0xdeadbeef
+   * once the ring ran), fence the VRAM fence dword, rptr CP_HQD_PQ_RPTR. */
+  uint32_t mec_marker, mec_cntl_before, mec_cntl_after, mec_rlc, mec_scratch;
+  uint32_t mec_fence, mec_rptr, mec_hqd_active_before, mec_hqd_active_after, mec_reserved;
+  uint64_t mec_window_mc;
 };
-N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==384,
-                  "N33 PSP load result must be 384 bytes");
+N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==432,
+                  "N33 PSP load result must be 432 bytes");
 #define N33_PSPR_FLAG_RESUMED (1u<<0) /* ring already existed, not recreated */
 #define N33_PSPR_FLAG_RING_CREATED (1u<<1)
 #define N33_PSPR_FLAG_TOC_LOADED (1u<<2)

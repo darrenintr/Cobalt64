@@ -140,7 +140,8 @@ bool Navi33Probe::start(IOService *provider) {
         publishOwnerReport(navi33::darwin_owner::runOwnerProbe(pci,this,true,ownerKill,recovery,physicalOptIn));
     }
     // Report any explicitly enabled PSP or SMU write stage.
-    uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u, smuOn=0u, smuOff=0u, mesOn=0u, mesOff=0u;
+    uint32_t pspLoadOn=0u, pspRingOn=0u, pspFwOn=0u, pspOff=0u, smuOn=0u, smuOff=0u, mesOn=0u, mesOff=0u,
+             mecOn=0u, mecOff=0u;
     const bool pspKilled=PE_parse_boot_argn("navi33-psp-off", &pspOff,
                                             sizeof(pspOff)) && pspOff!=0u;
     const bool pspWrites=!pspKilled &&
@@ -156,7 +157,11 @@ bool Navi33Probe::start(IOService *provider) {
     const bool mesWrites=!pspKilled &&
         !(PE_parse_boot_argn("navi33-mes-off",&mesOff,sizeof(mesOff)) && mesOff!=0u) &&
         PE_parse_boot_argn("navi33-mes-start",&mesOn,sizeof(mesOn)) && mesOn==1u;
-    setProperty("Navi33,GpuWritesEnabled", static_cast<uint64_t>(pspWrites || smuWrites || mesWrites), 32);
+    const bool mecWrites=!pspKilled &&
+        !(PE_parse_boot_argn("navi33-mec-off",&mecOff,sizeof(mecOff)) && mecOff!=0u) &&
+        PE_parse_boot_argn("navi33-mec-queue",&mecOn,sizeof(mecOn)) && mecOn==1u;
+    setProperty("Navi33,GpuWritesEnabled",
+                static_cast<uint64_t>(pspWrites || smuWrites || mesWrites || mecWrites), 32);
     setProperty("Navi33,FirmwareLoadingImplemented",
                 "PSP13 sOS bootloader, KM ring (TOC, TMR) and IP firmware records only");
     setProperty("Navi33,GpuQueuesImplemented", static_cast<uint64_t>(0), 8);
@@ -679,7 +684,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     n33_psp_load_result result{};
     result.abi_version=N33_ABI_VERSION;result.size=sizeof(result);
     uint32_t enabled=0u,off=0u,load=0u,ring=0u,fwOn=0u,autoOn=0u,pspOff=0u,smuOn=0u,smuOff=0u,
-             mesOn=0u,mesOff=0u;
+             mesOn=0u,mesOff=0u,mecOn=0u,mecOff=0u;
     const bool allowed=PE_parse_boot_argn("navi33-hw-probe",
                                          &enabled,sizeof(enabled)) && enabled==1u;
     const bool stopped=PE_parse_boot_argn("navi33-hw-off",
@@ -703,6 +708,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     const bool smuKilled=PE_parse_boot_argn("navi33-smu-off",&smuOff,sizeof(smuOff)) && smuOff!=0u;
     const bool mesMode=mode==N33_MES_START_PLAN || mode==N33_MES_START_RUN;
     const bool mesKilled=PE_parse_boot_argn("navi33-mes-off",&mesOff,sizeof(mesOff)) && mesOff!=0u;
+    const bool mecMode=mode==N33_MEC_QUEUE_PLAN || mode==N33_MEC_QUEUE_RUN;
+    const bool mecKilled=PE_parse_boot_argn("navi33-mec-off",&mecOff,sizeof(mecOff)) && mecOff!=0u;
     const bool killed=PE_parse_boot_argn("navi33-psp-off",&pspOff,
                                          sizeof(pspOff)) && pspOff!=0u;
     // Each write stage has its own boot-arg; navi33-psp-off kills all of them.
@@ -723,6 +730,9 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     // MES start: its own boot-arg; navi33-mes-off and navi33-psp-off both stop it.
     if(mesMode)req.writeGate=!killed && !mesKilled &&
         PE_parse_boot_argn("navi33-mes-start",&mesOn,sizeof(mesOn)) && mesOn==1u;
+    // MEC queue: its own boot-arg; navi33-mec-off and navi33-psp-off both stop it.
+    if(mecMode)req.writeGate=!killed && !mecKilled &&
+        PE_parse_boot_argn("navi33-mec-queue",&mecOn,sizeof(mecOn)) && mecOn==1u;
     // AUTOLOAD_RLC powers up the graphics engine: a second, separate boot-arg.
     req.autoloadGate=!killed && fwMode &&
         PE_parse_boot_argn("navi33-psp-autoload",&autoOn,sizeof(autoOn)) && autoOn==1u;
@@ -746,6 +756,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
                              &pspLoadAttempted_;
     if(smuMode)req.attempted=&smuAttempted_;
     if(mesMode)req.attempted=&mesAttempted_;
+    if(mecMode)req.attempted=&mecAttempted_;
     result=navi33::darwin_psp::execute(pci,req);
     IOLockUnlock(pspLock_);
     char raw[320];
@@ -775,7 +786,15 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
         result.register_writes,result.mes_cntl_before,result.mes_cntl_after,
         result.mes_grbm_before,result.mes_rlc,result.mes_cp_stat,result.mes_version[0],
         result.mes_version[1],result.mes_pc[0],result.mes_pc[1],result.mes_samples);
-    setProperty(mode==N33_MES_START_RUN ? "Navi33,LastMesStart" :
+    if(mecMode)snprintf(raw,sizeof(raw),
+        "mode %u state %u steps %u writes %u cntl %x->%x RLC %x scratch %x fence %x rptr %x "
+        "active %x->%x window 0x%llx",mode,result.state,result.steps_done,result.register_writes,
+        result.mec_cntl_before,result.mec_cntl_after,result.mec_rlc,result.mec_scratch,
+        result.mec_fence,result.mec_rptr,result.mec_hqd_active_before,
+        result.mec_hqd_active_after,result.mec_window_mc);
+    setProperty(mode==N33_MEC_QUEUE_RUN ? "Navi33,LastMecQueue" :
+                mode==N33_MEC_QUEUE_PLAN ? "Navi33,LastMecPlan" :
+                mode==N33_MES_START_RUN ? "Navi33,LastMesStart" :
                 mode==N33_MES_START_PLAN ? "Navi33,LastMesPlan" :
                 (mode==N33_SMU_ENABLE_RUN || mode==N33_SMU_SCPM_RUN) ? "Navi33,LastSmuEnable" :
                 (mode==N33_SMU_ENABLE_PLAN || mode==N33_SMU_SCPM_PLAN) ? "Navi33,LastSmuPlan" :

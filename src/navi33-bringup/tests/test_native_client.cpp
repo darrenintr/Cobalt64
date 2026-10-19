@@ -71,7 +71,7 @@ int main() {
     assert(validate(N33_SEL_MMIO_PEEK,0,0,496,sizeof(n33_peek_result),
                     false,false,true,true)==Shape::BadArgument);
     // PSP load: 32-byte request, IP Discovery and the 248 KB sOS container
-    // (out of line in IOKit), 384-byte result. The write gate is a boot-arg.
+    // (out of line in IOKit), 432-byte result. The write gate is a boot-arg.
     const uint32_t pspIn=32u+464u+248496u;
     assert(validate(N33_SEL_PSP_LOAD,0,0,pspIn,sizeof(n33_psp_load_result),
                     false,false,true,false)==Shape::Valid);
@@ -89,11 +89,11 @@ int main() {
     assert(validate(N33_SEL_PSP_LOAD,0,0,pspIn,sizeof(n33_psp_load_result),
                     false,false,true,true)==Shape::BadArgument);
     static_assert(sizeof(n33_psp_load_request)==32u &&
-                  sizeof(n33_psp_load_result)==384u,"PSP load ABI sizes");
+                  sizeof(n33_psp_load_result)==432u,"PSP load ABI sizes");
     static_assert(N33_SEL_PSP_LOAD==18 && N33_SEL_COUNT==19,"selector numbering");
     assert(validate(N33_SEL_COUNT,0,0,0,64,
                     false,false,true,false)==Shape::Unsupported);
-    static_assert(N33_ABI_VERSION==15u,"MES start modes and result ABI bump");
+    static_assert(N33_ABI_VERSION==16u,"MEC queue modes and result ABI bump");
     const n33_capabilities info={N33_ABI_VERSION,sizeof(n33_capabilities),
         N33_PCI_VENDOR,N33_PCI_DEVICE,N33_GFX_IP_VERSION,N33_FAMILY_GFX1102,
         N33_CAP_PCI_INVENTORY|N33_CAP_ROM_DISCOVERY,0u,0u,0u,0u,0u};

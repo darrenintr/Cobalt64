@@ -91,13 +91,17 @@ $(BUILD)/Navi33DarwinMes.o: src/Navi33DarwinMes.cpp src/Navi33Gfx11MesStart.h sr
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD)/Navi33DarwinMecQueue.o: src/Navi33DarwinMecQueue.cpp src/Navi33Gfx11MecQueue.h src/Navi33Gfx11Mqd.h src/Navi33Gfx11KiqHqd.h src/Navi33Gfx11MecEnable.h src/Navi33Gfx11Dispatch.h src/Navi33Psp13Loader.h src/Navi33DarwinPspLoad.h src/Navi33NativeABI.h src/Navi33HardwarePlan.h src/Navi33Discovery.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD)/kmod_info.o: src/kmod_info.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KEXT): $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o Info.plist
+$(KEXT): $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o Info.plist
 	@mkdir -p $(KEXT)/Contents/MacOS
-	$(CXX) $(LDFLAGS) $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o -o $(EXEC)
+	$(CXX) $(LDFLAGS) $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o -o $(EXEC)
 	cp Info.plist $(KEXT)/Contents/Info.plist
 	xattr -cr $(KEXT)
 	codesign --force --sign - $(KEXT)
@@ -368,6 +372,10 @@ $(BUILD)/backend-report: tools/backend_report.cpp src/Navi33HardwarePlan.h src/N
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tools/backend_report.cpp -o $@
 
+$(BUILD)/test-gfx11-mec-queue: tests/test_gfx11_mec_queue.cpp src/Navi33Gfx11MecQueue.h src/Navi33Gfx11Mqd.h src/Navi33Gfx11KiqHqd.h src/Navi33Gfx11MecEnable.h src/Navi33Gfx11Dispatch.h src/Navi33NativeABI.h src/Navi33HardwarePlan.h tests/rx7600_ipd_fixture.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
+
 $(BUILD)/test-gfx11-mes-start: tests/test_gfx11_mes_start.cpp src/Navi33Gfx11MesStart.h src/Navi33GfxMes.h src/Navi33Gfx11KiqHqd.h src/Navi33NativeABI.h src/Navi33HardwarePlan.h tests/rx7600_ipd_fixture.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
@@ -376,7 +384,8 @@ $(BUILD)/test-smu13-enable: tests/test_smu13_enable.cpp src/Navi33Smu13Enable.h 
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 
-host-test: $(BUILD)/test-gfx11-mes-start $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/test-dma-backend $(BUILD)/test-dma-engine $(BUILD)/test-dma-engine-unsafe $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-ring-test $(BUILD)/test-gfx11-shader $(BUILD)/test-gfx11-dispatch $(BUILD)/sdma6-ring-plan $(BUILD)/test-sdma6-proof-run $(BUILD)/test-sdma6-queue1-config-plan $(BUILD)/test-sdma6-queue1-memory-contract $(BUILD)/test-gfx11-mec-enable $(BUILD)/test-gfx11-kiq-hqd $(BUILD)/test-gfx11-mqd $(BUILD)/test-gfx11-mes $(BUILD)/test-gfx11-mes-mqd $(BUILD)/test-pci-owner $(BUILD)/test-production-owner $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
+host-test: $(BUILD)/test-gfx11-mec-queue $(BUILD)/test-gfx11-mes-start $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/test-dma-backend $(BUILD)/test-dma-engine $(BUILD)/test-dma-engine-unsafe $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-ring-test $(BUILD)/test-gfx11-shader $(BUILD)/test-gfx11-dispatch $(BUILD)/sdma6-ring-plan $(BUILD)/test-sdma6-proof-run $(BUILD)/test-sdma6-queue1-config-plan $(BUILD)/test-sdma6-queue1-memory-contract $(BUILD)/test-gfx11-mec-enable $(BUILD)/test-gfx11-kiq-hqd $(BUILD)/test-gfx11-mqd $(BUILD)/test-gfx11-mes $(BUILD)/test-gfx11-mes-mqd $(BUILD)/test-pci-owner $(BUILD)/test-production-owner $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
+	$(BUILD)/test-gfx11-mec-queue
 	$(BUILD)/test-gfx11-mes-start
 	$(BUILD)/test-smu13-enable
 	$(BUILD)/test-identity

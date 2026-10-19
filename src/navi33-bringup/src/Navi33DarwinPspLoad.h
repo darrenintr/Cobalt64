@@ -35,4 +35,6 @@ n33_psp_load_result executeFw(IOPCIDevice *pci,const Request &req);
 n33_psp_load_result executeSmu(IOPCIDevice *pci,const Request &req);
 // MES start (modes MES_START_PLAN / MES_START_RUN), Navi33DarwinMes.cpp.
 n33_psp_load_result executeMes(IOPCIDevice *pci,const Request &req);
+// MEC queue (modes MEC_QUEUE_PLAN / MEC_QUEUE_RUN), Navi33DarwinMecQueue.cpp.
+n33_psp_load_result executeMec(IOPCIDevice *pci,const Request &req);
 } } // namespace navi33::darwin_psp
