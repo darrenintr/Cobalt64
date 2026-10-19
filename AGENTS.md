@@ -187,7 +187,8 @@ navi33-dma-stage-off=1 navi33-fb-off=1 navi33-psp-off=1 navi33-sdma-off=1`.
   Kext 0.0.17 also tries to release a held owner in `systemWillShutdown` and
   `willTerminate`, but macOS shutdown does not reach either (VM run 2026-10-18 18:08).
   **Accepted limitation:** a held open lasts until power-off. Restart is not yet tested.
-- Unmapped DMA owner mode (kext 0.0.20, default off, never on the stick):
+- Unmapped DMA owner mode (kext 0.0.20, default off; on the stick only for
+  read-only decision runs, decided 2026-10-18 after the 21:21 conflict):
   `navi33-owner-physical=1` (with `navi33-owner-probe` or `navi33-owner-hold`)
   lets the owner accept the card when macOS has NO IOMapper for it. The
   decision then names `DmaMode::PhysicalUnverified` (ioreg
@@ -1506,9 +1507,20 @@ parser got two of them wrong:
     `IMU_GFX_RESET_CTRL` `0x10`, RLC, SDMA, GRBM, CP and GCVM all 0. MMHUB
     `FB_LOCATION` `0x8000-0x81ff`. `IOAccelerator` instances 0. No write of any
     kind.
-  - **Policy conflict to resolve:** the "Unmapped DMA owner mode" entry above says
-    `navi33-owner-physical=1` is "never on the stick", but this stick now carries
-    it. Decide whether the policy or the stick changes.
+  - **Policy resolved (2026-10-18):** the policy changes, not the stick.
+    `navi33-owner-physical=1` only lets the owner *decide*; it opens no write
+    gate (`kCanWriteGpu=false`), and no test or script enforced "never on the
+    stick". The owner-decision bullet above now allows it on the stick for
+    read-only runs. Any run that reaches `PhysicalUnverified` still needs its
+    own approval.
+  - **Staged 2026-10-19 (not yet booted):** the stick's `config.plist` adds
+    `navi33-owner-recovery=1` to the 21:21 boot-args, with no owner hold, so
+    the probe opens and closes the card once. Backup:
+    `navi33/backup-0.0.20-pre-recovery/`. The stick's `instruction.txt` says
+    what to expect. Next: the user's one boot, then read the newest results
+    file. A decision of Owned with `PhysicalUnverified` would be the first
+    exercise of that mode on bare metal; it still proves nothing about GPU
+    reachability.
 
 ## Adding a register read
 
