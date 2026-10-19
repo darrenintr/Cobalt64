@@ -363,6 +363,12 @@ output survives a hang and Linux can inspect a stuck guest.
   (kext 0.0.25 brings the card up by itself at boot with `navi33-autostart=1`,
   DONE 8/8 at 22:03). Branch `feature/navi33-dma-backend`, all pushed; artifact
   cached in `navi33/cache/artifact-0.0.25`.
+- **B2 step 1 built (G36, kext 0.0.26, ABI 18, CI run 39267533049):** GFXHUB set up as
+  `gfxhub_v3_0`, VMID 1 flat page table (reversed pages), a VMID 1 queue whose ring and
+  fence live at virtual addresses. Not run yet. Needs the autostart state of this power
+  cycle (MEC queue up, hub untouched): `vm/stage.sh vm "--vm-queue" "--vm-plan"
+  "--vm-queue"`. The artifact download hit GitHub's account egress limit on 2026-10-19
+  22:19; retry `gh run download 39267533049 -n navi33-usb-macos-26-intel`.
 - **Next (Phase B):** B2 GPU memory management (page tables per process,
   VRAM allocator, GTT), B3 interrupts (IH ring), B4 per-client submission
   through N33N, then the graphics pipe; bare metal needs the console/BAR0
