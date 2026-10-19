@@ -357,7 +357,18 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (state at 2026-10-19 ~15:45)
+## Resume here (state at 2026-10-19 22:05)
+
+- **Phase A done** (first GPU-calculated pixels, 21:43) and **Phase B1 done**
+  (kext 0.0.25 brings the card up by itself at boot with `navi33-autostart=1`,
+  DONE 8/8 at 22:03). Branch `feature/navi33-dma-backend`, all pushed; artifact
+  cached in `navi33/cache/artifact-0.0.25`.
+- **Next (Phase B):** B2 GPU memory management (page tables per process,
+  VRAM allocator, GTT), B3 interrupts (IH ring), B4 per-client submission
+  through N33N, then the graphics pipe; bare metal needs the console/BAR0
+  mismatch fixed first (`NO_CONSOLE`).
+
+## Older resume notes (2026-10-19 ~15:45)
 
 - **Card:** the headless VFIO boot `0b192ba7-…` from 14:21 is still up, so the
   sOS is alive and GC is powered (RLC boot complete) until the next power-off.
@@ -1848,6 +1859,21 @@ parser got two of them wrong:
   `Navi33,Autostart` carries the same line. So the boot thread, gates, embedded
   firmware and report work, and a card that is not fresh is refused with no write.
   The real test needs a full power-off and a fresh headless boot.
+- **2026-10-19 22:03, kext 0.0.25 in the VM: PHASE B1 DONE. The kext brought the
+  RX 7600 up by itself at boot, 8/8 stages, no tools.** Run `runs/20261019-220319`
+  (`serial.log`, `autostart-plan.txt`, results files), fresh headless boot
+  `78eb16aa-…` (22:01:56; previous boot ended 22:01:30), disk built with
+  `--autostart`, embedded firmware only.
+  - ioreg `Navi33,Autostart` = `DONE reached 8/8: sOS=20/8w ring=28/6w
+    smu-fw=32/1w ip-fw=32/26w autoload=32/1w scpm=39/3w mes=43/12w mec=48/84w`:
+    every stage hit the success state of the manual runs on the first try (no
+    retry needed this time), 141 register writes in all.
+  - Same evidence as the manual stages: sOS `00330024` (26 ms), SCPM reset `0x10`
+    -> `0x1f` and RLC `0xc000001f` (33 ms), MES versions `0x01025092`/`0x06038113`
+    (= `0x92`/`0x113`), MEC ring test `SCRATCH_REG0` `0xdeadbeef` and VRAM fence
+    `0x0c0b1601`.
+  - After boot the read-only gradient plan passed (state 14: MEC running, G34
+    evidence present), so the card is left ready for work, as designed.
 
 ## Adding a register read
 
