@@ -348,7 +348,10 @@ output survives a hang and Linux can inspect a stuck guest.
 - **Kext:** 0.0.21 (`48C9C24E-…`, cache `artifact-0.0.21`) adds read-only
   Queue1/hub/SDMA windows. Branch `feature/navi33-dma-backend`, all pushed.
 - **MES start stage built (2026-10-19, kext 0.0.22, ABI 15, G33):** the first
-  compute-path writer. Needs the user's explicit yes before it runs on the card,
+  compute-path writer. CI run 39252032665 passed (host tests, both macOS builds);
+  artifact cached in `navi33/cache/artifact-0.0.22`, kext UUID
+  `3F23FAC5-731C-34DD-B19B-D2E9EDBBEE66`. At 20:10 the host booted normal Ubuntu
+  (amdgpu owns the card), so the afternoon's GC bring-up is gone. Needs the user's explicit yes before it runs on the card,
   then: CI artifact, sOS -> SCPM sequence if the card was powered off, `vm/stage.sh
   mes "--mes-start" "--mes-plan" "--mes-start"` (user runs it with `!`).
 - **Next step, approved but blocked:** the SDMA0 Queue0 ring-test writer for the
