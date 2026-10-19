@@ -357,7 +357,26 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (state at 2026-10-19 22:05)
+## Resume here (state at 2026-10-19 22:30): PROJECT PAUSED
+
+- **Paused by the user on 2026-10-19 (exams; may discontinue).** Everything is
+  committed and pushed on `feature/navi33-dma-backend` (not merged to `main`).
+  The default VM disk `OpenCore-navi33.qcow2` was rebuilt from kext 0.0.26 with
+  every write gate closed; no VM is running. The card keeps tonight's state
+  until the next power-off, which resets it safely.
+- **Where it stands:** Phase A done (GPU-computed gradient on screen, 21:43);
+  B1 done (kext brings the card up by itself at boot, `navi33-autostart=1`, 22:03);
+  B2 step 1 done (VMID 1 translated queue, 22:19). Cached artifacts in
+  `~/macos tahoe/navi33/cache/` up to `artifact-0.0.26`.
+- **To restart:** full power-off into the headless boot (`sudo grub-reboot
+  cobalt64-navi33-vm && sudo poweroff`, power on), then `vm/stage.sh autostart
+  "--autostart" "--gradient-plan --fw gradient.co"` brings the card up in one boot.
+- **Rough remaining scale (told to the user):** rest of the driver 2-6 weeks,
+  display 2-4 weeks, RADV/Metal 1-3 months, WindowServer unknown (private Apple
+  interfaces). Cheapest next step if resumed: check how far the Navi48 driver's
+  Metal path got (did WindowServer ever use it?) before investing months.
+
+## Resume notes from earlier on 2026-10-19 (22:05)
 
 - **Phase A done** (first GPU-calculated pixels, 21:43) and **Phase B1 done**
   (kext 0.0.25 brings the card up by itself at boot with `navi33-autostart=1`,
