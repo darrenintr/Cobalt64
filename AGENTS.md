@@ -1839,6 +1839,15 @@ parser got two of them wrong:
     screen" (2026-10-19, right after the run). **Next:** the MES KIQ-pipe queue (`kiq_setting`,
     `mes_v11_0_queue_init` with the G25 MQD in VRAM), then the scheduler ring and
     `SET_HW_RESOURCES`; each is a new write stage.
+- **2026-10-19 22:00, kext 0.0.25 (UUID `35C3FED5-F3AB-3830-A133-039399BA0288`, CI run
+  39264711448) in the VM: autostart dry run on the already-up card.** Run
+  `runs/20261019-215959`, disk built with `--autostart` (boot-args `navi33-autostart=1`,
+  no PSP/SMU/MES/MEC kill switches). Serial: `autostart begins (embedded firmware: IPD
+  464 B, sOS 248496 B, IP 2083496 B)`, then `autostart sOS: state 8, 0 register writes`
+  (sOS already alive from 20:33) and `STOPPED reached 0/8: sOS=8/0w`; ioreg
+  `Navi33,Autostart` carries the same line. So the boot thread, gates, embedded
+  firmware and report work, and a card that is not fresh is refused with no write.
+  The real test needs a full power-off and a fresh headless boot.
 
 ## Adding a register read
 
