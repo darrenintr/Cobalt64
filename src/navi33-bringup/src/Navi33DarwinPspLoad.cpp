@@ -84,6 +84,8 @@ n33_psp_load_result execute(IOPCIDevice *pci,const Request &req) {
     if(req.mode==N33_SMU_ENABLE_PLAN || req.mode==N33_SMU_ENABLE_RUN ||
        req.mode==N33_SMU_SCPM_PLAN || req.mode==N33_SMU_SCPM_RUN)
         return executeSmu(pci,req);
+    if(req.mode==N33_MES_START_PLAN || req.mode==N33_MES_START_RUN)
+        return executeMes(pci,req);
     if(!pci || (req.mode!=N33_PSP_LOAD_PLAN && req.mode!=N33_PSP_LOAD_RUN) ||
        !req.attempted)
         return pl::blank(N33_PSPL_BAD_REQUEST);

@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 14u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result */
+#define N33_ABI_VERSION 15u /* 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -213,6 +213,12 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
 #define N33_SMU_SCPM_PLAN 9u
 #define N33_SMU_SCPM_RUN 10u
 #define N33_SMU_MARKER 0x534d5531u
+/* MES start (after RLC bootload complete): mes_v11_0_enable(true) and the
+ * per-pipe firmware version readback. PLAN reads only; RUN needs
+ * navi33-mes-start=1 with no navi33-mes-off or navi33-psp-off, once per boot. */
+#define N33_MES_START_PLAN 11u
+#define N33_MES_START_RUN 12u
+#define N33_MES_MARKER 0x4d455331u
 #define N33_PSP_FW_RECORDS 27u
 #define N33_PSP_FW_STOP_AUTOLOAD 28u
 #define N33_PSP_LOAD_MAX_INPUT (4u*1024u*1024u)
@@ -237,7 +243,10 @@ enum n33_psp_load_state {
   N33_PSPL_AUTOLOAD_DISABLED=31, N33_PSPL_FW_DONE=32,
   N33_PSPL_SMU_NOT_READY=33, N33_PSPL_SMU_BAD_PRECONDITION=34,
   N33_PSPL_SMU_WRITE_FAILED=35, N33_PSPL_SMU_TIMEOUT=36,
-  N33_PSPL_SMU_REJECTED=37, N33_PSPL_SMU_ACKED=38, N33_PSPL_SMU_GC_READY=39
+  N33_PSPL_SMU_REJECTED=37, N33_PSPL_SMU_ACKED=38, N33_PSPL_SMU_GC_READY=39,
+  /* MES start */
+  N33_PSPL_MES_BAD_PRECONDITION=40, N33_PSPL_MES_WRITE_FAILED=41,
+  N33_PSPL_MES_NO_VERSION=42, N33_PSPL_MES_RUNNING=43
 };
 /* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
 enum n33_psp_load_step {
@@ -284,9 +293,13 @@ struct n33_psp_load_result {
   uint32_t smu_core_after, smu_reset_after, smu_rlc_after;
   /* Replies are in send order. enable_only=1: only slot 0 is used, masks zero. */
   uint32_t smu_last_message, smu_last_argument, smu_responses[3], smu_enable_only;
+  /* MES start: zero for the other modes. version/pc are per pipe (0 sched, 1 KIQ),
+   * read under GRBM me 3 after the enable; samples counts the readback rounds. */
+  uint32_t mes_marker, mes_cntl_before, mes_cntl_after, mes_grbm_before;
+  uint32_t mes_rlc, mes_cp_stat, mes_version[2], mes_pc[2], mes_samples, mes_reserved;
 };
-N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==336,
-                  "N33 PSP load result must be 336 bytes");
+N33_STATIC_ASSERT(sizeof(struct n33_psp_load_result)==384,
+                  "N33 PSP load result must be 384 bytes");
 #define N33_PSPR_FLAG_RESUMED (1u<<0) /* ring already existed, not recreated */
 #define N33_PSPR_FLAG_RING_CREATED (1u<<1)
 #define N33_PSPR_FLAG_TOC_LOADED (1u<<2)

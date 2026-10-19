@@ -462,3 +462,26 @@ assert 'const unsigned first=enableOnly ? 2u : 0u;' in smuh
 for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert '--smu-scpm-enable' not in code and 'N33_SMU_SCPM_RUN' not in code
+
+# MES start: own gate, own latch, four-register allowlist enforced by the writer itself.
+mes=(root/'src/Navi33DarwinMes.cpp').read_text()
+mesh=(root/'src/Navi33Gfx11MesStart.h').read_text()
+assert 'if(mesMode)req.attempted=&mesAttempted_;' in load_fn
+assert 'if(mesMode)req.writeGate=!killed && !mesKilled &&' in load_fn
+assert 'PE_parse_boot_argn("navi33-mes-start"' in load_fn
+assert 'PE_parse_boot_argn("navi33-mes-off"' in load_fn
+assert 'bool mesAttempted_ = false;' in (root/'src/Navi33Probe.hpp').read_text()
+assert 'return executeMes(pci,req);' in writer
+assert 'if(!mes_start::allowed(io->regs,off)' in mes
+assert 'off==r.grbm || off==r.cntl || off==r.start || off==r.startHi' in mesh
+assert 'run ? write32 : nullptr' in mes
+assert 'Navi33DarwinMes.o' in makefile
+for forbidden in ('BaseAddress0','withSubRange','->configWrite','setMemoryEnable',
+                  'setBusMasterEnable','setPowerState','WREG32(','vramWrite','vramZero'):
+    assert forbidden not in mes, f'MES stage gained {forbidden}'
+for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory'):
+    assert forbidden not in mesh
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert '--mes-start' not in code and 'N33_MES_START_RUN' not in code
+print('Navi33 MES start allowlist, independent gate and plan boundary: passed')

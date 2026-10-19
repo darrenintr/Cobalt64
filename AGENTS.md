@@ -78,6 +78,13 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      This approval is consumed; further attempts require renewed approval
      and full power-off. The follow-up preflight still reports reason 11
      (GPU memory/queue ownership not established), and Metal remains disabled.
+   - The MES start stage (kext 0.0.22, ABI 15; built 2026-10-19, **not yet
+     approved to run**) may write only GC `GRBM_GFX_CNTL`, `CP_MES_CNTL` and
+     `CP_MES_PRGRM_CNTR_START/_HI`: upstream `mes_v11_0_enable(true)` plus the
+     firmware-version readback, 12 writes on success, 18 at most. It needs
+     `navi33-mes-start=1`, is killed by `navi33-mes-off` or `navi33-psp-off`, and
+     has its own one-shot latch. Needs RLC bootload complete (after the SCPM
+     stage). See `DMA_QUEUE_BRINGUP.md` G33.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -340,6 +347,10 @@ output survives a hang and Linux can inspect a stuck guest.
   `vm/scpm-sequence.sh` (user runs both with `!`; about 6 minutes in all).
 - **Kext:** 0.0.21 (`48C9C24E-…`, cache `artifact-0.0.21`) adds read-only
   Queue1/hub/SDMA windows. Branch `feature/navi33-dma-backend`, all pushed.
+- **MES start stage built (2026-10-19, kext 0.0.22, ABI 15, G33):** the first
+  compute-path writer. Needs the user's explicit yes before it runs on the card,
+  then: CI artifact, sOS -> SCPM sequence if the card was powered off, `vm/stage.sh
+  mes "--mes-start" "--mes-plan" "--mes-start"` (user runs it with `!`).
 - **Next step, approved but blocked:** the SDMA0 Queue0 ring-test writer for the
   G30 plan (`src/Navi33Sdma6RingTest.h`: 23 setup + 2 WPTR + 3 park writes, SDMA0
   registers only, VRAM window at 248 MiB). Claude's attempts to write that kext

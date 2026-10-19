@@ -848,3 +848,35 @@ queue that executes PM4 (MES map or the KIQ path, offline in G18-G25), the
 shader code and kernargs copied into VRAM, and the same VMID0 physical-access
 question G30 tests for SDMA. Each of those is a later write stage with its own
 approval.
+
+## Stage G33: MES start, the first compute-path write stage (kext 0.0.22, ABI 15, not run)
+
+`src/Navi33Gfx11MesStart.h` (runner, callbacks only), `src/Navi33DarwinMes.cpp`
+(BAR5 writer), tested by `tests/test_gfx11_mes_start.cpp`. Upstream:
+`mes_v11_0_kiq_hw_init()` -> `mes_v11_0_enable(adev, true)` ->
+`mes_v11_0_get_fw_version()`, `soc21_grbm_select()`; offsets from
+`gc_11_0_0_offset.h`/`_sh_mask.h`, all fetched from torvalds/linux on 2026-10-19.
+
+- Writes come from the G20 planner (`buildEnable`), with the GRBM selects upstream
+  makes around them: `CP_MES_CNTL` reset (RMW, pipes 0+1), select me 3 pipe 0,
+  `CP_MES_PRGRM_CNTR_START/_HI` = `0xfc001400`/`0x3fffffff`, the same for pipe 1,
+  deselect, `CP_MES_CNTL` = `0x0c000000` (pipes 0+1 active, HALT clear). 9 writes.
+- Then the firmware-version readback Linux does: per pipe, select and read
+  `CP_MES_GP3_LO` and `CP_MES_INSTR_PNTR`, deselect (3 writes per round). Rounds at
+  1, 100 and 1000 ms, stop at the first where both versions are non-zero. 12
+  writes on first-round success, 18 at most. amdgpu reported MES `0x92`, MES_KIQ
+  `0x113` on this card (reference boot); the raw GP3 value may carry more bits.
+- Allowlist (enforced in the runner and again in the kext write callback):
+  `GRBM_GFX_CNTL` (GC seg1 0x0900), `CP_MES_CNTL` (0x2807), `CP_MES_PRGRM_CNTR_START`
+  (0x2800), `_HI` (0x289d). No VRAM, no doorbell, no queue, no interrupt.
+- Preconditions (read-only, also the `--mes-plan` output): sOS alive, RLC bootload
+  complete (bit 31), `GRBM_GFX_CNTL` 0, no MES pipe active.
+- Left out: the GUI-idle interrupt and doorbell range that `gfx_v11_0_cp_resume()`
+  sets first (nothing here uses either), `kiq_setting`, the KIQ-pipe queue and the
+  scheduler ring (next stages). On failure it never halts or retries; every stop
+  deselects GRBM. Recovery is a full power-off.
+- Gate `navi33-mes-start=1`, killed by `navi33-mes-off` or `navi33-psp-off`, own
+  one-shot latch. `vm/make-opencore.sh --mes-start`; tool `n33psp --mes-plan` /
+  `--mes-start ... --i-have-ssh`. Three mutants abort the test (no active-pipe
+  check, a readback failure that keeps the select, a plan that writes).
+
