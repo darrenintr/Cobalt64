@@ -1930,6 +1930,19 @@ parser got two of them wrong:
     unaffected (MMHUB untouched). Next in B2: a real VRAM allocator and per-VMID
     multi-level tables; the gradient dispatched from a VMID 1 queue.
 
+- **2026-10-20 07:52, kext 0.0.26 in the VM: autostart again 8/8 on a fresh card.** Run
+  `runs/20261020-075201`, headless boot `ec268858-…` (up since 07:38), disk built with
+  `--autostart` (fb kill switch still set). ioreg `Navi33,Autostart` = `DONE reached 8/8`,
+  the same per-stage states and write counts as 2026-10-19 22:03. Guest: SIP custom
+  (`csr-active-config` 0x67, kext signing and filesystem protection off), kext user
+  consent ENABLED, an Aux KC already exists. So an IOGraphicsFamily kext (Navi33GOPFB,
+  which OpenCore cannot inject) needs one "Allow" click in System Settings; the guest has
+  no screen (`-vga none`), so that click needs a `run-vm.sh --no-gpu` boot over VNC.
+- **2026-10-20, G37 (milestone 1 of the GUI goal) built:** Navi33GOPFB 0.0.2 (CI run
+  39344449339) falls back to the host console (`navi33-hostfb-*` incl. new `-width/-height/-row`)
+  when the guest has no GOP; `vm/make-opencore.sh --fb`, `vm/install-gopfb.sh`,
+  `vm/fb-trial.sh`. Not yet loaded: waits for the Allow click.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
