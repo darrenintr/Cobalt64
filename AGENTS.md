@@ -1703,6 +1703,9 @@ parser got two of them wrong:
   all SDMA0 registers (table in `DMA_QUEUE_BRINGUP.md` G30). It replaces the
   VMID1/Queue1 plan as the first step, so it needs the user's approval of
   that exact list before a writer is built. No hardware access in this change.
+  - **Approved by the user on 2026-10-19 ("Yes please go")**: this exact write
+    list (23 setup + 2 WPTR + 3 park, SDMA0 only, VRAM window at 248 MiB). The
+    gated kext writer is **not built yet**; nothing has run on the card.
 
 ## Adding a register read
 
