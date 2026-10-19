@@ -1804,7 +1804,25 @@ parser got two of them wrong:
     (the GPU wrote VRAM through VMID0), RPTR 16 dwords (the whole ring consumed).
   - This confirms on hardware the G30 hypothesis: VMID0 with GFXHUB L1 TLB mode 0
     and context0 disabled reaches VRAM physically, both reads and writes. The queue
-    stays active until the next power-off. **Next:** G35, the gradient dispatch. **Next:** the MES KIQ-pipe queue (`kiq_setting`,
+    stays active until the next power-off. **Next:** G35, the gradient dispatch.
+- **2026-10-19 21:43, kext 0.0.24 (ABI 17, UUID `6359C73D-059F-35F1-BF0D-47F29CF2BB7A`,
+  CI run 39262400605) in the VM: THE FIRST GPU-CALCULATED PIXELS. G35 gradient,
+  state 54 (on screen).** Run `runs/20261019-214329` (`gradient-plan.txt`,
+  `gradient-run.txt`, `serial.log`), same host boot `d8049a28-…`, on the G34 queue.
+  The agent ran it (the permission check allowed this stage). A user re-run of
+  the MEC stage at the same time stopped before booting (artifact 0.0.24 not yet
+  cached); nothing ran.
+  - Plan: state 14, shader pinned, `SH_MEM_CONFIG` VMID0 `0x0000c000` before
+    (64-bit, aligned mode 0, prefetch 3), G34 fence present, screen 1024x768.
+  - Run: **5/5 steps, 9 register writes, 1 ms, no WPTR fallback** (the one-shot
+    `CP_PQ_WPTR_POLL_CNTL1` re-trigger works for later submissions). RPTR 16 -> 144.
+  - **64x64 test image: fence `0x0c0b1602`, 0 of 4096 pixels wrong** against the CPU
+    reference (pixel (1,1) `0x00030307` = r 3, g 3, b 7, as `gradientPixel()`).
+  - **Screen: fence `0x0c0b1603`, 0 of 64 samples wrong:** the full 1024x768
+    gradient was written by the shader into the console framebuffer at VRAM 0.
+  - So gfx1102 waves launch and run our code object in VMID0 with physical VRAM
+    access, the CU masks from the ring and `DEFAULT_SH_MEM_CONFIG`. Phase A of the
+    road to compute is done. Preflight still reason 11 (by design, no caps changed). **Next:** the MES KIQ-pipe queue (`kiq_setting`,
     `mes_v11_0_queue_init` with the G25 MQD in VRAM), then the scheduler ring and
     `SET_HW_RESOURCES`; each is a new write stage.
 
