@@ -1790,7 +1790,21 @@ parser got two of them wrong:
     So both MES pipes execute the PSP-loaded firmware. `CP_MES_INSTR_PNTR` pipe 0
     `0x74fc`, pipe 1 `0x5264` (non-zero, firmware executing).
   - Preflight still reason 11; nothing else changed. MES stays running until the
-    next power-off. **Next:** the MES KIQ-pipe queue (`kiq_setting`,
+    next power-off.
+- **2026-10-19 21:32, kext 0.0.23 (ABI 16, UUID `04607FED-D921-34A5-8B7E-104779FC236A`,
+  CI run 39260465303) in the VM: the first compute queue ran. G34 MEC queue,
+  state 48.** Run `runs/20261019-213135` (`mec-plan.txt`, `mec-run.txt`,
+  `serial.log`), same host boot `d8049a28-…` as the MES run; the user ran it from
+  the host shell.
+  - Plan: state 14, `CP_MEC_RS64_CNTL` `0x400f0000` (halted, pipes in reset), HQD
+    me1 pipe0 queue0 inactive, window MC `0x80_0FA0_0000`.
+  - Run: **5/5 steps, 84 writes, 2 ms.** `CP_MEC_RS64_CNTL` -> `0x3c000000`, HQD
+    active 0 -> 1, **`SCRATCH_REG0` `0xdeadbeef`** (Linux's compute ring test: the
+    MEC fetched the ring from VRAM and executed it), **fence `0x0c0b1601` in VRAM**
+    (the GPU wrote VRAM through VMID0), RPTR 16 dwords (the whole ring consumed).
+  - This confirms on hardware the G30 hypothesis: VMID0 with GFXHUB L1 TLB mode 0
+    and context0 disabled reaches VRAM physically, both reads and writes. The queue
+    stays active until the next power-off. **Next:** G35, the gradient dispatch. **Next:** the MES KIQ-pipe queue (`kiq_setting`,
     `mes_v11_0_queue_init` with the G25 MQD in VRAM), then the scheduler ring and
     `SET_HW_RESOURCES`; each is a new write stage.
 
