@@ -28,7 +28,7 @@ die() { echo "make-opencore: $*" >&2; exit 1; }
 [ $# -ge 1 ] || die "usage: $0 ARTIFACT_DIR [--oc OPENCORE_RELEASE_DIR] [--hostfb FILE] [--dma-preflight] [--output FILE.qcow2] [--psp-load]"
 ART="$(cd -- "$1" && pwd)"; shift
 PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; SMU_SCPM=0; MES_START=0; MEC_QUEUE=0; GRADIENT=0; AUTOSTART=0; VM_QUEUE=0
-OWNER_PROBE=0; OWNER_RECOVERY=0; OWNER_HOLD=0; OWNER_PHYSICAL=0; DMA_PREFLIGHT=0; OCREL=""; HOSTFB=""; OUT_NAME="OpenCore-navi33.qcow2"
+FB=0; OWNER_PROBE=0; OWNER_RECOVERY=0; OWNER_HOLD=0; OWNER_PHYSICAL=0; DMA_PREFLIGHT=0; OCREL=""; HOSTFB=""; OUT_NAME="OpenCore-navi33.qcow2"
 while [ $# -gt 0 ]; do
   case "$1" in
     --smu-enable) SMU_ENABLE=1 ;;
@@ -38,6 +38,7 @@ while [ $# -gt 0 ]; do
     --gradient) GRADIENT=1 ;;
     --vm-queue) VM_QUEUE=1 ;;   # kext 0.0.26+: VMID1 translated queue (G36)
     --autostart) AUTOSTART=1 ;;   # kext 0.0.25+: the whole bring-up from start()
+    --fb) FB=1 ;;   # G37: Navi33GOPFB (Aux KC) adopts the host console; needs --hostfb
     --psp-load) PSP_LOAD=1 ;;
     --psp-ring) PSP_RING=1 ;;
     --psp-fw) PSP_FW=1 ;;
@@ -59,6 +60,7 @@ done
   die "--output must be a plain .qcow2 filename"
 [ -z "$OCREL" ] || [ -f "$OCREL/X64/EFI/OC/OpenCore.efi" ] || die "no X64/EFI/OC/OpenCore.efi in $OCREL"
 [ -z "$HOSTFB" ] || [ -r "$HOSTFB" ] || die "cannot read $HOSTFB"
+[ "$FB" = 0 ] || [ -n "$HOSTFB" ] || die "--fb needs --hostfb (the guest has no GOP console)"
 [ $((PSP_LOAD + PSP_RING + PSP_FW + SMU_ENABLE + MES_START + MEC_QUEUE + GRADIENT + AUTOSTART + VM_QUEUE)) -le 1 ] || die "open one write gate at a time: --psp-load, --psp-ring, --psp-fw, --smu-enable, --mes-start, --mec-queue, --gradient, --autostart or --vm-queue"
 [ "$PSP_AUTOLOAD" = 0 ] || [ "$PSP_FW" = 1 ] || die "--psp-autoload (AUTOLOAD_RLC) only together with --psp-fw"
 KEXT="$ART/EFI/OC/Kexts/Navi33Probe.kext"
@@ -92,7 +94,7 @@ if [ -n "$OCREL" ]; then
   OCVER="$(basename "$OCREL"), OpenCore.efi sha256 $(sha256sum "$OCREL/X64/EFI/OC/OpenCore.efi" | cut -c1-16)…"
 fi
 python3 -I - "$WORK/config.plist" "$PSP_LOAD" "$KEXT/Contents/MacOS/Navi33Probe" \
-  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" "$OWNER_HOLD" "$OWNER_PHYSICAL" "$MES_START" "$MEC_QUEUE" "$GRADIENT" "$AUTOSTART" "$VM_QUEUE" <<'EOF'
+  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" "$OWNER_HOLD" "$OWNER_PHYSICAL" "$MES_START" "$MEC_QUEUE" "$GRADIENT" "$AUTOSTART" "$VM_QUEUE" "$FB" <<'EOF'
 import plistlib,struct,sys,uuid
 path,psp_load,binary,manifest,ocver,hostfb=sys.argv[1],sys.argv[2]=="1",sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6]
 psp_ring=sys.argv[7]=="1"
@@ -110,6 +112,7 @@ mec_queue=len(sys.argv)>18 and sys.argv[18]=="1"
 gradient=len(sys.argv)>19 and sys.argv[19]=="1"
 autostart=len(sys.argv)>20 and sys.argv[20]=="1"
 vm_queue=len(sys.argv)>21 and sys.argv[21]=="1"
+fbon=len(sys.argv)>22 and sys.argv[22]=="1"
 c=plistlib.load(open(path,"rb"))
 add=[k for k in c["Kernel"]["Add"] if k.get("BundlePath")!="Navi33Probe.kext"]
 add.append({"Arch":"x86_64","BundlePath":"Navi33Probe.kext",
@@ -124,7 +127,7 @@ args=[a for a in nv.get("boot-args","").split()
       if not a.startswith(("navi33-","debug=","serial=","msgbuf=")) and a!="-v"]
 args+=["-v","debug=0x108","serial=3","msgbuf=1048576",
        "navi33-probe=1","navi33-client=1","navi33-hw-probe=1",
-       "navi33-dma-stage-off=1","navi33-fb-off=1",
+       "navi33-dma-stage-off=1","navi33-fb=1" if fbon else "navi33-fb-off=1",
        "navi33-sdma-off=1",
        "navi33-psp-load=1" if psp_load else "navi33-psp-ring=1" if psp_ring else
        "navi33-psp-fw=1" if psp_fw else "navi33-smu-enable=1" if smu_enable else
@@ -151,6 +154,12 @@ if hostfb:
     off,size=int(fb["offset"],16),int(fb["bytes"],16)
     if off&0xfff or not size: sys.exit(f"bad host console in {hostfb}")
     args+=[f"navi33-hostfb-offset={off:#x}",f"navi33-hostfb-bytes={size:#x}"]
+    if fbon:
+        import re
+        m=re.match(r"(\d+)x(\d+)x32$",fb.get("geometry","").split()[0] if fb.get("geometry") else "")
+        r=re.search(r"line=(\d+)",fb.get("geometry",""))
+        if not m or not r: sys.exit(f"--fb: no 32-bpp geometry/line in {hostfb}")
+        args+=[f"navi33-hostfb-width={m[1]}",f"navi33-hostfb-height={m[2]}",f"navi33-hostfb-row={r[1]}"]
 nv["boot-args"]=" ".join(dict.fromkeys(args))
 if "boot-args" not in c["NVRAM"]["Delete"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]:
     sys.exit("config does not delete boot-args, so NVRAM would override them")

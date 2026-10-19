@@ -48,6 +48,7 @@ public:
                                         uintptr_t value) override;
 private:
     bool captureConsole();
+    bool hostConsole(navi33fb::Layout *out);
     bool readInjectedEDID();
     bool drawTestPattern();
     void initializePowerManagement();

@@ -375,6 +375,17 @@ output survives a hang and Linux can inspect a stuck guest.
   display 2-4 weeks, RADV/Metal 1-3 months, WindowServer unknown (private Apple
   interfaces). Cheapest next step if resumed: check how far the Navi48 driver's
   Metal path got (did WindowServer ever use it?) before investing months.
+- **Answered 2026-10-20 (source reading only, no hardware):** yes. `README.md`
+  and `CHANGES.md` (kext 0.0.664, Metal bundle 20) report WindowServer's Metal
+  compositor on three displays and several Apple apps through the Navi48 stack.
+  That stack is its own `IOAccelerator` (`tools/native/navi48accel`, linked against
+  IOAcceleratorFamily2), a Metal plugin bundle (`navi48metal`) on RADV with a
+  Darwin backend (`mesa-patches/`, nine patches), and the "N48N" user client
+  (selectors 0-8: BO create/free, GEM VA, ctx, submit, wait; 9-26: scanout and
+  host import). The Mesa backend answers device queries from a canned `gfx1201`
+  table (patch 0001). RADV itself supports gfx1102, so the likely Navi33 route is
+  an N48N-compatible core in the Navi33 kext plus a gfx1102 canned table, not a
+  new Metal stack. Not verified: how much of the bundle and patches is gfx12-specific.
 
 ## Resume notes from earlier on 2026-10-19 (22:05)
 

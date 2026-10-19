@@ -30,4 +30,17 @@ constexpr Ownership checkBar0(const Layout &layout, uint64_t barPhys, uint64_t b
 constexpr bool ownedByBar0(const Ownership &ownership) {
     return ownership.status == OwnershipError::Ok;
 }
+
+// VM path (G37): the guest has no GOP, so the console is the one the host's
+// firmware left in BAR0 (vm/prepare-card.sh records it in hostfb.txt). The
+// result still has to pass checkBar0 against the guest's BAR0 resource.
+constexpr Layout hostConsole(uint64_t barPhys, uint64_t barLength, uint64_t offset,
+                             uint64_t bytes, uint32_t width, uint32_t height,
+                             uint32_t rowBytes) {
+    const bool bad = !barPhys || !barLength || (offset & 0xfffull) || !bytes ||
+                     offset > barLength || bytes > barLength - offset ||
+                     barPhys > UINT64_MAX - barLength;
+    return bad ? Layout{LayoutError::NullFramebuffer, 0, 0, width, height, rowBytes, 32u, 32u}
+               : inspectGop(barPhys + offset, bytes, width, height, rowBytes, 32u);
+}
 } // namespace navi33fb

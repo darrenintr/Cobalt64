@@ -36,20 +36,41 @@ IOService *Navi33GOPFB::probe(IOService *provider, SInt32 *score) {
     return this;
 }
 
+// G37: the guest has no GOP; vm/make-opencore.sh --fb passes the host's console.
+bool Navi33GOPFB::hostConsole(navi33fb::Layout *out) {
+    uint64_t off = 0, bytes = 0;
+    uint32_t w = 0, h = 0, row = 0;
+    if (!PE_parse_boot_argn("navi33-hostfb-offset", &off, sizeof(off)) ||
+        !PE_parse_boot_argn("navi33-hostfb-bytes", &bytes, sizeof(bytes)) ||
+        !PE_parse_boot_argn("navi33-hostfb-width", &w, sizeof(w)) ||
+        !PE_parse_boot_argn("navi33-hostfb-height", &h, sizeof(h)) ||
+        !PE_parse_boot_argn("navi33-hostfb-row", &row, sizeof(row)) || !pci_)
+        return false;
+    IODeviceMemory *bar0 = pci_->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+    if (!bar0) return false;
+    *out = navi33fb::hostConsole(bar0->getPhysicalAddress(), bar0->getLength(), off, bytes, w, h, row);
+    N33FB_LOG("host console BAR0+0x%llx, %llu B, %ux%u, row %u: %s",
+              static_cast<unsigned long long>(off), static_cast<unsigned long long>(bytes),
+              w, h, row, navi33fb::valid(*out) ? "ok" : "refused");
+    return navi33fb::valid(*out);
+}
+
 bool Navi33GOPFB::captureConsole() {
     IOPlatformExpert *platform = getPlatform();
     if (!platform) return false;
     PE_Video video {};
-    if (platform->getConsoleInfo(&video) != kIOReturnSuccess) {
-        N33FB_LOG("getConsoleInfo refused: no usable GOP handoff");
-        return false;
-    }
+    const bool gop = platform->getConsoleInfo(&video) == kIOReturnSuccess && video.v_baseAddr;
     auto d = navi33fb::inspectGop(static_cast<uint64_t>(video.v_baseAddr),
                                  static_cast<uint64_t>(video.v_length),
                                  static_cast<uint32_t>(video.v_width),
                                  static_cast<uint32_t>(video.v_height),
                                  static_cast<uint32_t>(video.v_rowBytes),
                                  static_cast<uint32_t>(video.v_depth));
+    const bool host = !gop && hostConsole(&d);   // a boot console always wins
+    if (!gop && !host) {
+        N33FB_LOG("no GOP console and no valid host console");
+        return false;
+    }
     if (!navi33fb::valid(d)) {
         N33FB_LOG("GOP geometry refused: reason %u, raw base 0x%llx, %ux%u, row %u, depth %u",
                   static_cast<unsigned>(d.error),
@@ -74,7 +95,7 @@ bool Navi33GOPFB::captureConsole() {
     }
 
     console_ = d;
-    setProperty("Navi33FB,Stage", "GOP firmware scanout only");
+    setProperty("Navi33FB,Stage", host ? "host console scanout (VM)" : "GOP firmware scanout only");
     setProperty("Navi33FB,BAR0Base", barBase, 64);
     setProperty("Navi33FB,BAR0Bytes", barSize, 64);
     setProperty("Navi33FB,ScanoutBAR0Offset", ownership.offset, 64);

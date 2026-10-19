@@ -53,6 +53,17 @@ int main() {
     assert(!ownedByBar0(checkBar0(inspectGop(0, 0, 1920, 1080, 7680, 32),
                                    0x840000000ull, 256ull << 20)));
     assert(ownedByBar0(checkBar0(normal, 0x840000000ull, 0x840000ull)));
+    // G37 host console: the VM's 1024x768 record at BAR0+0, 3 MiB.
+    using navi33fb::hostConsole;
+    const auto h=hostConsole(0xa0000000ull,256ull<<20,0,0x300000,1024,768,4096);
+    assert(valid(h)&&h.physicalBase==0xa0000000ull&&h.length==0x300000&&h.rowBytes==4096);
+    assert(ownedByBar0(checkBar0(h,0xa0000000ull,256ull<<20)));
+    assert(!valid(hostConsole(0xa0000000ull,256ull<<20,0x800,0x300000,1024,768,4096)));
+    assert(!valid(hostConsole(0xa0000000ull,256ull<<20,0,0x2ff000,1024,768,4096)));
+    assert(!valid(hostConsole(0xa0000000ull,0x200000,0,0x300000,1024,768,4096)));
+    assert(!valid(hostConsole(0,256ull<<20,0,0x300000,1024,768,4096)));
+    assert(!valid(hostConsole(0xa0000000ull,256ull<<20,0,0x300000,1024,768,2048)));
+    assert(!valid(hostConsole(0xa0000000ull,256ull<<20,(256ull<<20)-0x1000,0x300000,1024,768,4096)));
     const auto defaultChannels=navi33fb::channelMapping(0);
     assert(defaultChannels.red==2&&defaultChannels.green==1&&defaultChannels.blue==0);
     std::puts("Navi33 GOP geometry / BAR0 ownership / pitch / bounds / pixel masks: PASS (CPU-only)");
