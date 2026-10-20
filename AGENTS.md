@@ -136,7 +136,7 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      drain-dequeues client HQDs an earlier boot left active (CP_HQD_DEQUEUE_REQUEST).
      Since 0.0.44 clients use **VMIDs 8..13** (contexts 8..13, SH_MEM under VMID k). Since 0.0.47
      the client hub setup never sets `GCVM_L2_CNTL2` INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE
-     and clears them at start if found set (they kept the hub L2 busy, findings 13:58); TLBs are
+     and clears them at start if found set (they kept the hub L2 busy, findings 13:58); since 0.0.55 engine 17's address range is set to full (LO 0xffffffff, HI 0x1f). TLBs are
      flushed per VMID with engine 17 (MMIO REQ, wait for ACK, fail closed) at open and unmap.
      (0.0.42..0.0.46 tried engine ranges, CP flushes on engines 7..12, and L2_CNTL2 alone.)
      Since 0.0.49 (G40) service start also brings up the **gfx pipe**: CP_ME_CNTL (PFP/ME halt,
@@ -412,7 +412,34 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (state at 2026-10-20 14:20): ACTIVE, waiting for one power-off
+## Resume here (2026-10-20 15:50): cold run completed, graphics still blocked
+
+- User confirmed full power-off and requested continued work toward a **GPU-rendered
+  macOS desktop, wallpaper and apps**. Framebuffer output is not the goal.
+- Fresh headless host boot ID `e04d7ebd-c5ad-4739-be64-daedfc247494`, GPU on VFIO;
+  `vm/cold-run.sh` booted artifact 0.0.54 in `runs/20261020-154411`. Loaded UUID
+  `68CA4571-9F94-3AC6-90ED-861FA0B060C7` matches the artifact. VM left running.
+- Autostart DONE 8/8; L2_CNTL2 and L2_STATUS both 0->0, engine 17 ACKs, no misses.
+  Client 1 exact; clients 2..9 and the repeat test fail with all-zero pixels after
+  successful fences. N48N gradient exact. Gfx state 6, WPTR 0x3c8, RPTR/fence 0.
+- **RADV Vulkan compute proven twice:** `cold-vkfill-retry.txt` and
+  `cold-vkfill-repeat.txt`: 65,536 words, zero wrong, VKFILL OK. The original script
+  omitted `vk_video` headers and silently skipped compilation; fixed in this change.
+- Read-only QMP register capture `inv17-range.txt`: engine 17 address range **0/0**.
+  Current 0.0.54 code dropped upstream's full-range programming; an ACK alone therefore
+  does not establish client-address invalidation. 0.0.55 restores only engine 17's
+  LO/HI range (0xffffffff/0x1f), as previously exercised in 0.0.42, with host regression
+  coverage. Build/live retest pending at this note.
+- A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
+  (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
+  as a clean cold run. Preserve that memory until dequeue/recovery is verified.
+- Safe gfx reads: PFP/ME RS64 instruction pointers nonzero, RB0 base correct,
+  CP_RB0_WPTR/RPTR 0, GFX_HQD_ACTIVE 1 but MAPPED 0 (`gfx-safe-reads.txt`). No new
+  gfx-HQD configuration writes or accelerator installation performed. Metal not proven.
+- Guest auxiliary build staging remains `/Users/darren/auxbuild`; preserve it. Previous
+  handoff found no built accelerator kext, only Navi33GOPFB installed.
+
+## Earlier resume notes (state at 2026-10-20 14:20)
 
 - **The user's goal (2026-10-20): acceleration; "just do them all" — work on without asking,
   notify at milestones.** Done today: first display driver (Navi33GOPFB, login screen on the
@@ -2213,6 +2240,19 @@ parser got two of them wrong:
     power cycle: the hub L2 has been busy with the never-finished all-L1 invalidation, and the gfx
     CP's L1 (never started before) is the likeliest client that never answered it. The cold run
     tests flush, gfx ring and RADV together.
+
+- **2026-10-20 15:44-15:50, kext 0.0.54 cold run**, host boot `e04d7ebd-…`,
+  `runs/20261020-154411`, loaded UUID `68CA4571-9F94-3AC6-90ED-861FA0B060C7`.
+  Autostart 8/8; L2 idle and TLB ACKs with zero misses, unlike the previous busy-L2
+  power cycle. Reused N33N clients still write zero images (first exact, later 4096
+  wrong); N48N gradient exact. RADV compiled and ran the Vulkan shader twice, each
+  65,536 words exact. Gfx ring state 6, RPTR/fence zero even on the cold hub, so the
+  earlier busy-L2 state is not a sufficient explanation for G40's failure.
+  Engine17 ADDR_RANGE_LO/HI read **0/0**, unlike Linux's 0xffffffff/0x1f; range setup
+  was dropped from the current driver. ACK count is insufficient evidence for VMID
+  reuse with that range. A temporary ACQUIRE_MEM-in-IB experiment timed out on VMID8
+  and was reverted; no acceleration or Metal publication was enabled. Guest SSH and
+  WindowServer survived; framebuffer output remains separate from GPU rendering.
 
 ## Adding a register read
 

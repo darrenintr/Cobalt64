@@ -79,6 +79,8 @@ constexpr uint32_t kDequeueRequest=0x1fc1u;
 // A client's VMID is flushed before its context is used (open) and after an unmap; a miss
 // quarantines (fail closed).
 constexpr uint32_t kInvReq17=0x16bcu, kInvAck17=0x16ceu, kL2Status=0x15bfu, kL2Busy=1u;
+// gfxhub_v3_0_program_invalidation, gc_11_0_0_offset.h: engine 17 only.
+constexpr uint32_t kInvRangeLo17=0x16f1u, kInvRangeHi17=0x16f2u;
 constexpr uint32_t kL2Cntl2Invalidate=3u;            // INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE
 // gfxhub_v3_0_get_invalidate_req(vmid, 0): PER_VMID bit, FLUSH_TYPE 0, L2 PTES/PDE0/1/2, L1 PTES.
 constexpr uint32_t invalidateReq(uint32_t vmid) { return (1u<<vmid)|(1u<<19)|(1u<<20)|(1u<<21)|(1u<<22)|(1u<<23); }
@@ -117,7 +119,7 @@ enum class Code : uint8_t {
 struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
-    uint64_t dequeue=0, invReq=0, invAck=0, l2Status=0;
+    uint64_t dequeue=0, invReq=0, invAck=0, invRangeLo=0, invRangeHi=0, l2Status=0;
     gfx_ring::Regs gfx{};           // the kernel's gfx ring 0 (G40)
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
     uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0, pqStatus=0;
@@ -138,7 +140,7 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
     }
     r.gfx=gfx_ring::resolve(d,bytes);
     if(!r.gfx.valid || !one(kDequeueRequest,r.dequeue) || !one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) ||
-       !one(kL2Status,r.l2Status) ||
+       !one(kInvRangeLo17,r.invRangeLo) || !one(kInvRangeHi17,r.invRangeHi) || !one(kL2Status,r.l2Status) ||
        !one(kGbAddrConfig,r.gbAddrConfig) || !one(kMecDbLower,r.mecDbLower) || !one(kMecDbUpper,r.mecDbUpper) ||
        !one(kCpPqStatus,r.pqStatus))return r;
     IPEntry nbif{};
@@ -147,14 +149,14 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
     r.nbioAperEn=(nbif.bases[2]+kNbioAperEn)*4u;
     r.valid=true;return r;
 }
-// Writable registers: the GFXHUB words, invalidation engine 17's request, the gfx ring's CP registers, contexts 8..13, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
+// Writable registers: the GFXHUB words, invalidation engine 17's request and address range, the gfx ring's CP registers, contexts 8..13, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
 // (CP_HQD_DEQUEUE_REQUEST lies inside it). Never the MEC program counters/control,
 // SCRATCH_REG0, context 0/1, the fault registers or anything outside GC.
 inline bool allowed(const Regs &r,uint64_t off) {
     if(!r.valid || off==r.g.v.q.scratch || off==r.g.v.ctx || off==r.g.v.baseLo || off==r.g.v.baseHi ||
        off==r.g.v.startLo || off==r.g.v.startHi || off==r.g.v.endLo || off==r.g.v.endHi)return false;
     if(gfx_ring::allowed(r.gfx,off))return true;
-    if(off==r.invReq || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
+    if(off==r.invRangeLo || off==r.invRangeHi || off==r.invReq || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
 }
@@ -240,6 +242,12 @@ public:
             if(!(l2_.status&kL2Busy) || us>=10000u)break;
             h.delayUs(h.ctx,100u);
         }
+        // An ACK covers only the programmed range. Reset 0/0 leaves client VAs
+        // outside the flush even though the engine answers (cold run 2026-10-20 15:45).
+        uint32_t rangeLo=0,rangeHi=0;
+        if(!wr(r.invRangeLo,0xffffffffu) || !wr(r.invRangeHi,0x1fu) ||
+           !h_.read(h_.ctx,r.invRangeLo,&rangeLo) || !rd(r.invRangeHi,rangeHi) ||
+           rangeLo!=0xffffffffu || rangeHi!=0x1fu)return Code::HwFailed;
         // Doorbells: the MEC range as gfx_v11_0_kiq_init_register, the NBIO aperture as
         // nbio_v4_3_enable_doorbell_aperture; only what is not already so is written.
         uint32_t aper=0,lower=0,upper=0,pq=0;

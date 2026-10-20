@@ -201,7 +201,9 @@ struct Fake {
         if(off==f.r.invReq) {
             uint32_t ack=0;
             for(uint32_t k=0;k<16;++k)if(v&(1u<<k)){
-                if(!f.noFlushModel)for(auto i=f.tlb.begin();i!=f.tlb.end();)i=i->first.first==k ? f.tlb.erase(i) : std::next(i);
+                const uint64_t last=f.mem[f.r.invRangeLo]|(uint64_t(f.mem[f.r.invRangeHi]&0x1fu)<<32);
+                if(!f.noFlushModel)for(auto i=f.tlb.begin();i!=f.tlb.end();)
+                    i=i->first.first==k && i->first.second<=last ? f.tlb.erase(i) : std::next(i);
                 ack|=1u<<k;
             }
             f.mem[f.r.invAck]=f.noAck || f.mem[f.r.l2Status] ? 0u : ack;++f.flushes;
@@ -317,9 +319,9 @@ int main() {
     auto b=rx7600_fixture::blob();IPDiscovery d;assert(d.parse(b.data(),b.size()));
     const auto r=cg::resolve(d,rx7600_fixture::kBar5);
     assert(r.valid && r.dequeue==(0x1260u+0x1fc1u)*4u && cg::allowed(r,r.g.v.l2c2));
-    // Of the invalidation engines only engine 17's REQ is written (never a SEM, ACK or range).
+    // Of the invalidation engines only engine 17's REQ and address range are written (never a SEM or ACK).
     assert(r.invReq==(0x1260u+0x16bcu)*4u && r.invAck==(0x1260u+0x16ceu)*4u && r.l2Status==(0x1260u+0x15bfu)*4u);
-    for(uint32_t dw=0x1699u;dw<=0x16f2u;++dw)assert(cg::allowed(r,(0x1260u+dw)*4u)==(dw==0x16bcu));
+    for(uint32_t dw=0x1699u;dw<=0x16f2u;++dw)assert(cg::allowed(r,(0x1260u+dw)*4u)==(dw==0x16bcu || dw==0x16f1u || dw==0x16f2u));
     assert(r.ctx[0][0]==(0x1260u+0x1690u)*4u && r.ctx[5][6]==(0x1260u+0x174eu)*4u && r.gbAddrConfig==0x263eu*4u);
     assert(!cg::allowed(r,r.gbAddrConfig));
     // Never context 0/1, SCRATCH, the MEC controls or the fault registers.
@@ -329,7 +331,8 @@ int main() {
     {   Fake f(r);
         {uint32_t none=0;assert(f.dev.open(&f,none)==cg::Code::NotReady);}
         assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
-        assert(f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u+14u+kGfxStartWrites);   // hub, HQD ACTIVE checks, HQD dumps (selects), G40
+        assert(f.mem[r.g.v.l1]==0x1859u && f.writes.size()==17u+12u+14u+kGfxStartWrites);   // hub, HQD ACTIVE checks, HQD dumps (selects), G40
+        assert(f.mem[r.invRangeLo]==0xffffffffu && f.mem[r.invRangeHi]==0x1fu);
         // Doorbells: MEC range 0..0x450 bytes, NBIO aperture bit 0 set, the rest of the word kept.
         assert(f.mem[r.mecDbLower]==0u && f.mem[r.mecDbUpper]==0x450u && f.mem[r.nbioAperEn]==0x101u);
         {   const cg::DoorbellSetup db=f.dev.stats().db;
@@ -592,8 +595,8 @@ int main() {
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
         h.mem[r.mecDbLower]=0x110u;h.mem[r.mecDbUpper]=0xffcu;h.mem[r.nbioAperEn]=1u;   // MES's range covers ours
-        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==14u+12u+kGfxStartWrites+2u);   // + the MEC range moved below the gfx doorbell
-        for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm || navi33::gfx_ring::allowed(r.gfx,w.first) || w.first==r.mecDbLower || w.first==r.mecDbUpper);          // only the HQD ACTIVE checks
+        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==16u+12u+kGfxStartWrites+2u);   // + the MEC range moved below the gfx doorbell
+        for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm || navi33::gfx_ring::allowed(r.gfx,w.first) || w.first==r.mecDbLower || w.first==r.mecDbUpper || w.first==r.invRangeLo || w.first==r.invRangeHi);          // only the HQD ACTIVE checks
     }
     // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.
     {   namespace nf=n48n_front;

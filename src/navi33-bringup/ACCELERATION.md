@@ -1,5 +1,18 @@
 # Navi33 gfx1102 → RADV → Metal development contract
 
+## Current evidence (2026-10-20 15:50)
+
+Cold VM run `runs/20261020-154411`, Navi33Probe 0.0.54: autostart 8/8,
+L2 idle, engine17 invalidation ACKs, first N33N gradient and N48N gradient exact.
+RADV Vulkan compute ran twice: 65,536 words correct each time. Reused N33N
+clients still returned zero images, and the graphics ring timed out with RPTR 0.
+Engine17's address range read 0/0; 0.0.55 restores upstream's full range, pending
+CI and live retest. No Metal-rendered output or GPU desktop composition is proven.
+The goal is the GPU-rendered desktop, wallpaper and apps. GOP framebuffer output
+is only the existing display/recovery path. The earlier milestone notes below are
+historical and do not describe the current compute backend.
+
+
 This is NOT a working macOS acceleration driver. The Navi48 Metal bundle and
 Mesa patches are hard-wired to gfx1201, the N48N user-client ABI and the Navi48
 bringup classes. Pointing that bridge at an RX7600 without a real gfx1102

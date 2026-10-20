@@ -1,5 +1,18 @@
 # Navi33 physical PCI / IOMMU / BAR transport milestone (PR #20)
 
+## Current evidence (2026-10-20 15:50)
+
+Cold VM run `runs/20261020-154411`, Navi33Probe 0.0.54: autostart 8/8,
+L2 idle, engine17 invalidation ACKs, first N33N gradient and N48N gradient exact.
+RADV Vulkan compute ran twice: 65,536 words correct each time. Reused N33N
+clients still returned zero images, and the graphics ring timed out with RPTR 0.
+Engine17's address range read 0/0; 0.0.55 restores upstream's full range, pending
+CI and live retest. No Metal-rendered output or GPU desktop composition is proven.
+The goal is the GPU-rendered desktop, wallpaper and apps. GOP framebuffer output
+is only the existing display/recovery path. The earlier milestone notes below are
+historical and do not describe the current compute backend.
+
+
 **Status:** The macOS source now contains a real, compiler-verified
 `IODMACommand`-backed staging session and isolated physical BAR0/BAR5
 adapters. **This is NOT a functional RX7600 SDMA6/GFX11/Metal driver.**
