@@ -633,3 +633,8 @@ for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert 'n33gpu' not in code and 'navi33-client-gpu' not in code
 print('Navi33 client GPU contexts: own gate, allowlist, heap-bounded CPU access, close with the client: passed')
+# CPU mappings of client buffers are removed and unmapped before their pages can be reused.
+assert 'while (IOMemoryMap *map = removeMappingForDescriptor(gpuBoMd_[i]))' in nclient
+assert nclient.index('revokeCpuMappings(static_cast<uint32_t>(in[0]));') < nclient.index('return owner_->gpuBoFree(this, static_cast<uint32_t>(in[0]));')
+assert nclient.index('revokeCpuMappings(0u);') < nclient.index('owner_->gpuContext(this, N33_CTX_OP_CLOSE, nullptr);')
+print('Navi33 client GPU CPU mappings revoked before reuse: passed')

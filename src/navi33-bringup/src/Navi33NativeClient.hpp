@@ -32,4 +32,10 @@ private:
     uint64_t dmaLeaseEpoch_=0u;
     // Called under dmaLock_ where present; safe with idempotent release.
     void releaseStageLocked();
+    // The descriptor handed out for each client GPU buffer (index = handle - 1), kept so
+    // its CPU mappings can be found and unmapped before the pages return to the heap.
+    static constexpr uint32_t kMaxGpuBos = 256u;
+    IOMemoryDescriptor *gpuBoMd_[kMaxGpuBos] = {};
+    // Remove and unmap every CPU mapping of handle (0: all), then tell the provider.
+    void revokeCpuMappings(uint32_t handle);
 };

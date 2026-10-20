@@ -1280,4 +1280,11 @@ IOMemoryDescriptor *Navi33Probe::gpuBoMemory(const void *client,uint32_t handle)
     IOLockUnlock(pspLock_);
     return md;
 }
+void Navi33Probe::gpuCpuUnmapped(const void *client,uint32_t handle) {
+    uint32_t slot=0;
+    if(!clientGpuGate_ || !pspLock_)return;
+    IOLockLock(pspLock_);
+    if(gpuHost_.dev.slotOf(client,slot))gpuHost_.dev.clearCpuMapped(slot,handle);
+    IOLockUnlock(pspLock_);
+}
 #undef N33_GPU_SLOT

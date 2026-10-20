@@ -68,19 +68,47 @@ void Navi33NativeClient::stop(IOService *provider) {
 }
 
 // A buffer's CPU mapping (IOConnectMapMemory64, type = BO handle): BAR0, uncached.
+// One descriptor per handle, kept (one extra reference) until the buffer is freed,
+// so revokeCpuMappings() can find every mapping IOUserClient made from it.
 IOReturn Navi33NativeClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
                                                  IOMemoryDescriptor **memory) {
-    if (!active_ || !owner_ || !options || !memory) return kIOReturnNotReady;
-    IOMemoryDescriptor *md = owner_->gpuBoMemory(this, type);
-    if (!md) return kIOReturnBadArgument;
+    if (!options || !memory || !type || type > kMaxGpuBos || !dmaLock_) return kIOReturnBadArgument;
+    IOLockLock(dmaLock_);
+    if (!active_ || !owner_) { IOLockUnlock(dmaLock_); return kIOReturnNotReady; }
+    IOMemoryDescriptor *md = gpuBoMd_[type - 1u];
+    if (!md) {
+        md = owner_->gpuBoMemory(this, type);
+        if (!md) { IOLockUnlock(dmaLock_); return kIOReturnBadArgument; }
+        gpuBoMd_[type - 1u] = md;           // our reference
+    }
+    md->retain();                           // IOUserClient releases this one after mapping
+    IOLockUnlock(dmaLock_);
     *options = kIOMapInhibitCache;
-    *memory = md;           // IOUserClient releases it once the mapping exists
+    *memory = md;
     return kIOReturnSuccess;
+}
+
+void Navi33NativeClient::revokeCpuMappings(uint32_t handle) {
+    for (uint32_t i = 0; i < kMaxGpuBos; ++i) {
+        if ((handle && i + 1u != handle) || !gpuBoMd_[i]) continue;
+        // removeMappingForDescriptor hands back IOUserClient's reference; unmap()
+        // takes the range out of the task now, whatever references remain.
+        while (IOMemoryMap *map = removeMappingForDescriptor(gpuBoMd_[i])) {
+            map->unmap();
+            map->release();
+        }
+        gpuBoMd_[i]->release();
+        gpuBoMd_[i] = nullptr;
+    }
+    if (owner_) owner_->gpuCpuUnmapped(this, handle);
 }
 
 IOReturn Navi33NativeClient::clientClose() {
     // The GPU context first: drain, dequeue, free (or quarantine) before the
     // provider reference goes away.
+    if (dmaLock_) IOLockLock(dmaLock_);
+    revokeCpuMappings(0u);          // every CPU mapping gone before the context frees its pages
+    if (dmaLock_) IOLockUnlock(dmaLock_);
     if (owner_) owner_->gpuContext(this, N33_CTX_OP_CLOSE, nullptr);
     if (dmaLock_) IOLockLock(dmaLock_);
     active_ = false;
@@ -97,6 +125,7 @@ IOReturn Navi33NativeClient::clientDied() {
 
 void Navi33NativeClient::free() {
     if(dmaLock_)IOLockLock(dmaLock_);
+    for (IOMemoryDescriptor *&md : gpuBoMd_) if (md) { md->release(); md = nullptr; }
     releaseStageLocked(); // idempotent last-resort revoke
     if(dmaLock_) {
         IOLockUnlock(dmaLock_);
@@ -151,9 +180,13 @@ IOReturn Navi33NativeClient::externalMethod(
             out[0] = handle;
             return r;
         }
-        case N33_SEL_BO_FREE:
-            if (!in[0] || in[0] > 0xffffffffull) return kIOReturnBadArgument;
+        case N33_SEL_BO_FREE: {
+            if (!in[0] || in[0] > kMaxGpuBos || !dmaLock_) return kIOReturnBadArgument;
+            IOLockLock(dmaLock_);
+            revokeCpuMappings(static_cast<uint32_t>(in[0]));    // before the pages can be reused
+            IOLockUnlock(dmaLock_);
             return owner_->gpuBoFree(this, static_cast<uint32_t>(in[0]));
+        }
         case N33_SEL_VM_MAP:
             if (!in[0] || in[0] > 0xffffffffull || in[2] > 0xffffffffull || in[3] > 0xffffffffull)
                 return kIOReturnBadArgument;

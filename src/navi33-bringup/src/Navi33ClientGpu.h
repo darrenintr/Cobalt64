@@ -245,12 +245,23 @@ public:
         release(*b);return Code::Ok;
     }
     // A user CPU mapping may outlive BO_FREE and the context (it belongs to the task
-    // until IOKit tears it down), so a buffer that was ever CPU-mapped is never given
-    // back to the heap this boot: it is unmapped from the GPU and retired.
+    // until IOKit tears it down), so a buffer that is CPU-mapped is never given back to
+    // the heap: freeing it retires it. The user client revokes its mappings first
+    // (IOUserClient::removeMappingForDescriptor + unmap) and then calls
+    // clearCpuMapped(), after which the pages are reusable again.
     bool markCpuMapped(uint32_t slot,uint32_t handle) {
         Client *c=live(slot);Bo *b=c ? bo(*c,handle) : nullptr;
         if(!c || !b || c->state==State::Quarantined)return false;
         b->cpuMapped=true;return true;
+    }
+    // handle 0: every buffer of the client.
+    bool clearCpuMapped(uint32_t slot,uint32_t handle) {
+        Client *c=live(slot);
+        if(!c)return false;
+        if(!handle){for(Bo &b:c->bo)b.cpuMapped=false;return true;}
+        Bo *b=bo(*c,handle);
+        if(!b)return false;
+        b->cpuMapped=false;return true;
     }
     // The CPU-visible VRAM range of a buffer (for the user client's CPU mapping).
     bool boRange(uint32_t slot,uint32_t handle,uint64_t &vram,uint64_t &bytes) {

@@ -307,6 +307,17 @@ int main() {
         uint32_t z=0;uint64_t vz=0;assert(f.dev.boCreate(slot,8192,z,vz)==cg::Code::Ok && vz!=vx);
         assert(f.dev.markCpuMapped(slot,z) && f.dev.close(slot)==cg::Code::Ok && f.heap.covers(vz,8192));
     }
+    // 3e. Once the user client revoked the CPU mappings the pages are reusable again.
+    {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        uint32_t slot=0,x=0,y=0;uint64_t vx=0,vy=0;
+        assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.boCreate(slot,8192,x,vx)==cg::Code::Ok &&
+               f.dev.boCreate(slot,4096,y,vy)==cg::Code::Ok && f.dev.markCpuMapped(slot,x) && f.dev.markCpuMapped(slot,y));
+        assert(f.dev.clearCpuMapped(slot,x) && f.dev.boFree(slot,x)==cg::Code::Ok && !f.heap.covers(vx,8192));
+        assert(f.dev.stats().retiredBytes==0u && !f.dev.clearCpuMapped(slot,x));
+        const uint64_t before=f.heap.usedBytes(cg::kTagClient);
+        assert(f.dev.clearCpuMapped(slot,0) && f.dev.close(slot)==cg::Code::Ok && !f.heap.covers(vy,4096) && before>0);
+        assert(f.heap.usedBytes(cg::kTagClient)==0u && f.dev.stats().retiredBytes==0u);
+    }
     // 3c. Close with work still queued waits; if the queue never drains, nothing is freed.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
         App a=setup(f,co,k,7,0x100000000ull);uint64_t s=0;

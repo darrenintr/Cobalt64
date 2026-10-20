@@ -69,6 +69,8 @@ public:
     IOReturn gpuSubmit(const void *client,const uint64_t *pairs,uint32_t n,uint64_t *seq);
     IOReturn gpuWait(const void *client,uint64_t seq,uint32_t timeoutUs,uint64_t *retired,uint32_t *state);
     IOMemoryDescriptor *gpuBoMemory(const void *client,uint32_t handle);
+    // The user client removed and unmapped every CPU mapping of handle (0: all).
+    void gpuCpuUnmapped(const void *client,uint32_t handle);
 
 private:
     static void autostartThunk(thread_call_param_t self,thread_call_param_t);

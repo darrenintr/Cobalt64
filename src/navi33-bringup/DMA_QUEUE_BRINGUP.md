@@ -1066,8 +1066,12 @@ The first path where a user program, not the kext, decides what the GPU runs.
   flight answers Busy. A hub fault in VMID k stops only that client.
 - Teardown: wait for the last fence, `hqd_destroy_v11` (DRAIN_PIPE, wait for ACTIVE to clear),
   disable context k, flush, then free. Anything unconfirmed quarantines the client and keeps
-  its memory. A buffer that was ever CPU-mapped is never returned to the heap this boot (a user
-  mapping can outlive BO_FREE; to fix by tracking and revoking the mappings).
+  its memory. CPU mappings are revoked first: the user client keeps the descriptor it handed
+  out per buffer and, on BO_FREE and on close, takes every mapping IOUserClient made from it
+  (`removeMappingForDescriptor`) and unmaps it before the pages go back to the heap. A buffer
+  still CPU-mapped when freed is retired, never reused. Gap: a root process that `vm_remap`s
+  its mapping elsewhere keeps that copy (`IOMemoryMap::redirect` on kIOMapUnique maps would
+  close it).
 - Register allowlist: G38's plus contexts 2..7, invalidation engine 17's request; never
   context 0/1, SCRATCH_REG0, the MEC controls or the fault registers. CPU VRAM access only
   inside live, unpinned heap blocks.
