@@ -466,7 +466,9 @@ output survives a hang and Linux can inspect a stuck guest.
   artifact 0.0.57 in `runs/20261020-161603`, loaded UUID
   `74AE4990-5371-3817-BA61-B9AB479F37A9` matching the artifact. `Navi33,GfxMap`
   reports state 3 (MAP timeout), KIQ fence 0, mapped 0 and final KIQ RPTR 0;
-  `Navi33,ClientGfx` state 5 (timeout), ring RPTR/fence 0. The G42 stage latch
+  `Navi33,ClientGfx` state 5 (Unhalt). `gfxStart` exits on the failed G42 map
+  before the GFX ring kick, so no graphics ring submission was attempted.
+  The G42 stage latch
   was consumed and stage-window/MQd/scheduler writes occurred. Do not retry
   without another full power-off and renewed approval. The reported host boot
   ID is still `e04d7ebd-c5ad-4739-be64-daedfc247494`, the same as the earlier
@@ -2332,7 +2334,9 @@ parser got two of them wrong:
   `runs/20261020-161603`, CI `39391717824` green. Stage consumed its latch and
   timed out: scheduler read `0x3038`, G34 original state ACTIVE1/VMID0/RPTR16/
   WPTR16/fence `0x0c0b1601`, then KIQ fence remained 0, MAPPED remained 0, and
-  KIQ RPTR remained 0. Graphics ring state5, WPTR/RPTR/fence 0. Autostart
+  KIQ RPTR remained 0. `ClientGfx` remained at state5 (Unhalt): `gfxStart`
+  returned on the failed G42 map before the ring kick, so no GFX ring submission
+  was attempted; hardware WPTR/RPTR/fence stayed 0. Autostart
   refused sOS-already-alive (`8/0w`); client 1 stalled, while clients 2..9 and
   200 repeat were exact, N48N exact, and RADV Vulkan fill 65,536 words exact.
   The host boot ID matched the earlier `e04d7ebd-…` run, so this attempt is
