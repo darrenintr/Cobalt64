@@ -132,9 +132,28 @@ The VM remains running on 0.0.60; any further GPU write attempt needs another
 full host power-off and renewed explicit approval.
 
 This result does not establish what owns or programs the unexpected remap
-values. Investigate their read path and the live NBIF state offline before
-proposing any new write policy. Do not accept, overwrite, or clear these values
-without a new bounded design and renewed approval.
+values. Offline check (2026-10-20, upstream `torvalds/linux` headers fetched
+from raw.githubusercontent.com; git.kernel.org returned 502):
+- The register names are confirmed: dword `0x12d` is
+  `regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL` and `0x12e` is
+  `regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL`, both BASE_IDX 2 in
+  `nbio/nbio_4_3_0_offset.h`. The `kHdpMemFlushReg`/`kHdpRegFlushReg`
+  constants are correct for that header.
+- Their only field, `ADDRESS` (`nbio_4_3_0_sh_mask.h`), is bits 2..18
+  (`0x7FFFC`). The live `0x385c`/`0x3858` are therefore byte addresses
+  inside BAR5, not a status bit pattern. Upstream's accepted pair `0x7f000`
+  and `0x7f004` is also a byte address in the same field.
+- `0x385c` (dword `0xe17`) and `0x3858` (dword `0xe16`) do not match any
+  register in `nbio_4_3_0_offset.h` or `hdp_6_0_0_offset.h`. The HDP header
+  names `0x12d`/`0x12e` differently (`HDP_XDP_HDP_MBX_MC_CFG` and
+  `HDP_XDP_HDP_MC_CFG`) and is not the remap block, so those names are not
+  the source of the value.
+- Not checked: the upstream `nbio_4_3_1` header (the repo table says NBIF
+  4.3.1; the 4.3.1 path returned 404 on the mirror), and the Linux
+  `nbio_v4_3_set_reg_remap()` read path. Until both are checked, the source
+  of `0x385c`/`0x3858` (power-on default, VBIOS, or an earlier driver) stays
+  open. Do not accept, overwrite, or clear these values without a new bounded
+  design and renewed approval.
 
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
