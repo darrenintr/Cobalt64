@@ -2716,6 +2716,25 @@ parser got two of them wrong:
     IP firmware, AUTOLOAD_RLC, SCPM) need their own approval and must run in the same boot as
     a fresh sOS + ring.
 
+- **2026-10-20 22:20-22:21, kext 0.0.65 on bare-metal macOS: SMU image and all 26 IP
+  firmware records stored in the PSP.** User-approved; gates `navi33-psp-load=1
+  navi33-psp-ring=1 navi33-psp-fw=1` (backup `config.plist.bak-20261020-pre-fw`), run by
+  hand from `instruction.txt` in one boot (22:14). Loaded UUID `708E0DED-…` matches the artifact.
+  - sOS on a fresh PSP (`C2PMSG_81` 0): state 20, 8 writes, 26 ms, sOS `00330024`.
+    Ring/TOC/TMR: state 28, 6 writes, fence 2, TMR 19,922,944 B.
+  - `--ip-fw 26 27` (SMU first): state 32, 1 write, status 0, fence 1, 8 ms, TMR address 0
+    (as in the VM). `--ip-fw 0 26`: state 32, 26 writes, status 0, fence 26, 82 ms, RLC_G
+    at `0x81fc900000` (the VM's address). `C2PMSG_67` `0x20` -> `0x30` -> `0x1d0`.
+  - Post-write `results-20261020-222119-manual.txt` vs the 22:17 boot autorun: only PSP
+    words differ (`_33` `80000000`->0, `_58` sOS version, `_59..63`, ring regs `_64/67/69-71`,
+    `_68` mirrors `_67` (`0x1d0`), `_73` 1 -> `d007be11`, `_81` heartbeat, `_125` -> `80000000`).
+    GC unchanged as in the VM before AUTOLOAD_RLC: `IMU_GFX_RESET_CTRL` `0x10`, IMU scratch/core,
+    RLC and SDMA 0; preflight reason 9. SMU mailbox unchanged. DCN kept scanning.
+  - Agent restored `navi33-psp-off=1` afterwards (used config `config.plist.used-20261020-fw`).
+    The firmware is gone after the next restart/power-off, so AUTOLOAD_RLC and SCPM (still
+    unapproved on bare metal) must follow a fresh sOS, ring, SMU image and records 0..25 in
+    the same boot.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
