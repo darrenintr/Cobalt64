@@ -462,16 +462,29 @@ output survives a hang and Linux can inspect a stuck guest.
   Gfx still state 6 with `kick MMIO`; actual hardware WPTR/RPTR both 0, ACTIVE 1,
   MAPPED 0. Correct engine17 range readback is 0xffffffff/0x1f.
 - 0.0.57 implements G42 under a separate opt-in gate; host and bootstrap checks
-  pass, CI/live run pending. User approved continuing mapping/activation ("please go").
-  Use `GFX_MAP=1 vm/cold-run.sh` with its fresh artifact only after CI passes.
-  This boot still has G34 original WPTR16; no G42 write yet.
-- Current guest is left running in tmux `n33-cold`, artifact 0.0.56. No Metal
-  nub/accelerator installed or enabled. Next graphics investigation is upstream
-  gfx11 queue mapping/activation (MES/KIQ-mapped GFX HQD), with a bounded design
-  before any expansion of the current G40 register/packet allowlist.
+  passed; CI `39391717824` passed all jobs. The bounded G42 attempt ran with
+  artifact 0.0.57 in `runs/20261020-161603`, loaded UUID
+  `74AE4990-5371-3817-BA61-B9AB479F37A9` matching the artifact. `Navi33,GfxMap`
+  reports state 3 (MAP timeout), KIQ fence 0, mapped 0 and final KIQ RPTR 0;
+  `Navi33,ClientGfx` state 5 (timeout), ring RPTR/fence 0. The G42 stage latch
+  was consumed and stage-window/MQd/scheduler writes occurred. Do not retry
+  without another full power-off and renewed approval. The reported host boot
+  ID is still `e04d7ebd-c5ad-4739-be64-daedfc247494`, the same as the earlier
+  0.0.54 run, despite the user reporting a full power-off; treat this evidence
+  as not independently verified as a cold power cycle.
+- This run's autostart stopped at `sOS=8/0w`; client 1 timed out, but clients
+  2..9, the 200-repeat client, N48N and RADV Vulkan fill all passed with exact
+  pixels/words. Guest SSH and WindowServer survived. No GPU-rendered desktop,
+  wallpaper/apps, or Metal output is established. VM remains running in tmux
+  `n33-cold`, artifact 0.0.57. No Metal nub/accelerator installed or enabled.
+  The failed G42 attempt needs read-only investigation and a new bounded design
+  before any further GPU writes.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
   (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
   as a clean cold run. Preserve that memory until dequeue/recovery is verified.
+- The next graphics investigation remains upstream gfx11 queue mapping/activation
+  (MES/KIQ-mapped GFX HQD), with a bounded design before any expansion of the
+  current G40 register/packet allowlist.
 - Safe gfx reads: PFP/ME RS64 instruction pointers nonzero, RB0 base correct,
   CP_RB0_WPTR/RPTR 0, GFX_HQD_ACTIVE 1 but MAPPED 0 (`gfx-safe-reads.txt`). No new
   gfx-HQD configuration writes or accelerator installation performed. Metal not proven.
@@ -2314,6 +2327,18 @@ parser got two of them wrong:
   0x8000a544/a548 is 0xffffffff/0x1f. The early cold-run 0/0 claim was an address
   error, annotated in its raw file and corrected above. No GPU desktop or Metal
   rendering is proven. VM left running; guest SSH and WindowServer survived.
+
+- **2026-10-20 16:16-16:21, kext 0.0.57 G42 attempt**,
+  `runs/20261020-161603`, CI `39391717824` green. Stage consumed its latch and
+  timed out: scheduler read `0x3038`, G34 original state ACTIVE1/VMID0/RPTR16/
+  WPTR16/fence `0x0c0b1601`, then KIQ fence remained 0, MAPPED remained 0, and
+  KIQ RPTR remained 0. Graphics ring state5, WPTR/RPTR/fence 0. Autostart
+  refused sOS-already-alive (`8/0w`); client 1 stalled, while clients 2..9 and
+  200 repeat were exact, N48N exact, and RADV Vulkan fill 65,536 words exact.
+  The host boot ID matched the earlier `e04d7ebd-…` run, so this attempt is
+  not evidence from a verified full power cycle. Do not repeat G42 without a
+  full power-off and renewed authorization. No GPU-rendered desktop or Metal
+  output is proven.
 
 ## Adding a register read
 
