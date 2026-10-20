@@ -272,3 +272,20 @@ offset, MQD and WPTR addresses, and the WRITE_DATA fence (dst sel 5, confirm).
 No encoding bug was found. The open question is why the MEC does not fetch the
 packets from the G34 KIQ queue; the next check is the KIQ HQD and MQD fields
 against upstream. Not run on the card.
+
+## 0.0.62 analysis: the KIQ is never kicked by doorbell (offline)
+
+Upstream `gfx_v11_0.c`: the compute/KIQ rings use doorbells (`use_doorbell =
+true`), the KIQ doorbell is index 0 (`AMDGPU_NAVI10_DOORBELL_KIQ = 0x000`,
+`amdgpu_doorbell.h`), and `gfx_v11_0_cp_set_doorbell_range()` sets
+`CP_MEC_DOORBELL_RANGE_LOWER = (kiq*2)<<2 = 0` and `UPPER = (userqueue_end*2)<<2`
+(0x450). On the RX 7600 this boot the MEC range stays at `0x110..0xffc`
+(`Navi33,ClientGpu`, 0.0.62 run), which MES set up and which does not include
+index 0. Our G34 KIQ is kicked only by the one-shot WPTR poll (`poll1`) and its
+MQD leaves the WPTR at 0 ("guessed WPTR = RPTR = 0" in `Navi33Gfx11MecQueue.h`).
+So a KIQ doorbell kick, as upstream does it, would be dropped on this card.
+This is a source-backed lead, not a proven cause: the one-shot poll may still
+be the working path for the G34 ring test. Fixing it would mean writing the
+MEC doorbell range (0..0x450) and a KIQ doorbell, which is new register writes:
+it needs a bounded design and its own approval before any card run. Not run
+on the card.
