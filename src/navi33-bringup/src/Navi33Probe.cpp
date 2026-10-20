@@ -5,6 +5,7 @@
 #include "Navi33DarwinPspLoad.h"
 #include "Navi33NativeClient.hpp"
 #include "Navi33N48nClient.hpp"
+#include "Navi33MetalNub.hpp"
 #include "Navi33NativePolicy.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOPlatformExpert.h>
@@ -1104,6 +1105,7 @@ bool Navi33Probe::willTerminate(IOService *provider, IOOptionBits options) {
 }
 
 void Navi33Probe::stop(IOService *provider) {
+    Navi48MetalNub::shutdown();
     if(autostartCall_) {   // never tear down under a running bring-up
         thread_call_cancel_wait(autostartCall_);
         thread_call_free(autostartCall_);
@@ -1266,6 +1268,19 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
         IOLog("Navi33Probe: client GPU stall %s\n",snap);
     }
     IOLockUnlock(pspLock_);
+    // G41: the Metal nub, once, only with navi33-metal=1 and the live evidence of hard rule 6 (outside
+    // our lock: registerService may run the aux kext's probe, which calls back into the ops table).
+    uint32_t metalOn=0;
+    if(!Navi48MetalNub::published() && PE_parse_boot_argn("navi33-metal",&metalOn,sizeof(metalOn)) && metalOn==1u) {
+        const navi33::metal::Evidence e{true,gpuHost_.dev.started(),st.computeRetiredEver>0u,st.gfx.state==cg::GfxState::Ok,
+                                        st.tlbFlushes>0u && !st.miss.misses && !st.tlbUnsafe,st.quarantinedEver>0u};
+        const uint32_t v=Navi48MetalNub::publish(this,e,vramHeap_.total());
+        char ml[160];
+        snprintf(ml,sizeof(ml),"verdict %x: started %d compute %llu gfx %u flushes %u misses %u unsafe %d quarantined %u",v,
+                 e.started,static_cast<unsigned long long>(st.computeRetiredEver),static_cast<unsigned>(st.gfx.state),
+                 st.tlbFlushes,st.miss.misses,st.tlbUnsafe,st.quarantinedEver);
+        setProperty("Navi33,MetalNub",ml);
+    }
     if(op==N33_CTX_OP_OPEN || st.clients || c!=cg::Code::Ok)
         IOLog("Navi33Probe: client GPU context op %u -> %u (%s)\n",op,static_cast<unsigned>(c),line);
     return gpuReturn(c);

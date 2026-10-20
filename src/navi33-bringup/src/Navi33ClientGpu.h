@@ -202,6 +202,7 @@ enum class GfxState : uint8_t { Off=0, NoMemory, Halt, Config, Resume, Unhalt, T
 struct GfxReport { GfxState state=GfxState::Off; uint32_t meBefore=0, me=0, stat=0, rptr=0, fence=0, wptr=0; uint64_t ringMc=0; };
 struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
                FlushMiss miss{}; HubL2 l2{}; GfxReport gfx{};
+               uint64_t computeRetiredEver=0, gfxRetiredEver=0; uint32_t quarantinedEver=0; bool tlbUnsafe=false;
                DoorbellSetup db{}; };
 
 class Device {
@@ -551,7 +552,9 @@ public:
             ++s.clients;s.emitted+=c.emitted;s.retired+=c.retired;
             for(const Bo &b:c.bo)if(b.live)++s.bos;
         }
-        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.db=db_;s.miss=miss_;s.l2=l2_;s.gfx=gfx_;return s;
+        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.db=db_;s.miss=miss_;s.l2=l2_;s.gfx=gfx_;
+        s.computeRetiredEver=computeRetiredEver_;s.gfxRetiredEver=gfxRetiredEver_;s.quarantinedEver=quarantinedEver_;s.tlbUnsafe=tlbUnsafe_;
+        return s;
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
@@ -799,6 +802,7 @@ private:
             const uint64_t s=c.retired+1u, done=(c.gfxMask>>(s%64u))&1u ? gs : cs;
             if(done<s || done>c.emitted)break;
             c.retired=s;
+            if((c.gfxMask>>(s%64u))&1u)++gfxRetiredEver_; else ++computeRetiredEver_;
         }
         if(st && st!=faultSeen_ && ((st&kFaultVmidMask)>>kFaultVmidShift)==c.vmid) {
             c.faultStatus=st;c.faultAddr=addr;c.state=State::Faulted;
@@ -821,7 +825,7 @@ private:
     static Code stateCode(const Client &c) {
         return c.state==State::Faulted ? Code::Faulted : c.state==State::Quarantined ? Code::Quarantined : Code::NotReady;
     }
-    void quarantine(Client &c) { c.state=State::Quarantined; }
+    void quarantine(Client &c) { if(c.state!=State::Quarantined)++quarantinedEver_; c.state=State::Quarantined; }
     void release(Bo &b) {
         if(b.cpuMapped)retiredBytes_+=b.bytes;      // stays allocated: a CPU mapping may remain
         else heap_->free(b.h);
@@ -848,6 +852,7 @@ private:
     FlushMiss miss_{}; HubL2 l2_{}; bool tlbUnsafe_=false;
     GfxReport gfx_{}; vh::Handle gfxMem_{}; uint64_t gfxMemVram_=0;
     uint64_t gfxWptr_=0, gfxSeq_=0, gfxRetired_=0, gfxEnd_[64]{};
+    uint64_t computeRetiredEver_=0, gfxRetiredEver_=0; uint32_t quarantinedEver_=0;
     uint32_t hqdStart_[kHqdDumpQueues][kHqdDumpCount]{}; bool hqdStartOk_[kHqdDumpQueues]{};
     bool started_=false;
 };

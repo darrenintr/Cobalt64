@@ -21,6 +21,10 @@ public:
     IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args, IOExternalMethodDispatch *dispatch,
                             OSObject *target, void *reference) override;
     IOReturn clientMemoryForType(UInt32 type, IOOptionBits *options, IOMemoryDescriptor **memory) override;
+    // The accelerator route (G41): the aux accelerator's 'N48N' open, attached to `provider` (the
+    // accelerator) with `owner` holding all GPU state, exactly as an open on Navi33Probe.
+    static IOReturn create(Navi33Probe *owner, IOService *provider, task_t task, void *securityID, UInt32 type,
+                           IOUserClient **out);
 private:
     Navi33Probe *owner_ = nullptr;
     IOLock *lock_ = nullptr;                  // this connection's session and mapping table

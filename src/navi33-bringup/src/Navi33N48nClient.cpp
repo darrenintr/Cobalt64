@@ -38,10 +38,23 @@ bool Navi33N48nClient::initWithTask(task_t owningTask, void *securityID, UInt32 
 }
 
 bool Navi33N48nClient::start(IOService *provider) {
-    Navi33Probe *probe = OSDynamicCast(Navi33Probe, provider);
+    Navi33Probe *probe = owner_ ? owner_ : OSDynamicCast(Navi33Probe, provider);
     if (!probe || !super::start(provider)) return false;
     owner_ = probe;
     return true;
+}
+
+IOReturn Navi33N48nClient::create(Navi33Probe *owner, IOService *provider, task_t task, void *securityID, UInt32 type,
+                                  IOUserClient **out) {
+    if (!owner || !provider || !out) return kIOReturnBadArgument;
+    auto *c = OSTypeAlloc(Navi33N48nClient);
+    if (!c) return kIOReturnNoMemory;
+    if (!c->initWithTask(task, securityID, type, nullptr)) { c->release(); return kIOReturnNotPrivileged; }
+    c->owner_ = owner;
+    if (!c->attach(provider)) { c->release(); return kIOReturnInternalError; }
+    if (!c->start(provider)) { c->detach(provider); c->release(); return kIOReturnInternalError; }
+    *out = c;
+    return kIOReturnSuccess;
 }
 
 void Navi33N48nClient::revokeCpuMappings(uint32_t handle) {
