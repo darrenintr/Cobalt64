@@ -125,7 +125,10 @@ struct Client {
     uint64_t seqEnd[64]{};                  // ring position after seq (modulo 64)
     uint32_t vmid=0, faultStatus=0, faultAddr=0;
 };
-struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0; };
+// The last TLB flush that got no ACK: the VMID, the request written, what REQ and ACK read back.
+struct FlushMiss { uint32_t vmid=0, req=0, reqBack=0, ack=0, misses=0; };
+struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
+               FlushMiss miss{}; };
 
 class Device {
 public:
@@ -197,7 +200,8 @@ public:
         for(const auto &x:ctx)if(!wr(x.off,x.val))return fail(c,Code::HwFailed);
         if(!sel(c.vmid<<4) || !wr(r_->g.shMem,gradient::kShMemDefault) || !wr(r_->g.shBases,vg::kShMemBasesValue) ||
            !sel(0u))return fail(c,Code::HwFailed);
-        if(!flushTlb(c.vmid))return fail(c,Code::HwFailed);
+        // No flush: a VMID is only reused after close() flushed it, and new valid
+        // PTEs need none (amdgpu_vm_update_range flushes only on GC < 9 or invalidation).
         return loadQueue(c)==Code::Ok ? Code::Ok : fail(c,Code::HwFailed);
     }
     // A zeroed, CPU-visible VRAM buffer. Returns handle 1..kMaxBos.
@@ -217,8 +221,8 @@ public:
         if(!zero(c->bo[i])){heap_->free(a.h);c->bo[i]=Bo{};return Code::HwFailed;}
         handle=i+1u;vram=a.offset;return Code::Ok;
     }
-    // Map the whole buffer at va (the GPU has not seen it yet, so no flush needed
-    // for a fresh range; the flush still runs, as amdgpu does after every update).
+    // Map the whole buffer at va. Adding valid PTEs needs no TLB flush on GFX9+ (the
+    // hub does not cache invalid entries; amdgpu_vm_update_range); unmapping does.
     Code vaMap(uint32_t slot,uint32_t handle,uint64_t va,bool writeable,bool executable) {
         Client *c=live(slot);Bo *b=c ? bo(*c,handle) : nullptr;
         if(!c || !b)return Code::NotFound;
@@ -231,7 +235,6 @@ public:
             return Code::NoMemory;
         }
         b->va=va;b->vaFlags=flags;
-        if(!flushTlb(c->vmid)){quarantine(*c);return Code::Quarantined;}
         return Code::Ok;
     }
     Code vaUnmap(uint32_t slot,uint32_t handle) {
@@ -378,7 +381,7 @@ public:
             ++s.clients;s.emitted+=c.emitted;s.retired+=c.retired;
             for(const Bo &b:c.bo)if(b.live)++s.bos;
         }
-        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;return s;
+        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.miss=miss_;return s;
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
@@ -411,12 +414,15 @@ private:
     // gmc_v11_0_flush_gpu_tlb, MMIO path: engine 17, request, wait for the VMID's ACK bit.
     bool flushTlb(uint32_t vmid) {
         if(!wr(r_->invReq,invalidateReq(vmid)))return false;
+        uint32_t ack=0;
         for(uint32_t us=0;us<kTlbTimeoutUs;++us) {
-            uint32_t ack=0;
-            if(!rd(r_->invAck,ack))return false;
-            if(ack&(1u<<vmid)){++flushes_;return true;}
+            if(!h_.read(h_.ctx,r_->invAck,&ack))break;
+            if(ack!=0xffffffffu && (ack&(1u<<vmid))){++flushes_;return true;}
             h_.delayUs(h_.ctx,1u);
         }
+        uint32_t back=0;
+        h_.read(h_.ctx,r_->invReq,&back);
+        miss_={vmid,invalidateReq(vmid),back,ack,miss_.misses+1u};
         return false;
     }
     // hqd_load_v11 for queue k in VMID k (as G38, with the poll bit of queue k).
@@ -521,6 +527,7 @@ private:
     TableIo tio_{};
     uint32_t select_=0, writes_=0, flushes_=0, faultSeen_=0;
     uint64_t retiredBytes_=0;
+    FlushMiss miss_{};
     bool started_=false;
 };
 } }

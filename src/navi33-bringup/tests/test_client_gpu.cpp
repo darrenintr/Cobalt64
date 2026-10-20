@@ -380,8 +380,12 @@ int main() {
         uint32_t slot=0,x=0;uint64_t vx=0;
         assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.boCreate(slot,4096,x,vx)==cg::Code::Ok);
         f.noAck=true;
-        assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Quarantined);
-        assert(f.dev.boFree(slot,x)==cg::Code::Quarantined && f.heap.covers(vx,4096));
+        const size_t before=f.writes.size();
+        assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Ok);            // new PTEs: no flush
+        for(size_t i=before;i<f.writes.size();++i)assert(f.writes[i].first!=r.invReq);
+        assert(f.dev.boFree(slot,x)==cg::Code::Quarantined && f.heap.covers(vx,4096));   // unmap needs the ACK
+        const cg::FlushMiss m=f.dev.stats().miss;
+        assert(m.vmid==2u && m.req==cg::invalidateReq(2) && m.reqBack==cg::invalidateReq(2) && m.ack==0u && m.misses==1u);
     }
     // 6. Arguments and a hub this code does not recognise.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);

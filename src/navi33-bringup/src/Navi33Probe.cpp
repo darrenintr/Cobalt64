@@ -1217,9 +1217,11 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
         if(c==cg::Code::Ok && vmid)*vmid=gpuHost_.dev.client(slot)->vmid;
     }
     const cg::Stats st=gpuHost_.dev.stats();
-    char line[160];
-    snprintf(line,sizeof(line),"clients %u buffers %u emitted %llu retired %llu writes %u flushes %u heap free %llu MiB",
-             st.clients,st.bos,st.emitted,st.retired,st.writes,st.tlbFlushes,vramHeap_.freeBytes()>>20);
+    char line[224];
+    snprintf(line,sizeof(line),"clients %u buffers %u emitted %llu retired %llu writes %u flushes %u heap free %llu MiB "
+             "flush misses %u (vmid %u req %x reads %x ack %x)",
+             st.clients,st.bos,st.emitted,st.retired,st.writes,st.tlbFlushes,vramHeap_.freeBytes()>>20,
+             st.miss.misses,st.miss.vmid,st.miss.req,st.miss.reqBack,st.miss.ack);
     setProperty("Navi33,ClientGpu",line);
     IOLockUnlock(pspLock_);
     if(op==N33_CTX_OP_OPEN || st.clients || c!=cg::Code::Ok)
