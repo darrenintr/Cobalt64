@@ -1951,6 +1951,14 @@ parser got two of them wrong:
   when the guest has no GOP; `vm/make-opencore.sh --fb`, `vm/install-gopfb.sh`,
   `vm/fb-trial.sh`. Not yet loaded: waits for the Allow click.
 
+- **2026-10-20, G38 built (kext 0.0.27, ABI 19, UUID `08860B5D-343D-3585-A4E4-BBAFBBA17E93`,
+  CI run 39346761046):** the gradient from a VMID 1 queue through a Linux-shaped
+  four-level page table (`DMA_QUEUE_BRINGUP.md` G38). Artifact cached in
+  `navi33/cache/artifact-0.0.27`; `vm/stage.sh` now defaults to it. Not run yet: the
+  permission check blocked the agent's `vm/stage.sh vmg ...`, so the user runs it with `!`
+  on a card in the autostart state with an untouched GFXHUB (the 07:52 autostart of boot
+  `ec268858-…` qualifies if nothing ran since).
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
