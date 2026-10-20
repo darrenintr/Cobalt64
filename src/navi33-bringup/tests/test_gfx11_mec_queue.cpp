@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "../src/Navi33Gfx11MecQueue.h"
 #include "rx7600_ipd_fixture.h"
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <map>
@@ -139,7 +140,7 @@ int main() {
         const auto &w=f.writes;auto it=std::find(w.begin(),w.end(),std::make_pair(r.scheduler,0x30a0u));
         assert(it!=w.end());const size_t i=static_cast<size_t>(it-w.begin());
         assert(w[i-1u]==std::make_pair(r.grbm,mq::grbmSelect(1,0,0)));
-        assert(w[i+1u].first==mq::hqd(r,kiq::kCpMqdBaseAddrLo));
+        assert(w[i+1u].first==mq::hqd(r,kiq::kCpMqdBaseAddr));
         assert(w.size()==84u+1u); // one gated scheduler write, before HQD load
     }
     {   Fake f(r); f.allowMap=true;f.mem[r.scheduler]=0x30a0u;attempted=false;uint32_t before=0,after=0;
