@@ -466,8 +466,9 @@ output survives a hang and Linux can inspect a stuck guest.
   `console::resolve()` now picks that relocated console when `boot_args` is outside
   BAR0 (inside BAR0, same geometry only); the plan's HUBP check still proves the
   offset. `Navi33,ConsolePick` reports the choice. **Confirmed on bare metal
-  2026-10-20 21:29: PLAN_OK (state 14), nothing written** (findings log). A
-  bare-metal PSP load is still a new write and needs explicit approval.
+  2026-10-20 21:29: PLAN_OK (state 14), nothing written**, then **21:43: the first
+  bare-metal PSP sOS load succeeded** (state 20, 8 writes; findings log). Kill switch
+  restored on the stick. Later bare-metal stages need their own approval.
   CI `39429401671` green; artifact `cache/artifact-0.0.64-ci`, UUID
   `994B713D-5C15-3C05-88A7-2E4FD73E9D44`. **Staged on the stick 2026-10-20** (kext
   and tools identical to the artifact, boot-args unchanged, all write kill
@@ -2667,6 +2668,23 @@ parser got two of them wrong:
   - So the live HUBP surface proves BAR0 offset 0 = VRAM offset 0 on bare metal,
     the same layout the VM loads used. Step 1 of the bare-metal plan is met. A
     bare-metal PSP load is still a new write and needs the user's explicit approval.
+
+- **2026-10-20 21:43, kext 0.0.64 on bare-metal macOS: THE FIRST BARE-METAL GPU WRITE.
+  The PSP sOS load succeeded** (stick file `navi33/psp-load-20261020-214338.txt`). The user
+  approved it, flipped the stick's gate (`navi33-psp-load=1` in place of `navi33-psp-off=1`;
+  every other kill switch set; backup `config.plist.bak-20261020-pre-psp-load`) and ran
+  `n33psp --plan` then `--load` by hand in macOS Terminal.
+  - Plan: state 14, flags `0x1f` (write gate open), console `0x830000000` = vram+0x0,
+    HUBP0 active at MC `0x8000000000`, fw_pri MC `0x800f000000`.
+  - Load: state 20 (`sOS ALIVE`), flags `0x7f`, 4 parts (KDB, SPL, SYS_DRV, sOS),
+    **8 register writes**, 26 ms, `C2PMSG_35` `80000000` after each part, `C2PMSG_81`
+    `166e7c91`, sOS version `00330024`: the same result as the VM load of 2026-10-18.
+  - macOS kept running long enough to save the output. The autorun results file of that
+    boot (`results-20261020-214006-boot.txt`) predates the load, so no post-load
+    register dump exists for bare metal.
+  - The agent restored the pre-load config afterwards (`navi33-psp-off=1` back; the used
+    one is `config.plist.used-20261020-psp-load`). The sOS stays loaded until a full
+    power-off. Further bare-metal stages need their own approval.
 
 ## Adding a register read
 
