@@ -171,8 +171,14 @@ from raw.githubusercontent.com; git.kernel.org returned 502):
   and our kext have not touched the card. A read on the 2026-10-20 19:38 boot
   (`d04f59d2-…`, card on vfio-pci, no VM) is the next check; the script is
   `$HOME/cobalt-scratch/remap-peek.py` (read-only, BAR5 PROT_READ). Until its
-  result is recorded, the source of `0x385c`/`0x3858` stays open. Do not accept,
-  overwrite, or clear these values without a new bounded design and renewed approval.
+  Result, boot `d04f59d2-…` (fresh boot, card on vfio-pci, no amdgpu, no VM):
+  REMAP_HDP_MEM_FLUSH_CNTL `0x385c`, REMAP_HDP_REG_FLUSH_CNTL `0x3858`, NBIO
+  MEMSIZE `0x1ff0` (8176 MiB), C2PMSG_35 `0x80000000`, C2PMSG_81 0. So the pair
+  is present before any driver here touched it. This is most likely the
+  power-on or VBIOS value, not verified: a VBIOS POST write cannot be ruled out
+  from a read. Upstream's init overwrites it, and our gate refuses it. Do not
+  accept, overwrite, or clear these values without a new bounded design and
+  renewed approval.
 
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
