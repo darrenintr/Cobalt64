@@ -57,6 +57,18 @@ card-write approval. A future read-only boot still needs coordination to
 stop the current VM/change the host state. PSP/autostart on bare metal needs
 explicit card-write approval; prior VM approvals do not transfer.
 
+**Progress (2026-10-20, kext 0.0.63, offline):** the read-only capture is
+built. `src/Navi33ConsoleSources.h` classifies a console source against the
+live BAR0 (empty, virtual, bad geometry, outside, inside with its offset),
+host-tested in `tests/test_console_sources.cpp` with the bare-metal values.
+The kext publishes `Navi33,ConsoleSourcesStart` (at `start()`, before a
+framebuffer can replace the platform console) and `Navi33,ConsoleSourcesPlan`
+(on each PSP-selector call): BAR0 base/size plus `boot_args->Video` and
+`PE_state.video`, each raw and classified. `usb/run.sh` prints them. Nothing
+feeds the plan yet: `fillConsole()` is unchanged, so bare metal still reports
+NO_CONSOLE. Next: one kill-switch-closed bare-metal boot to capture these
+values, then design the resolver from them.
+
 ## 2. Establish reliable KIQ transport, then the graphics queue
 
 See the pinned upstream comparison and raw-run identities in

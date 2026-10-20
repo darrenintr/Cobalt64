@@ -460,6 +460,11 @@ output survives a hang and Linux can inspect a stuck guest.
   next card experiment needs the headless VFIO boot
   (`sudo grub-reboot cobalt64-navi33-vm && sudo poweroff`), a disk rebuilt from
   that boot's hostfb record, and explicit approval. Never modify the VBIOS.
+- **Bare-metal console capture (kext 0.0.63, 2026-10-20, offline):** read-only
+  ioreg `Navi33,ConsoleSourcesStart`/`Plan` record BAR0 and both raw console
+  sources (`boot_args->Video`, `PE_state.video`) with their classification
+  (`src/Navi33ConsoleSources.h`). No resolver yet; the plan is unchanged. Needs
+  one kill-switch-closed bare-metal stick boot to collect the values.
 - **Latest evidence:** 0.0.61, `runs/20261020-200423`, loaded/cached UUID
   `7CE1D94A-FD2C-39B0-9285-163AA3578AF5`: remap/flush written (3 HDP writes),
   FlushReadbackFailed because `0x1ff0` (8176 MiB) failed the old 256 MiB

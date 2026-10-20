@@ -38,6 +38,10 @@ run() { "$@"; echo "exit=$?"; }
     step "owner probe and DMA preflight (ioreg properties)"
     ioreg -l -w0 -r -c Navi33Probe | grep -E '"Navi33,(Owner|DmaPreflight)' ||
         echo "no owner/DMA properties (gates off?)"
+    # Bare-metal NO_CONSOLE census: boot_args and platform console vs BAR0.
+    step "console sources (ioreg properties)"
+    ioreg -l -w0 -r -c Navi33Probe | grep -E '"Navi33,ConsoleSources' ||
+        echo "no console-source properties (kext older than 0.0.63?)"
     step "IOMMU and DMA mappers (read-only)"
     echo "IOMapper instances: $(ioreg -w0 -r -c IOMapper | grep -c '+-o')"
     ioreg -w0 -r -c IOMapper | head -20

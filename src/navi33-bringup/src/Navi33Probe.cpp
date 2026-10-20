@@ -27,6 +27,7 @@
 #include "Navi33LiveMmio.h"
 #include "Navi33Psp13Status.h"
 #include "Navi33Psp13Loader.h"
+#include "Navi33ConsoleSources.h"
 #include "Navi33Sdma6Status.h"
 #include "Navi33Sdma6QueueCensus.h"
 #include "Navi33HwProbeLogic.h"
@@ -84,6 +85,8 @@ IOService *Navi33Probe::probe(IOService *provider, SInt32 *score) {
     return this;
 }
 
+static void publishConsoleSources(IOService *self,IOPCIDevice *pci,const char *key);
+
 bool Navi33Probe::start(IOService *provider) {
     auto *pci = OSDynamicCast(IOPCIDevice, provider);
     if (!pci)
@@ -122,6 +125,7 @@ bool Navi33Probe::start(IOService *provider) {
         (static_cast<uint32_t>(id.baseClass) << 16) |
         (static_cast<uint32_t>(id.subClass) << 8) | id.progIf), 32);
     setProperty("Navi33,SubsystemPair", static_cast<uint64_t>(pci->configRead32(0x2Cu)), 32);
+    publishConsoleSources(this,pci,"Navi33,ConsoleSourcesStart");
     // Owner probe: default off, read-only (config reads and one open/close).
     // Nothing here grants GPU access; see Navi33PciOwner.h.
     uint32_t ownerOn=0u, ownerOff=0u, recoveryOn=0u;
@@ -728,6 +732,39 @@ static void fillConsole(navi33::darwin_psp::Request &req) {
     req.hostConsoleOffset=hostOffset;req.hostConsoleBytes=hostBytes;
 }
 
+// Bare-metal NO_CONSOLE census (BARE_METAL_ACCELERATION_PLAN.md step 1): both
+// raw console sources and the live BAR0, classified, published as one ioreg
+// string. Read-only: no BAR map, no MMIO, no config write, and the PSP plan
+// still uses fillConsole() unchanged. At start() the platform console is read
+// before a framebuffer can replace it with its own mapping.
+static void publishConsoleSources(IOService *self,IOPCIDevice *pci,const char *key) {
+    namespace cs=navi33::console;
+    uint64_t bar0=0u,bar0Bytes=0u;
+    if(IODeviceMemory *m=pci ? pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0) : nullptr) {
+        bar0=static_cast<uint64_t>(m->getPhysicalAddress());bar0Bytes=static_cast<uint64_t>(m->getLength());
+    }
+    cs::Source boot{};
+    if(const auto *ba=static_cast<const boot_args *>(PE_state.bootArgs))
+        boot=cs::Source{ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_width,
+                        ba->Video.v_height,ba->Video.v_depth,ba->Video.v_display};
+    const cs::Source plat{static_cast<uint64_t>(PE_state.video.v_baseAddr),
+        static_cast<uint32_t>(PE_state.video.v_rowBytes),static_cast<uint32_t>(PE_state.video.v_width),
+        static_cast<uint32_t>(PE_state.video.v_height),static_cast<uint32_t>(PE_state.video.v_depth),
+        static_cast<uint32_t>(PE_state.video.v_display)};
+    const cs::Classified b=cs::classify(boot,bar0,bar0Bytes),p=cs::classify(plat,bar0,bar0Bytes);
+    char line[400];
+    snprintf(line,sizeof(line),
+        "bar0 %llx+%llx; boot base %llx row %u %ux%ux%u disp %u -> %s off %llx bytes %llx; "
+        "platform base %llx row %u %ux%ux%u disp %u -> %s off %llx bytes %llx",
+        static_cast<unsigned long long>(bar0),static_cast<unsigned long long>(bar0Bytes),
+        static_cast<unsigned long long>(boot.base),boot.rowBytes,boot.width,boot.height,boot.depth,boot.display,
+        cs::name(b.where),static_cast<unsigned long long>(b.bar0Offset),static_cast<unsigned long long>(b.bytes),
+        static_cast<unsigned long long>(plat.base),plat.rowBytes,plat.width,plat.height,plat.depth,plat.display,
+        cs::name(p.where),static_cast<unsigned long long>(p.bar0Offset),static_cast<unsigned long long>(p.bytes));
+    self->setProperty(key,line);
+    IOLog("Navi33Probe: %s: %s\n",key,line);
+}
+
 static bool bootArgOn(const char *name) {
     uint32_t v=0u;
     return PE_parse_boot_argn(name,&v,sizeof(v)) && v!=0u;
@@ -893,6 +930,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
         PE_parse_boot_argn("navi33-psp-autoload",&autoOn,sizeof(autoOn)) && autoOn==1u;
     req.stopAfter=stopAfter;req.startAt=startAt;
     fillConsole(req);
+    publishConsoleSources(this,OSDynamicCast(IOPCIDevice,getProvider()),"Navi33,ConsoleSourcesPlan");
     IOLockLock(pspLock_);
     req.attempted=ringMode ? &pspRingAttempted_ : fwMode ? &pspFwAttempted_ :
                              &pspLoadAttempted_;
