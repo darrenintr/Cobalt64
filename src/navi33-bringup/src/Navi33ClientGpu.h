@@ -251,6 +251,10 @@ public:
         started_=true;return Code::Ok;
     }
     bool started() const { return started_; }
+    // Diagnostics only (boot-arg navi33-client-tlb-unsafe=1): a TLB flush that gets no ACK is
+    // recorded but not fatal, so user space can be debugged on a hub that never ACKs. Stale
+    // translations may then reach freed memory; never set by default or on the stick.
+    void setTlbUnsafe(bool on) { tlbUnsafe_=on; }
     // Diagnostics (2026-10-20: a client HQD that already finished work stalls after a reload):
     // the whole HQD block CP_MQD_BASE_ADDR..CP_HQD_DDID_WPTR of MEC pipes 0..3 queues 0/1
     // except pipe 0 queue 0 (G34's), read under GRBM select. Reads only.
@@ -311,7 +315,7 @@ public:
         if(!sel(c.vmid<<4) || !wr(r_->g.shMem,gradient::kShMemDefault) || !wr(r_->g.shBases,vg::kShMemBasesValue) ||
            !sel(0u))return fail(c,Code::HwFailed);
         // A previous client of this VMID may have left translations behind.
-        if(!flushTlb(c.vmid))return fail(c,Code::HwFailed);
+        if(!flushTlb(c.vmid) && !tlbUnsafe_)return fail(c,Code::HwFailed);
         return Code::Ok;
     }
     // A zeroed, CPU-visible VRAM buffer. Returns handle 1..kMaxBos.
@@ -355,7 +359,7 @@ public:
         if(!b->va)return Code::BadArgs;
         const Code idle=waitIdle(*c);
         if(idle!=Code::Ok)return idle;
-        if(c->space.unmap(b->va,b->bytes)!=gv::Code::Ok || !flushTlb(c->vmid)){quarantine(*c);return Code::Quarantined;}
+        if(c->space.unmap(b->va,b->bytes)!=gv::Code::Ok || (!flushTlb(c->vmid) && !tlbUnsafe_)){quarantine(*c);return Code::Quarantined;}
         b->va=0;b->vaFlags=0;return Code::Ok;
     }
     Code boFree(uint32_t slot,uint32_t handle) {
@@ -678,7 +682,7 @@ private:
     uint32_t select_=0, writes_=0, flushes_=0, faultSeen_=0;
     uint64_t retiredBytes_=0;
     DoorbellSetup db_{};
-    FlushMiss miss_{}; HubL2 l2_{};
+    FlushMiss miss_{}; HubL2 l2_{}; bool tlbUnsafe_=false;
     uint32_t hqdStart_[kHqdDumpQueues][kHqdDumpCount]{}; bool hqdStartOk_[kHqdDumpQueues]{};
     bool started_=false;
 };

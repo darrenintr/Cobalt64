@@ -28,7 +28,7 @@ die() { echo "make-opencore: $*" >&2; exit 1; }
 [ $# -ge 1 ] || die "usage: $0 ARTIFACT_DIR [--oc OPENCORE_RELEASE_DIR] [--hostfb FILE] [--dma-preflight] [--output FILE.qcow2] [--psp-load]"
 ART="$(cd -- "$1" && pwd)"; shift
 PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; SMU_SCPM=0; MES_START=0; MEC_QUEUE=0; GRADIENT=0; AUTOSTART=0; VM_QUEUE=0; VM_GRADIENT=0; CLIENT_GPU=0
-FB=0; OWNER_PROBE=0; OWNER_RECOVERY=0; OWNER_HOLD=0; OWNER_PHYSICAL=0; DMA_PREFLIGHT=0; OCREL=""; HOSTFB=""; OUT_NAME="OpenCore-navi33.qcow2"
+FB=0; TLB_UNSAFE=0; OWNER_PROBE=0; OWNER_RECOVERY=0; OWNER_HOLD=0; OWNER_PHYSICAL=0; DMA_PREFLIGHT=0; OCREL=""; HOSTFB=""; OUT_NAME="OpenCore-navi33.qcow2"
 while [ $# -gt 0 ]; do
   case "$1" in
     --smu-enable) SMU_ENABLE=1 ;;
@@ -38,6 +38,7 @@ while [ $# -gt 0 ]; do
     --gradient) GRADIENT=1 ;;
     --vm-queue) VM_QUEUE=1 ;;   # kext 0.0.26+: VMID1 translated queue (G36)
     --client-gpu) CLIENT_GPU=1 ;;   # kext 0.0.29+: per-client GPU contexts (B4); may join --autostart
+    --client-tlb-unsafe) TLB_UNSAFE=1 ;;   # kext 0.0.48+ diagnostics: a TLB flush miss is not fatal (hub that never ACKs)
     --vm-gradient) VM_GRADIENT=1 ;;   # kext 0.0.27+: gradient from VMID 1, 4-level table (G38; 0.0.28+ also G39)
     --autostart) AUTOSTART=1 ;;   # kext 0.0.25+: the whole bring-up from start()
     --fb) FB=1 ;;   # G37: Navi33GOPFB (Aux KC) adopts the host console; needs --hostfb
@@ -96,7 +97,7 @@ if [ -n "$OCREL" ]; then
   OCVER="$(basename "$OCREL"), OpenCore.efi sha256 $(sha256sum "$OCREL/X64/EFI/OC/OpenCore.efi" | cut -c1-16)…"
 fi
 python3 -I - "$WORK/config.plist" "$PSP_LOAD" "$KEXT/Contents/MacOS/Navi33Probe" \
-  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" "$OWNER_HOLD" "$OWNER_PHYSICAL" "$MES_START" "$MEC_QUEUE" "$GRADIENT" "$AUTOSTART" "$VM_QUEUE" "$FB" "$VM_GRADIENT" "$CLIENT_GPU" <<'EOF'
+  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" "$OWNER_HOLD" "$OWNER_PHYSICAL" "$MES_START" "$MEC_QUEUE" "$GRADIENT" "$AUTOSTART" "$VM_QUEUE" "$FB" "$VM_GRADIENT" "$CLIENT_GPU" "$TLB_UNSAFE" <<'EOF'
 import plistlib,struct,sys,uuid
 path,psp_load,binary,manifest,ocver,hostfb=sys.argv[1],sys.argv[2]=="1",sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6]
 psp_ring=sys.argv[7]=="1"
@@ -117,6 +118,7 @@ vm_queue=len(sys.argv)>21 and sys.argv[21]=="1"
 fbon=len(sys.argv)>22 and sys.argv[22]=="1"
 vm_gradient=len(sys.argv)>23 and sys.argv[23]=="1"
 client_gpu=len(sys.argv)>24 and sys.argv[24]=="1"
+tlb_unsafe=len(sys.argv)>25 and sys.argv[25]=="1"
 c=plistlib.load(open(path,"rb"))
 add=[k for k in c["Kernel"]["Add"] if k.get("BundlePath")!="Navi33Probe.kext"]
 add.append({"Arch":"x86_64","BundlePath":"Navi33Probe.kext",
@@ -156,6 +158,7 @@ if not vm_queue and not vm_gradient: args.append("navi33-vm-off=1")
 if client_gpu:
     args.append("navi33-client-gpu=1")
     if "navi33-psp-off=1" in args: args.remove("navi33-psp-off=1")
+    if tlb_unsafe: args.append("navi33-client-tlb-unsafe=1")
 else: args.append("navi33-client-gpu-off=1")
 if smu_scpm: args.append("navi33-smu-scpm=1")
 if psp_autoload: args.append("navi33-psp-autoload=1")   # AUTOLOAD_RLC: its own gate

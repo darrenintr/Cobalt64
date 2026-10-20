@@ -8,7 +8,7 @@
 # ARTIFACT=DIR overrides the cached kext artifact. The user runs it with `!`.
 set -euo pipefail
 VM="/home/darren/macos tahoe"; N="$VM/navi33"
-ART="${ARTIFACT:-$N/cache/artifact-0.0.47}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
+ART="${ARTIFACT:-$N/cache/artifact-0.0.48}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
 V=/home/darren/Cobalt64/src/navi33-bringup/vm
 GATES="--client-gpu"; [ "${NO_AUTOSTART:-0}" = 1 ] || GATES="--autostart --client-gpu"
 pgrep -f "^qemu-system-x86_64" >/dev/null && { echo "a VM is already running" >&2; exit 1; }

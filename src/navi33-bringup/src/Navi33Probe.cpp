@@ -1212,6 +1212,8 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
         c=cg::Code::BadArgs;
     } else {
         navi33::darwin_psp::Request req{};fillConsole(req);
+        uint32_t tlbUnsafe=0;
+        gpuHost_.dev.setTlbUnsafe(PE_parse_boot_argn("navi33-client-tlb-unsafe",&tlbUnsafe,sizeof(tlbUnsafe)) && tlbUnsafe==1u);
         c=navi33::darwin_client::start(gpuHost_,OSDynamicCast(IOPCIDevice,getProvider()),req,vramHeap_);
         if(c==cg::Code::Ok)c=gpuHost_.dev.open(client,slot);
         if(c==cg::Code::Ok && vmid)*vmid=gpuHost_.dev.client(slot)->vmid;
@@ -1379,6 +1381,7 @@ IOReturn Navi33Probe::n48nCall(const void *client,navi33::n48n_front::Session &s
     uint32_t gb=0;
     const bool gbOk=gpuHost_.regs && navi33::darwin_client::hw(gpuHost_).read(&gpuHost_,gpuHost_.r.gbAddrConfig,&gb);
     nf::R r=nf::R::BadArgument;
+    char why[192]="";
     switch(selector) {
     case N48N_SEL_QUERYINFO: {
         n48n_info info{};nf::info(d,s,vramHeap_,gbOk ? gb : 0u,kextBuild(),info);
@@ -1420,6 +1423,9 @@ IOReturn Navi33Probe::n48nCall(const void *client,navi33::n48n_front::Session &s
         uint64_t seq=0;
         r=nf::submit(d,s,h,ibs,seq);
         if(r==nf::R::Ok)a->scalarOutput[0]=seq;
+        else snprintf(why,sizeof(why),"ibs %u flags %x ctx %u ip %u va %llx dw %u ibflags %x fence %u+%u",h.num_ibs,h.flags,
+                      h.ctx_id,n ? ibs[0].ip_type : 0u,n ? static_cast<unsigned long long>(ibs[0].va_start) : 0ull,
+                      n ? ibs[0].ib_bytes/4u : 0u,n ? ibs[0].flags : 0u,h.fence_handle,h.fence_offset);
         break;
     }
     case N48N_SEL_WAITSEQ: {
@@ -1438,6 +1444,12 @@ IOReturn Navi33Probe::n48nCall(const void *client,navi33::n48n_front::Session &s
     default: r=nf::R::Unsupported;
     }
     IOLockUnlock(pspLock_);
+    if(r!=nf::R::Ok && selector!=N48N_SEL_WAITSEQ) {      // what RADV asked for that was refused
+        char last[256];
+        snprintf(last,sizeof(last),"selector %u result %u %s",selector,static_cast<unsigned>(r),why);
+        setProperty("Navi33,N48nLast",last);
+        IOLog("Navi33Probe: n48n refused %s\n",last);
+    }
     return n48nReturn(r);
 }
 #undef N33_GPU_SLOT

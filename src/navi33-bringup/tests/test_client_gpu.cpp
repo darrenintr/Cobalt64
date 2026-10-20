@@ -475,6 +475,10 @@ int main() {
         // With the bits still latched every flush misses and the open fails closed.
         Fake g(r);assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::Ok);g.mem[r.g.v.l2c2]=3u;g.mem[r.l2Status]=1u;
         assert(g.dev.open(&g,slot)!=cg::Code::Ok && g.dev.stats().miss.misses==1u && g.dev.stats().miss.vmid==8u);
+        // The diagnostic switch records the miss and goes on.
+        Fake u(r);assert(u.dev.start(r,u.hw(),u.heap,kFb)==cg::Code::Ok);u.mem[r.g.v.l2c2]=3u;u.mem[r.l2Status]=1u;
+        u.dev.setTlbUnsafe(true);
+        assert(u.dev.open(&u,slot)==cg::Code::Ok && u.dev.stats().miss.misses==1u && u.dev.stats().tlbFlushes==0u);
     }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
