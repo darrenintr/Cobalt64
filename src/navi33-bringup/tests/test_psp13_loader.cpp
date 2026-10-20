@@ -1,6 +1,7 @@
 // PSP13 sOS load: firmware pin, read-only plan, and the bootloader chain
 // against a fake PSP. Optional argv[1]: a real psp_13_0_7_sos.bin.
 #include "../src/Navi33Psp13Loader.h"
+#include "../src/Navi33ConsoleSources.h"
 #include "rx7600_ipd_fixture.h"
 #include <cassert>
 #include <cstdio>
@@ -219,6 +220,23 @@ int main(int argc,char **argv) {
     assert(c.phys==0x830000000ull && c.bytes==8100ull*1024u);
     p=pl::plan(measured(),c,{0x830000000ull,kBar0});          // this Mac's BAR0
     assert(p.state==N33_PSPL_PLAN_OK && p.fwPriMc==0x800f000000ull);
+    // 2026-10-20 21:08 bare metal (kext 0.0.63): boot_args names the firmware's
+    // console; the start-time platform console is IOPCIFamily's relocated copy.
+    {namespace cs=navi33::console;
+     const pl::Range macBar0{0x830000000ull,kBar0};
+     const cs::Source boot{0x7c00000000ull,7680u,1920u,1080u,32u,2u},
+                      plat{0x830000001ull,7680u,1920u,1080u,32u,1u};
+     assert(pl::plan(measured(),pl::bootConsole(boot.base,boot.rowBytes,boot.height),macBar0).state==
+            N33_PSPL_NO_CONSOLE);                              // the stale boot console alone
+     const cs::Resolved r=cs::resolve(boot,plat,macBar0.phys,macBar0.bytes);
+     assert(r.pick==cs::Pick::Relocated && r.phys==0x830000000ull && r.bytes==8100ull*1024u);
+     p=pl::plan(measured(),{r.phys,r.bytes},macBar0);
+     assert(p.state==N33_PSPL_PLAN_OK && p.consoleOffset==0u && p.fwPriMc==0x800f000000ull);
+     // A relocation 16 MiB away from the live HUBP surface still fails the proof.
+     cs::Source off=plat;off.base=0x831000001ull;
+     const cs::Resolved r2=cs::resolve(boot,off,macBar0.phys,macBar0.bytes);
+     assert(r2.pick==cs::Pick::Relocated &&
+            pl::plan(measured(),{r2.phys,r2.bytes},macBar0).state==N33_PSPL_APERTURE_MISMATCH);}
     // 2026-10-18, Tahoe VM with rombar=0: no boot console. The host saw the
     // firmware's 1024x768x32 framebuffer at BAR0 offset 0 (3 MiB); the guest
     // put BAR0 at 0xa0000000.

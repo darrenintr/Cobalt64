@@ -85,6 +85,26 @@ IOService *Navi33Probe::probe(IOService *provider, SInt32 *score) {
     return this;
 }
 
+// The platform console as IOPCIFamily left it at start(): physical and inside
+// the relocated BAR0 (0x830000001 on bare metal, 2026-10-20 21:08). By plan
+// time a framebuffer has replaced PE_state.video with its own mapping, so it
+// is kept from start(). Zero when start() saw no console.
+static navi33::console::Source gStartPlatform{};
+
+static navi33::console::Source platformConsole() {
+    return navi33::console::Source{static_cast<uint64_t>(PE_state.video.v_baseAddr),
+        static_cast<uint32_t>(PE_state.video.v_rowBytes),static_cast<uint32_t>(PE_state.video.v_width),
+        static_cast<uint32_t>(PE_state.video.v_height),static_cast<uint32_t>(PE_state.video.v_depth),
+        static_cast<uint32_t>(PE_state.video.v_display)};
+}
+
+static void bar0Of(IOPCIDevice *pci,uint64_t &phys,uint64_t &bytes) {
+    phys=bytes=0u;
+    if(IODeviceMemory *m=pci ? pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0) : nullptr) {
+        phys=static_cast<uint64_t>(m->getPhysicalAddress());bytes=static_cast<uint64_t>(m->getLength());
+    }
+}
+
 static void publishConsoleSources(IOService *self,IOPCIDevice *pci,const char *key);
 
 bool Navi33Probe::start(IOService *provider) {
@@ -125,6 +145,7 @@ bool Navi33Probe::start(IOService *provider) {
         (static_cast<uint32_t>(id.baseClass) << 16) |
         (static_cast<uint32_t>(id.subClass) << 8) | id.progIf), 32);
     setProperty("Navi33,SubsystemPair", static_cast<uint64_t>(pci->configRead32(0x2Cu)), 32);
+    gStartPlatform=platformConsole();
     publishConsoleSources(this,pci,"Navi33,ConsoleSourcesStart");
     // Owner probe: default off, read-only (config reads and one open/close).
     // Nothing here grants GPU access; see Navi33PciOwner.h.
@@ -719,11 +740,31 @@ n33_peek_result Navi33Probe::peekRegisters(uint32_t window,uint32_t first,
 // so from boot_args (see psp13load::bootConsole). A guest with no GOP gets the
 // host's view of the firmware console (vm/prepare-card.sh); the executors use it
 // only when boot_args has none.
-static void fillConsole(navi33::darwin_psp::Request &req) {
+// The console the PSP plan must keep clear of, by physical address. A boot
+// console inside BAR0 is used as before. On bare metal boot_args still names
+// the firmware's BAR0, so the start-time platform console is used instead when
+// it is inside BAR0 with the same geometry (console::resolve); the plan's HUBP
+// check still proves the offset. A guest with no GOP gets the host's view of
+// the firmware console (vm/prepare-card.sh), used only when boot_args has none.
+static void fillConsole(navi33::darwin_psp::Request &req,IOService *self) {
+    namespace cs=navi33::console;
+    cs::Source boot{};
     if(const auto *ba=static_cast<const boot_args *>(PE_state.bootArgs)) {
+        boot=cs::Source{ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_width,
+                        ba->Video.v_height,ba->Video.v_depth,ba->Video.v_display};
         const navi33::psp13load::Range c=navi33::psp13load::bootConsole(
             ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_height);
         req.consolePhys=c.phys;req.consoleBytes=c.bytes;
+    }
+    uint64_t bar0=0u,bar0Bytes=0u;
+    bar0Of(self ? OSDynamicCast(IOPCIDevice,self->getProvider()) : nullptr,bar0,bar0Bytes);
+    const cs::Resolved r=cs::resolve(boot,gStartPlatform,bar0,bar0Bytes);
+    if(r.pick==cs::Pick::Relocated) {req.consolePhys=r.phys;req.consoleBytes=r.bytes;}
+    if(self) {
+        char line[96];
+        snprintf(line,sizeof(line),"%s %llx bytes %llx",cs::name(r.pick),
+                 static_cast<unsigned long long>(r.phys),static_cast<unsigned long long>(r.bytes));
+        self->setProperty("Navi33,ConsolePick",line);
     }
     uint64_t hostOffset=0u,hostBytes=0u;
     req.hostConsole=PE_parse_boot_argn("navi33-hostfb-offset",&hostOffset,
@@ -740,17 +781,12 @@ static void fillConsole(navi33::darwin_psp::Request &req) {
 static void publishConsoleSources(IOService *self,IOPCIDevice *pci,const char *key) {
     namespace cs=navi33::console;
     uint64_t bar0=0u,bar0Bytes=0u;
-    if(IODeviceMemory *m=pci ? pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0) : nullptr) {
-        bar0=static_cast<uint64_t>(m->getPhysicalAddress());bar0Bytes=static_cast<uint64_t>(m->getLength());
-    }
+    bar0Of(pci,bar0,bar0Bytes);
     cs::Source boot{};
     if(const auto *ba=static_cast<const boot_args *>(PE_state.bootArgs))
         boot=cs::Source{ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_width,
                         ba->Video.v_height,ba->Video.v_depth,ba->Video.v_display};
-    const cs::Source plat{static_cast<uint64_t>(PE_state.video.v_baseAddr),
-        static_cast<uint32_t>(PE_state.video.v_rowBytes),static_cast<uint32_t>(PE_state.video.v_width),
-        static_cast<uint32_t>(PE_state.video.v_height),static_cast<uint32_t>(PE_state.video.v_depth),
-        static_cast<uint32_t>(PE_state.video.v_display)};
+    const cs::Source plat=platformConsole();
     const cs::Classified b=cs::classify(boot,bar0,bar0Bytes),p=cs::classify(plat,bar0,bar0Bytes);
     char line[400];
     snprintf(line,sizeof(line),
@@ -809,7 +845,7 @@ void Navi33Probe::runAutostart() {
             req.gfxMapSchedulerAfter=&x.schedulerAfter;
         }
         req.stopAfter=s.stopAfter;req.startAt=s.startAt;
-        fillConsole(req);
+        fillConsole(req,p);
         switch(s.mode) {
         case N33_PSP_LOAD_RUN: req.attempted=&p->pspLoadAttempted_;break;
         case N33_PSP_LOAD_RING_RUN: req.attempted=&p->pspRingAttempted_;break;
@@ -929,7 +965,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     req.autoloadGate=!killed && fwMode &&
         PE_parse_boot_argn("navi33-psp-autoload",&autoOn,sizeof(autoOn)) && autoOn==1u;
     req.stopAfter=stopAfter;req.startAt=startAt;
-    fillConsole(req);
+    fillConsole(req,this);
     publishConsoleSources(this,OSDynamicCast(IOPCIDevice,getProvider()),"Navi33,ConsoleSourcesPlan");
     IOLockLock(pspLock_);
     req.attempted=ringMode ? &pspRingAttempted_ : fwMode ? &pspFwAttempted_ :
@@ -1272,7 +1308,7 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
     } else if(gpuHost_.dev.slotOf(client,slot)) {
         c=cg::Code::BadArgs;
     } else {
-        navi33::darwin_psp::Request req{};fillConsole(req);
+        navi33::darwin_psp::Request req{};fillConsole(req,this);
         uint32_t map=0,mapOff=0,mecOff=0;
         gpuHost_.gfxMapGate=PE_parse_boot_argn("navi33-gfx-map",&map,sizeof(map)) && map==1u &&
             !(PE_parse_boot_argn("navi33-gfx-map-off",&mapOff,sizeof(mapOff)) && mapOff!=0u) &&

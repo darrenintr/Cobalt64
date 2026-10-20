@@ -460,16 +460,17 @@ output survives a hang and Linux can inspect a stuck guest.
   next card experiment needs the headless VFIO boot
   (`sudo grub-reboot cobalt64-navi33-vm && sudo poweroff`), a disk rebuilt from
   that boot's hostfb record, and explicit approval. Never modify the VBIOS.
-- **Bare-metal console capture (kext 0.0.63, 2026-10-20, offline):** read-only
-  ioreg `Navi33,ConsoleSourcesStart`/`Plan` record BAR0 and both raw console
-  sources (`boot_args->Video`, `PE_state.video`) with their classification
-  (`src/Navi33ConsoleSources.h`). No resolver yet; the plan is unchanged. Needs
-  one kill-switch-closed bare-metal stick boot to collect the values.
-  CI `39426832847` green; artifact `cache/artifact-0.0.63-ci`, UUID
-  `1F45175E-BFF8-3E5D-909C-A8245B3BCBF7`. **Staged on the stick 2026-10-20**
-  (kext and tools `diff`/`cmp`-identical to the artifact; boot-args unchanged,
-  all write kill switches set; old files in `navi33/backup-0.0.20-pre-0.0.63/`).
-  Next: the user's bare-metal boot, then read the newest `results-*-boot.txt`.
+- **Bare-metal console fix (kext 0.0.64, 2026-10-20, offline):** the 0.0.63 capture
+  (findings log, 21:08) showed `boot_args->Video` at the firmware BAR0 and the
+  start-time platform console at the relocated BAR0 with identical geometry.
+  `console::resolve()` now picks that relocated console when `boot_args` is outside
+  BAR0 (inside BAR0, same geometry only); the plan's HUBP check still proves the
+  offset. `Navi33,ConsolePick` reports the choice. Host tests cover the real values
+  (PLAN_OK) and a 16 MiB error (APERTURE_MISMATCH). Next: a kill-switch-closed
+  bare-metal boot should show `n33psp --plan` state 14. A bare-metal PSP load is
+  still a new write and needs explicit approval.
+  Local clang ASan: `test_client_gpu` overflows the default 8 MiB stack at line 381
+  on the unmodified tree too; it passes with `ulimit -s 65536`.
 - **Latest evidence:** 0.0.61, `runs/20261020-200423`, loaded/cached UUID
   `7CE1D94A-FD2C-39B0-9285-163AA3578AF5`: remap/flush written (3 HDP writes),
   FlushReadbackFailed because `0x1ff0` (8176 MiB) failed the old 256 MiB
@@ -2629,6 +2630,20 @@ parser got two of them wrong:
   bounded next-experiment requirements; `BARE_METAL_ACCELERATION_PLAN.md`
   records the longer route. No GPU/VM access, implementation change, new
   write authorization or Metal publication occurred in this audit.
+
+- **2026-10-20 21:08, kext 0.0.63 on bare-metal macOS, boot autorun** (stick file
+  `navi33/results-20261020-210817-boot.txt`). Loaded UUID
+  `1F45175E-BFF8-3E5D-909C-A8245B3BCBF7` matches the artifact. All write kill
+  switches set; nothing written.
+  - `Navi33,ConsoleSourcesStart`: BAR0 `0x830000000`+256 MiB; `boot_args->Video`
+    base `0x7c00000000`, row 7680, 1920x1080x32, display 2 -> outside BAR0;
+    `PE_state.video` base `0x830000001`, same row and geometry, display 1 ->
+    inside BAR0 at offset 0.
+  - `Navi33,ConsoleSourcesPlan` (at `n33psp --plan`): boot_args unchanged;
+    `PE_state.video` is now the kernel mapping `0xffffffdca3c00000` (virtual), as
+    0.0.6 saw. So the platform console is usable only if read at `start()`.
+  - The plan still reports state 11 (`NO_CONSOLE`), console `0x7c00000000`,
+    as expected: 0.0.63 only captures. 0.0.64 resolves the relocated console.
 
 ## Adding a register read
 

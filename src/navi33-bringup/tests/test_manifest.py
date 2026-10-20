@@ -284,7 +284,13 @@ assert "navi33::darwin_psp::execute(pci,req)" in load_fn
 # pspLoad() and the autostart share fillConsole() (kext 0.0.25).
 console_fn=source[source.index("static void fillConsole("):]
 console_fn=console_fn[:console_fn.index("\n}\n")]
-assert "fillConsole(req);" in load_fn
+assert "fillConsole(req,this);" in load_fn
+# Bare metal (2026-10-20 21:08): boot_args names the firmware's BAR0, so the
+# platform console captured at start() may replace it, only through
+# console::resolve (inside BAR0, same geometry); the plan's HUBP check stays.
+assert "gStartPlatform=platformConsole();" in source
+assert "cs::resolve(boot,gStartPlatform," in console_fn
+assert "if(r.pick==cs::Pick::Relocated)" in console_fn
 assert "PE_state.bootArgs" in console_fn and "psp13load::bootConsole(" in console_fn
 assert "getConsoleInfo" not in load_fn and "getConsoleInfo" not in console_fn
 # A guest without a GOP (Tahoe VM, 2026-10-18) may name the host's view of

@@ -253,7 +253,7 @@ $(BUILD)/test-psp13-ring-run: tests/test_psp13_ring_run.cpp $(PSP_RING_DEPS)
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_psp13_ring_run.cpp -o $@
 
-$(BUILD)/test-psp13-loader: tests/test_psp13_loader.cpp src/Navi33Psp13Loader.h src/Navi33Psp13Firmware.h src/Navi33FirmwareGuard.h src/Navi33Sha256.h src/Navi33Dcn321.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33HardwarePlan.h src/Navi33NativeABI.h tests/rx7600_ipd_fixture.h
+$(BUILD)/test-psp13-loader: tests/test_psp13_loader.cpp src/Navi33Psp13Loader.h src/Navi33Psp13Firmware.h src/Navi33FirmwareGuard.h src/Navi33Sha256.h src/Navi33Dcn321.h src/Navi33Gmc11VramLive.h src/Navi33Gmc11VramGeometry.h src/Navi33HardwarePlan.h src/Navi33NativeABI.h tests/rx7600_ipd_fixture.h src/Navi33ConsoleSources.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_psp13_loader.cpp -o $@
 

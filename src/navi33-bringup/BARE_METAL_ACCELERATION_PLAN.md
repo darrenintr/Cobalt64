@@ -69,6 +69,15 @@ feeds the plan yet: `fillConsole()` is unchanged, so bare metal still reports
 NO_CONSOLE. Next: one kill-switch-closed bare-metal boot to capture these
 values, then design the resolver from them.
 
+**Result and resolver (2026-10-20, kext 0.0.64, offline):** the 21:08 bare-metal
+capture showed `boot_args->Video` at `0x7c00000000` (outside BAR0) and the
+start-time `PE_state.video` at `0x830000001` (inside BAR0, offset 0, same
+1920x1080x32 geometry); at plan time `PE_state.video` is a kernel mapping.
+`console::resolve()` keeps a boot console inside BAR0, otherwise uses the
+start-time platform console only when it is inside BAR0 with identical geometry,
+and otherwise picks nothing. `planWindow()`'s HUBP proof is unchanged. Next: a
+kill-switch-closed bare-metal boot reaching PLAN_OK.
+
 ## 2. Establish reliable KIQ transport, then the graphics queue
 
 See the pinned upstream comparison and raw-run identities in

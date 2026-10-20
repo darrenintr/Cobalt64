@@ -33,5 +33,27 @@ int main() {
     assert(c::classify(c::Source{bar0,7680u,1920u,1080u,32u,1u},0u,0u).where==c::Where::OutsideBar0);
     for(auto w:{c::Where::Empty,c::Where::Virtual,c::Where::BadGeometry,c::Where::OutsideBar0,c::Where::InsideBar0})
         assert(c::name(w)[0]!='?');
-    std::puts("Navi33 console sources: boot/platform consoles classified against BAR0 (pure, no hardware)");
+    // resolve(): the 2026-10-20 21:08 bare-metal values pick the relocated console.
+    {const c::Source boot{0x7c00000000ull,7680u,1920u,1080u,32u,2u},
+                     plat{0x830000001ull,7680u,1920u,1080u,32u,1u};
+     const c::Resolved r=c::resolve(boot,plat,bar0,bar0Bytes);
+     assert(r.pick==c::Pick::Relocated && r.phys==bar0 && r.bytes==7680ull*1080u);
+     // A boot console inside BAR0 always wins (unchanged behaviour).
+     assert(c::resolve(plat,c::Source{},bar0,bar0Bytes).pick==c::Pick::Boot);
+     // Geometry must match exactly, or nothing is picked.
+     c::Source other=plat;other.height=768u;
+     assert(c::resolve(boot,other,bar0,bar0Bytes).pick==c::Pick::None);
+     other=plat;other.rowBytes=8192u;
+     assert(c::resolve(boot,other,bar0,bar0Bytes).pick==c::Pick::None);
+     // A platform console read late (kernel mapping) or outside BAR0 is not used.
+     other=plat;other.base=0xffffffdca3c00000ull;
+     assert(c::resolve(boot,other,bar0,bar0Bytes).pick==c::Pick::None);
+     other=plat;other.base=0x7c00000001ull;
+     assert(c::resolve(boot,other,bar0,bar0Bytes).pick==c::Pick::None);
+     // No boot console (the GOP-less VM): never guessed from the platform.
+     assert(c::resolve(c::Source{},plat,bar0,bar0Bytes).pick==c::Pick::None);
+     // No BAR0 known: nothing.
+     assert(c::resolve(boot,plat,0u,0u).pick==c::Pick::None);
+     assert(c::name(c::Pick::Relocated)[0]=='r');}
+    std::puts("Navi33 console sources: boot/platform consoles classified against BAR0, relocated console resolved (pure, no hardware)");
 }

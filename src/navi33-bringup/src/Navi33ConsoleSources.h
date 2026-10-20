@@ -4,7 +4,7 @@
 // On bare metal boot_args->Video names the firmware console at 0x7c00000000
 // (the firmware's 8 GiB BAR0), while macOS runs BAR0 at 0x830000000, 256 MiB
 // (AGENTS.md, 2026-10-19 08:47). This header only classifies each raw source
-// against the live BAR0; it does not pick a console or feed the plan. No I/O.
+// against the live BAR0, and resolve() picks the console the PSP plan checks. No I/O.
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
@@ -43,5 +43,32 @@ inline Classified classify(const Source &s,uint64_t bar0Phys,uint64_t bar0Bytes)
         c.where=Where::InsideBar0;c.bar0Offset=c.phys-bar0Phys;return c;
     }
     c.where=Where::OutsideBar0;return c;
+}
+// Which console the PSP plan should check. The 2026-10-20 21:08 bare-metal
+// capture showed boot_args->Video at the firmware's BAR0 (0x7c00000000,
+// outside), while the platform console read at start() was IOPCIFamily's
+// relocated copy, 0x830000001, inside BAR0 with identical geometry; by plan
+// time a framebuffer had replaced it with a kernel mapping. So: a boot console
+// inside BAR0 wins as before; otherwise the start-time platform console is used
+// only when it is inside BAR0 and its geometry equals the boot console's. Any
+// other combination resolves to nothing (the plan then reports NO_CONSOLE).
+// This picks the console the plan checks; plan()'s live HUBP surface check
+// still has to prove the offset before any write.
+enum class Pick : uint8_t { None=0, Boot, Relocated };
+struct Resolved { Pick pick=Pick::None; uint64_t phys=0u, bytes=0u; };
+inline bool sameGeometry(const Source &a,const Source &b) {
+    return a.rowBytes==b.rowBytes && a.width==b.width && a.height==b.height && a.depth==b.depth;
+}
+inline Resolved resolve(const Source &boot,const Source &startPlatform,
+                        uint64_t bar0Phys,uint64_t bar0Bytes) {
+    const Classified b=classify(boot,bar0Phys,bar0Bytes);
+    if(b.where==Where::InsideBar0)return Resolved{Pick::Boot,b.phys,b.bytes};
+    const Classified p=classify(startPlatform,bar0Phys,bar0Bytes);
+    if(b.where==Where::OutsideBar0 && p.where==Where::InsideBar0 && sameGeometry(boot,startPlatform))
+        return Resolved{Pick::Relocated,p.phys,p.bytes};
+    return Resolved{};
+}
+inline const char *name(Pick k) {
+    return k==Pick::Boot ? "boot" : k==Pick::Relocated ? "relocated" : "none";
 }
 } } // namespace navi33::console
