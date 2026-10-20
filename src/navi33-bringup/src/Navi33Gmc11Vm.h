@@ -72,6 +72,15 @@ public:
         }
         return Code::Ok;
     }
+    // Give every table page back to the heap. Only once no context can walk them
+    // any more (the context is disabled and its TLB flushed).
+    void destroy() {
+        if(!heap_)return;
+        for(size_t i=0;i<n_;++i)heap_->free(t_[i].h);
+        if(root_.h.gen)heap_->free(root_.h);
+        for(Table &t:t_)t=Table{};
+        n_=0u;root_=Table{};heap_=nullptr;
+    }
     // The VRAM offset of the PTB covering va, if it exists (for tests and diagnostics).
     bool ptbOf(uint64_t va,uint64_t &ptb) { return ready() && walk(va,false,ptb)==Code::Ok; }
 private:
