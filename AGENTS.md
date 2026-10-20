@@ -408,9 +408,10 @@ output survives a hang and Linux can inspect a stuck guest.
   `GCVM_L2_CNTL2` invalidate bits; no engine ACKs, and clearing the bits did not release it
   in that boot (0.0.47, 14:1x: `L2_STATUS 1->1`, 5 flush misses, opens fail closed).
 - **Next, after the user's full power-off** (`sudo grub-reboot cobalt64-navi33-vm && sudo
-  poweroff`, power button): run `src/navi33-bringup/vm/cold-run.sh` (artifact-0.0.48 cached;
+  poweroff`, power button): run `src/navi33-bringup/vm/cold-run.sh` (artifact-0.0.52 cached;
   autostart + client GPU + GOPFB in one boot, nine clients with slot reuse, repeat 200, N48N,
-  screen dump). Expect `L2_STATUS 0->0`, flushes > 0, misses 0, every client exact. If the
+  `vkfill` through RADV, gfx ring report `Navi33,ClientGfx`, screen dump). Expect `L2_STATUS
+  0->0`, flushes > 0, misses 0, every client exact, `ClientGfx state 7`, VKFILL OK. If the
   engine still never ACKs on a fresh hub, next suspects: CONTEXT0 not enabled (upstream
   `enable_system_domain`), protection-fault default address, halted SDMA.
 - **RADV on the card (2026-10-20 14:2x-14:48):** `.github/workflows/navi33-mesa.yml` builds Mesa
@@ -2182,6 +2183,23 @@ parser got two of them wrong:
     probably because some L1 client (halted SDMA, unstarted gfx pipe) never answers; a busy L2
     serves no invalidation engine. 0.0.47 never sets the bits, clears them at start, records
     `L2_CNTL2`/`L2_STATUS` before/after in `Navi33,ClientGpu`, and flushes per VMID on engine 17.
+
+- **2026-10-20 14:50-15:20, kext 0.0.49..0.0.52 (G40, the gfx pipe), same host boot `347bf886-…`
+  (hub L2 still busy): PFP/ME started, RB0 never fetched.** Runs via `client-gpu.sh`, report
+  `Navi33,ClientGfx`.
+  - 0.0.49: `CP_ME_CNTL` came up **`0x153c0000`** (PFP/ME/CE halted and all four PFP/ME pipe
+    resets set); the code wrote the read value back as the "release", pipes stayed in reset,
+    `CP_STAT` stuck `0x8002c000` after the unhalt. 0.0.50 clears the resets explicitly.
+  - 0.0.50: pipes out of reset and running (`CP_ME_CNTL` `0x01000000`, only CE halted; `CP_STAT`
+    0), ring written (WPTR 0x3c8 by `CP_RB0_WPTR` register) but **RB0 never fetched** (RPTR 0).
+    Upstream's default gfx ring is a KIQ-mapped gfx HQD (`amdgpu_async_gfx_ring` 1); the legacy RB0
+    path and Navi48's RB0 kick by doorbell, so 0.0.51 uses doorbell dword 0x116 (byte 0x458),
+    RB range 0x458..0x7f8 and the MEC range moved to 0..0x450.
+  - 0.0.51/0.0.52: after re-halting, `CP_STAT` stayed `0x80000000` (CP_BUSY only) and, with the
+    wait made non-fatal as upstream, the ring + doorbell still gave RPTR 0. Not judged on this
+    power cycle: the hub L2 has been busy with the never-finished all-L1 invalidation, and the gfx
+    CP's L1 (never started before) is the likeliest client that never answered it. The cold run
+    tests flush, gfx ring and RADV together.
 
 ## Adding a register read
 
