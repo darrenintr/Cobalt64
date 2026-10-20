@@ -78,7 +78,7 @@ struct Fake {
         const uint32_t qs=mq::grbmSelect(1,0,1);
         if(deaf || !(bank[{qs,mq::hqd(r.v.q,kiq::kCpHqdActive)}]&1u))return;
         if(!loaded) {
-            assert(bank[{qs,mq::hqd(r.v.q,kiq::kCpHqdVmid)}]==1u);
+            assert((bank[{qs,mq::hqd(r.v.q,kiq::kCpHqdVmid)}]==1u));
             const uint64_t mqd=bank[{qs,mq::hqd(r.v.q,0x1fa9u)}]|(uint64_t(bank[{qs,mq::hqd(r.v.q,0x1faau)}])<<32);
             assert(mqd==l.windowMc+4096u*vg::kMqdPage);
             loaded=true;
@@ -204,7 +204,7 @@ int main() {
         assert(f.vram[(251u*4096u)/4u]==vg::kFenceValue && f.vram[(4u*4096u)/4u]!=vg::kFenceValue);
         assert(f.mem[r.v.ctx]==0x01fffe07u && f.mem[r.v.endLo]==0xffffffffu && f.mem[r.v.endHi]==0xfu &&
                f.mem[r.v.baseLo]==0x0fc00001u && f.mem[r.v.l1]==0x1859u);
-        assert(f.bank[{0u,r.shMem}]==0x0000c000u);   // VMID 0 untouched
+        assert((f.bank[{0u,r.shMem}]==0x0000c000u));   // VMID 0 untouched
         assert(f.mem[r.v.q.grbm]==0u && o.register_writes==f.writes.size() && f.writes.size()<=vg::kMaxWrites);
         o=vg::execute(r,f.l,f.s,co.data(),co.size(),f.hw(),true,true,attempted);
         assert(o.state==N33_PSPL_VMG_BAD_PRECONDITION && o.register_writes==0u);
