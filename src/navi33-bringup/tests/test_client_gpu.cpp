@@ -152,8 +152,8 @@ struct Fake {
             f.mem[f.r.invAck]=f.noAck ? 0u : ack;++f.flushes;
         }
         if(off==f.r.dequeue && v==cg::kDrainPipe && !f.stuck)f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdActive)}]=0u;
-        // GRBM select: 0, a VMID (SH_MEM), or a client HQD: never MES's queues 2+ or pipe 0.
-        if(off==f.r.g.v.q.grbm && v && !(v&0xf0u))assert(((v>>2)&3u)==1u && (v&3u)>=1u && ((v>>8)&7u)<=1u);
+        // GRBM select: 0, a VMID (SH_MEM), or a client HQD: never MES's queues 2+, never pipe 0 queue 0 (G34's).
+        if(off==f.r.g.v.q.grbm && v && !(v&0xf0u))assert(((v>>2)&3u)==1u && ((v>>8)&7u)<=1u && ((v&3u) || ((v>>8)&7u)==1u));
         if(off==f.r.g.v.q.poll1)for(uint32_t i=0;i<cg::kClients;++i)if(v&cg::pollBit(i))f.runQueue(cg::kFirstVmid+i);
 
         return true;
@@ -428,7 +428,7 @@ int main() {
     {   Fake f(r);
         f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;f.bank[{qsOf(5),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
         assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.dev.stats().db.reclaimed==2u);
-        assert(f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && f.mem[r.g.v.q.grbm]==0u);
+        assert((f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && f.mem[r.g.v.q.grbm]==0u));
         uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==0u && (f.mem[r.pqStatus]&2u));
         Fake g(r);g.stuck=true;g.bank[{qsOf(3),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::Ok && g.dev.stats().db.reclaimed==0u &&

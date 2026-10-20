@@ -37,14 +37,17 @@ namespace kiq=gfx11_kiq;
 namespace gd=gfx11_dispatch;
 namespace v1=vmid1;
 constexpr uint32_t kFirstVmid=2u, kClients=6u;                 // VMIDs 2..7
-// Each client's HQD: queue 0 or 1 of MEC pipe 1..3. Queues 2 and up of every pipe belong
-// to MES (amdgpu_mes: compute_hqd_mask 0xc, and MES runs since the autostart): on the
-// card (2026-10-20 09:37) queue 3 never took its WPTR, queue 4 was active before use and
-// queue 5 went inactive on its own. Queues 0/1 of pipe 0 carry G34-G39.
-constexpr uint32_t pipeOf(uint32_t slot) { return 1u+slot/2u; }
-constexpr uint32_t queueOf(uint32_t slot) { return slot%2u; }
+// Each client's HQD. Queues 2 and up of every pipe belong to MES (amdgpu_mes:
+// compute_hqd_mask 0xc; MES runs since the autostart): on the card (2026-10-20 09:37)
+// queue 3 never took its WPTR, queue 4 was active before use, queue 5 went inactive by
+// itself. Pipes 1..3 (queues 0/1) never fetched either (09:43..10:01). The only queues
+// that ever executed after load are pipe 0 queues 0/1 (G34-G36, G35's re-poll), so slot 0
+// is pipe 0 queue 1 (G36-G39's queue, never used with them in one power cycle), the rest
+// stay on pipes 1..3 until it is known why those do not run.
+constexpr uint32_t pipeOf(uint32_t slot) { return slot ? 1u+(slot-1u)/2u : 0u; }
+constexpr uint32_t queueOf(uint32_t slot) { return slot ? (slot-1u)%2u : 1u; }
 constexpr uint32_t pollBit(uint32_t slot) { return 1u<<(8u*pipeOf(slot)+queueOf(slot)); }   // CP_PQ_WPTR_POLL_CNTL1 mask
-static_assert(pipeOf(5)==3u && queueOf(5)==1u && pollBit(0)==0x100u,"client HQDs");
+static_assert(pipeOf(0)==0u && queueOf(0)==1u && pipeOf(5)==3u && queueOf(5)==0u && pollBit(0)==0x2u,"client HQDs");
 constexpr uint32_t kMaxBos=512u, kMaxIbs=16u;
 // The client's queue lives below the first user page (Mesa's amdgpu VA manager starts at
 // 0x10000 and runs to the GMC hole), page 0 left unmapped so a null GPU pointer faults.
@@ -386,10 +389,11 @@ public:
         const uint32_t wp[2]={static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32)};
         if(!vramPut(c->queue.vram+mq::kWptrOff,wp,2u)){quarantine(*c);return Code::Quarantined;}
         c->wptr=end;c->emitted=s;c->seqEnd[s%64u]=end;
-        // Kick: the queue's doorbell, as gfx_v11_0_ring_set_wptr_compute. On the card
-        // (2026-10-20 09:37..09:48) neither the one-shot poll nor an MMIO write of an
-        // active HQD's WPTR moved a VMID != 0 queue (PQ_WPTR read back 0).
-        if(!h_.doorbell(h_.ctx,doorbellByte(slot),end)){quarantine(*c);return Code::Quarantined;}
+        // Kick: the queue's doorbell, as gfx_v11_0_ring_set_wptr_compute, and the one-shot
+        // WPTR poll that moved G35's queue. On the card (2026-10-20 09:37..10:01) neither
+        // alone moved a client queue on pipes 1..3 or pipe 0 queue >= 2.
+        if(!h_.doorbell(h_.ctx,doorbellByte(slot),end) || !sel(qsel(slot)) || !wr(r_->g.v.q.poll1,pollBit(slot)) ||
+           !sel(0u)){quarantine(*c);return Code::Quarantined;}
         seq=s;return Code::Ok;
     }
     // Wait until seq retired (timeoutUs 0: just poll once).

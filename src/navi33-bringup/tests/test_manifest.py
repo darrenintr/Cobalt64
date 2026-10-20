@@ -652,3 +652,27 @@ assert 'if(b.ip_type==N48N_HW_IP_GFX)return R::Unsupported;' in front          #
 for forbidden in ('<IOKit/','IOLog(','WREG32('):
     assert forbidden not in front
 print('Navi33 N48N front end: gate, root, revoke-before-free, compute only: passed')
+
+# CI's glibc defines assert(expr) with ONE parameter: a comma outside parentheses in an
+# assert (e.g. inside braces) breaks the build there while a variadic local glibc accepts it.
+def _top_level_comma(expr):
+    depth=0
+    for ch in expr:
+        if ch=='(': depth+=1
+        elif ch==')': depth-=1
+        elif ch==',' and depth==0: return True
+    return False
+_bad=[]
+for _p in sorted((root/'tests').glob('*.cpp')):
+    _s=_p.read_text();_i=0
+    while True:
+        _j=_s.find('assert(',_i)
+        if _j<0: break
+        if _j and (_s[_j-1].isalnum() or _s[_j-1]=='_'): _i=_j+7; continue
+        _k=_j+7;_d=1
+        while _d:
+            _d+= {'(':1,')':-1}.get(_s[_k],0);_k+=1
+        if _top_level_comma(_s[_j+7:_k-1]): _bad.append(f'{_p.name}:{_s.count(chr(10),0,_j)+1}')
+        _i=_k
+assert not _bad, f'assert with a top-level comma (wrap it in extra parentheses): {_bad}'
+print('Host tests: no assert with a top-level comma (single-argument glibc assert): passed')

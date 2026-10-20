@@ -126,7 +126,8 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      `--autostart`. Not acceleration (rule 6 unchanged). Kext 0.0.30 adds the N48N user
      client (type 'N48N', RADV's Darwin ABI, selectors 0..8, compute IBs only) on the same
      contexts and gate. Since kext 0.0.34 client queues are queue 0/1 of MEC pipes 1..3
-     (queues 2+ are MES's). Since kext 0.0.36 queues are kicked by doorbell, as upstream gfx11:
+     (queues 2+ are MES's); since 0.0.38 slot 0 is pipe 0 queue 1 (G36-G39's queue, so a
+     client run and those stages do not share a power cycle). Since kext 0.0.36 queues are kicked by doorbell, as upstream gfx11:
      the gate also allows `CP_MEC_DOORBELL_RANGE_LOWER/UPPER` (0 / 0x450, only if the range
      found does not cover ours; the card came up with 0x110..0xffc), NBIO
      `RCC_DEV0_EPF0_RCC_DOORBELL_APER_EN` bit 0 and `CP_PQ_STATUS.DOORBELL_ENABLE` (bit 1)
