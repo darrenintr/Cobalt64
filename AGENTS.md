@@ -1979,7 +1979,8 @@ parser got two of them wrong:
   `C77872A1-4C8E-35F0-AC46-9525F7F3358E`, cached `artifact-0.0.29`). The permission check
   blocked the agent from starting either VM run even after the user's "please do it for me";
   the user runs them with `!`: `vm/client-gpu.sh` (B4, uses --autostart; kext 0.0.30 adds
-  `n33n48n`, the N48N/RADV path, and CPU-mapping revocation; uses `artifact-0.0.30`) or `vm/stage.sh vma
+  `n33n48n`, the N48N/RADV path, and CPU-mapping revocation; uses `artifact-0.0.30`, CI run
+  39352360924 all green, UUID `8B7DE50A-D342-344D-BADA-4FED27C44BF6`) or `vm/stage.sh vma
   "--vm-gradient" "--vm-alloc-plan --fw gradient.co" "--vm-alloc --fw gradient.co"` (G39, needs
   an untouched GFXHUB: one of G36/G38/G39/B4 per power cycle, since B4 also sets the hub).
 
