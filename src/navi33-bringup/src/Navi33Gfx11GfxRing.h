@@ -62,6 +62,14 @@ constexpr uint32_t kTileSteeringValue=0u;                   // gfx.config.pa_sc_
 // Ring memory (bytes from its start): ring, RPTR report, WPTR poll word, ring-test fence.
 constexpr uint32_t kRingOff=0u, kRptrOff=kRingBytes, kWptrOff=kRingBytes+8u, kFenceOff=kRingBytes+0x100u;
 constexpr uint32_t kMemBytes=kRingBytes+0x1000u, kFenceValue=0x0c0b1640u;
+constexpr uint32_t kKernelFenceOff=kFenceOff+8u;            // the kernel's own sequence on this ring
+// amdgpu_ib_schedule() on a gfx11 gfx ring: gfx_v11_0_ring_emit_cntxcntl with AMDGPU_HAVE_CTX_SWITCH
+// (load_enable 0x80000000 | global config/uconfig 0x8001 | cs_sh_regs 0x01000000 | per-context
+// state + gfx_sh_regs 0x10002), FRAME_CONTROL start (nvd.h 0x90, FRAME_CMD(0)) before the IBs and
+// FRAME_CMD(1) after, gfx_v11_0_ring_emit_ib_gfx (control = length | vmid << 24, no VALID bit).
+constexpr uint32_t kFrameControl=0x90u, kFrameStart=0u, kFrameEnd=1u<<28;
+constexpr uint32_t kCntxCntlSwitch=0x80000000u|0x8001u|0x01000000u|0x10002u;
+constexpr uint32_t ibControl(uint32_t dwords,uint32_t vmid) { return dwords|(vmid<<24); }
 constexpr uint32_t kStatTimeoutUs=100000u, kFenceTimeoutUs=1000000u;
 
 struct Regs {

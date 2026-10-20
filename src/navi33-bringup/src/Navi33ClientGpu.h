@@ -105,6 +105,9 @@ constexpr uint32_t kFaultVmidShift=20u, kFaultVmidMask=0xf00000u;
 // The queue buffer at its own MC address, mec_queue's layout: page 0 unmapped, EOP 0x1000, ring
 // 0x2000 (GPU read-only), RPTR/WPTR 0x3000/0x3008, fence 0x4000.
 constexpr uint32_t kQueueBytes=0x5000u, kRingDwords=mq::kRingBytes/4u;
+// The client's fence for its submissions on the kernel's gfx ring, next to the compute fence.
+constexpr uint32_t kGfxFenceOff=mq::kFenceOff+0x10u;
+constexpr uint32_t kGfxSubmitMaxDwords=3u+2u+4u*kMaxIbs+2u+8u+8u+8u+8u;   // cntxcntl, frames, IBs, 3 fences, pad
 constexpr uint32_t kSubmitMaxDwords=4u*kMaxIbs+8u+8u+8u;       // IBs, user fence, fence, padding
 constexpr uint32_t kTlbTimeoutUs=100000u, kDequeueTimeoutMs=1000u;
 
@@ -180,7 +183,8 @@ struct Client {
     Bo queue{}, mqd{};
     uint64_t wptr=0;                        // dwords written to the ring, monotonic
     uint64_t emitted=0, retired=0;          // sequence numbers (the fence holds the low 32 bits)
-    uint64_t seqEnd[64]{};                  // ring position after seq (modulo 64)
+    uint64_t seqEnd[64]{};                  // compute ring position after seq (modulo 64)
+    uint64_t gfxMask=0;                     // bit seq % 64: that submission went to the gfx ring
     uint32_t vmid=0, faultStatus=0, faultAddr=0;
     QueueSnap snap{};
     bool loaded=false;          // the HQD is loaded at the first submission (see submit)
@@ -435,7 +439,60 @@ public:
         const uint32_t rel[8]={gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,
                                static_cast<uint32_t>(fence),static_cast<uint32_t>(fence>>32),static_cast<uint32_t>(s),0u,0u};
         for(uint32_t v:rel)p[k++]=v;
+        c->gfxMask&=~(1ull<<(s%64u));
         if(!push(*c,p,k)){quarantine(*c);return Code::Quarantined;}
+        seq=s;return Code::Ok;
+    }
+    bool gfxReady() const { return gfx_.state==GfxState::Ok; }
+    // A graphics submission (G40): the IBs run on the kernel's gfx ring in the client's VMID, as
+    // amdgpu_ib_schedule() emits them; the client's gfx fence (and its user fence) are written at MC
+    // addresses, since the ring itself runs in VMID 0. Sequence numbers are shared with the client's
+    // compute submissions and retire in order across both (poll).
+    Code submitGfx(uint32_t slot,const Ib *ibs,uint32_t n,uint64_t &seq,uint64_t userFence=0) {
+        namespace gr=gfx_ring;
+        Client *c=live(slot);
+        if(!c)return Code::NotFound;
+        if(c->state!=State::Open)return stateCode(*c);
+        if(!gfxReady())return Code::NotReady;
+        if(!ibs || !n || n>kMaxIbs)return Code::BadArgs;
+        for(uint32_t i=0;i<n;++i)
+            if(!ibs[i].dwords || ibs[i].dwords>=(1u<<20) || (ibs[i].va&3u) ||
+               !mapped(*c,ibs[i].va,4ull*ibs[i].dwords,gv::kPteRead|gv::kPteExec))return Code::BadArgs;
+        uint64_t ufMc=0;
+        if(userFence && ((userFence&7u) || !mapped(*c,userFence,8u,gv::kPteWrite) || !vaToMc(*c,userFence,ufMc)))
+            return Code::BadArgs;
+        poll(*c);gfxPoll();
+        if(c->state!=State::Open)return stateCode(*c);
+        if(c->emitted-c->retired>=63u || gfxSeq_-gfxRetired_>=63u ||
+           gfxWptr_+kGfxSubmitMaxDwords-gfxEnd_[gfxRetired_%64u]>gr::kRingDwords)return Code::Busy;
+        const uint64_t s=c->emitted+1u, ks=gfxSeq_+1u, mem=fbBase_+gfxMemVram_;
+        uint32_t p[kGfxSubmitMaxDwords];uint32_t k=0;
+        p[k++]=gd::packet3(gr::kContextControl,1u);p[k++]=gr::kCntxCntlSwitch;p[k++]=0u;
+        p[k++]=gd::packet3(gr::kFrameControl,0u);p[k++]=gr::kFrameStart;
+        for(uint32_t i=0;i<n;++i) {
+            p[k++]=gd::packet3(kIndirectBuffer,2u);
+            p[k++]=static_cast<uint32_t>(ibs[i].va);p[k++]=static_cast<uint32_t>(ibs[i].va>>32)&0xffffu;
+            p[k++]=gr::ibControl(ibs[i].dwords,c->vmid);
+        }
+        p[k++]=gd::packet3(gr::kFrameControl,0u);p[k++]=gr::kFrameEnd;
+        if(userFence) {
+            const uint32_t u[8]={gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,2u<<29,
+                                 static_cast<uint32_t>(ufMc),static_cast<uint32_t>(ufMc>>32),
+                                 static_cast<uint32_t>(s),static_cast<uint32_t>(s>>32),0u};
+            for(uint32_t v:u)p[k++]=v;
+        }
+        k+=gr::buildFence(p+k,fbBase_+c->queue.vram+kGfxFenceOff,static_cast<uint32_t>(s));
+        k+=gr::buildFence(p+k,mem+gr::kKernelFenceOff,static_cast<uint32_t>(ks));
+        while(k%8u)p[k++]=mq::kNop;
+        for(uint32_t i=0;i<k;++i) {
+            const uint32_t at=static_cast<uint32_t>((gfxWptr_+i)%gr::kRingDwords);
+            if(!vramPut(gfxMemVram_+gr::kRingOff+4u*at,&p[i],1u))return Code::HwFailed;
+        }
+        const uint64_t end=gfxWptr_+k;
+        const uint32_t wp[2]={static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32)};
+        if(!vramPut(gfxMemVram_+gr::kWptrOff,wp,2u) || !h_.doorbell(h_.ctx,gr::kDoorbellByte,end))return Code::HwFailed;
+        gfxWptr_=end;gfxSeq_=ks;gfxEnd_[ks%64u]=end;
+        c->seqEnd[s%64u]=c->wptr;c->gfxMask|=1ull<<(s%64u);c->emitted=s;
         seq=s;return Code::Ok;
     }
     // Wait until seq retired (timeoutUs 0: just poll once).
@@ -593,6 +650,7 @@ private:
         const uint32_t wp[2]={k,0u};
         if(!vramPut(gfxMemVram_+gr::kRingOff,p,k) || !vramPut(gfxMemVram_+gr::kWptrOff,wp,2u) ||
            !h_.doorbell(h_.ctx,gr::kDoorbellByte,k))return;
+        gfxWptr_=k;gfxSeq_=gfxRetired_=0;for(uint64_t &e:gfxEnd_)e=k;
         gfx_.wptr=k;gfx_.state=GfxState::Timeout;
         for(uint32_t us=0;us<gr::kFenceTimeoutUs;us+=100u) {
             h_.vramRead(h_.ctx,gfxMemVram_+gr::kFenceOff,&gfx_.fence,1u);
@@ -711,16 +769,37 @@ private:
         c.snap=s;
     }
     uint64_t retiredWptr(const Client &c) const { return c.retired ? c.seqEnd[c.retired%64u] : 0u; }
+    // The kernel's gfx ring: its own sequence (the last fence of every submission) for ring space.
+    void gfxPoll() {
+        uint32_t f=0;
+        if(!h_.vramRead(h_.ctx,gfxMemVram_+gfx_ring::kKernelFenceOff,&f,1u))return;
+        const uint64_t s=expand(gfxSeq_,f);
+        if(s>gfxRetired_ && s<=gfxSeq_)gfxRetired_=s;
+    }
+    // The MC address of a client VA inside one of its live buffers.
+    bool vaToMc(const Client &c,uint64_t va,uint64_t &mc) const {
+        for(const Bo &b:c.bo)if(b.live && b.va && va>=b.va && va-b.va<b.bytes){mc=fbBase_+b.vram+(va-b.va);return true;}
+        return false;
+    }
     // Read the fence and the hub's fault status; a fault in this VMID ends the client.
+    // A fence holds the low 32 bits of the last sequence number its ring retired.
+    static uint64_t expand(uint64_t emitted,uint32_t f) {
+        const uint64_t cand=(emitted&~0xffffffffull)|f;
+        return cand>emitted ? cand-(1ull<<32) : cand;
+    }
     void poll(Client &c) {
         if(c.state!=State::Open)return;
-        uint32_t f=0,st=0,addr=0;
-        if(!h_.vramRead(h_.ctx,c.queue.vram+mq::kFenceOff,&f,1u) || !rd(r_->g.v.faultStatus,st) ||
-           !rd(r_->g.v.faultAddr,addr)) {quarantine(c);return;}
-        // The fence holds the low 32 bits of the last retired sequence number.
-        const uint64_t cand=(c.emitted&~0xffffffffull)|f;
-        const uint64_t seq=cand>c.emitted ? cand-(1ull<<32) : cand;
-        if(seq>c.retired && seq<=c.emitted)c.retired=seq;
+        uint32_t f=0,fg=0,st=0,addr=0;
+        if(!h_.vramRead(h_.ctx,c.queue.vram+mq::kFenceOff,&f,1u) || !h_.vramRead(h_.ctx,c.queue.vram+kGfxFenceOff,&fg,1u) ||
+           !rd(r_->g.v.faultStatus,st) || !rd(r_->g.v.faultAddr,addr)) {quarantine(c);return;}
+        // Each ring retires in order and its fence carries the client's sequence numbers, so seq s
+        // is done once the fence of the ring s went to has reached it; retire in order across both.
+        const uint64_t cs=expand(c.emitted,f), gs=expand(c.emitted,fg);
+        while(c.retired<c.emitted) {
+            const uint64_t s=c.retired+1u, done=(c.gfxMask>>(s%64u))&1u ? gs : cs;
+            if(done<s || done>c.emitted)break;
+            c.retired=s;
+        }
         if(st && st!=faultSeen_ && ((st&kFaultVmidMask)>>kFaultVmidShift)==c.vmid) {
             c.faultStatus=st;c.faultAddr=addr;c.state=State::Faulted;
         }
@@ -758,7 +837,7 @@ private:
         c.state=State::Free;c.owner=nullptr;c.queue=Bo{};c.mqd=Bo{};
         for(Bo &b:c.bo)b=Bo{};
         for(uint64_t &e:c.seqEnd)e=0u;
-        c.wptr=c.emitted=c.retired=0u;c.vmid=c.faultStatus=c.faultAddr=0u;c.loaded=false;
+        c.wptr=c.emitted=c.retired=0u;c.gfxMask=0u;c.vmid=c.faultStatus=c.faultAddr=0u;c.loaded=false;
     }
     const Regs *r_=nullptr; Hw h_{}; vh::Heap *heap_=nullptr; uint64_t fbBase_=0;
     Client c_[kClients]{};
@@ -768,6 +847,7 @@ private:
     DoorbellSetup db_{};
     FlushMiss miss_{}; HubL2 l2_{}; bool tlbUnsafe_=false;
     GfxReport gfx_{}; vh::Handle gfxMem_{}; uint64_t gfxMemVram_=0;
+    uint64_t gfxWptr_=0, gfxSeq_=0, gfxRetired_=0, gfxEnd_[64]{};
     uint32_t hqdStart_[kHqdDumpQueues][kHqdDumpCount]{}; bool hqdStartOk_[kHqdDumpQueues]{};
     bool started_=false;
 };

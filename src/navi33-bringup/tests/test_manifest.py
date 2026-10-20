@@ -648,10 +648,12 @@ assert n48c.index('revokeCpuMappings(static_cast<uint32_t>(args->scalarInput[0])
 assert n48c.index('revokeCpuMappings(0u);') < n48c.index('owner_->gpuContext(this, N33_CTX_OP_CLOSE, nullptr);')
 assert 'Navi33N48nClient.o' in makefile
 front=(root/'src/Navi33N48nFront.h').read_text()
-assert 'if(b.ip_type==N48N_HW_IP_GFX)return R::Unsupported;' in front          # no graphics ring yet
+# Graphics IBs only once the gfx pipe came up (G40), and one ring per submission.
+assert 'if(ip==N48N_HW_IP_GFX && !d.gfxReady())return R::Unsupported;' in front
+assert 'b.ip_type!=ip)' in front
 for forbidden in ('<IOKit/','IOLog(','WREG32('):
     assert forbidden not in front
-print('Navi33 N48N front end: gate, root, revoke-before-free, compute only: passed')
+print('Navi33 N48N front end: gate, root, revoke-before-free, compute and (G40) graphics: passed')
 
 # CI's glibc defines assert(expr) with ONE parameter: a comma outside parentheses in an
 # assert (e.g. inside braces) breaks the build there while a variadic local glibc accepts it.

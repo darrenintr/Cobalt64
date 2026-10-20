@@ -147,6 +147,11 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      the gfx doorbell at BAR2 0x458 (64-bit), and
      RB0 in a 20 KiB kernel heap buffer ('GFXR', VMID 0): upstream's clear-state preamble and a
      RELEASE_MEM ring test. Report in ioreg `Navi33,ClientGfx`; a failure leaves compute running.
+     Since 0.0.53 N48N accepts GFX IBs (one ring per submission) once that ring is up: the kernel
+     gfx ring runs them in the client's VMID (CONTEXT_CONTROL with the context-switch loads,
+     FRAME_CONTROL around the IBs, as `amdgpu_ib_schedule`), and fences at MC addresses: the
+     client's gfx fence (queue buffer + 0x4010), its user fence, the ring's own sequence. A
+     client's sequence numbers retire in order across its compute queue and the gfx ring.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -408,7 +413,7 @@ output survives a hang and Linux can inspect a stuck guest.
   `GCVM_L2_CNTL2` invalidate bits; no engine ACKs, and clearing the bits did not release it
   in that boot (0.0.47, 14:1x: `L2_STATUS 1->1`, 5 flush misses, opens fail closed).
 - **Next, after the user's full power-off** (`sudo grub-reboot cobalt64-navi33-vm && sudo
-  poweroff`, power button): run `src/navi33-bringup/vm/cold-run.sh` (artifact-0.0.52 cached;
+  poweroff`, power button): run `src/navi33-bringup/vm/cold-run.sh` (artifact-0.0.53 cached;
   autostart + client GPU + GOPFB in one boot, nine clients with slot reuse, repeat 200, N48N,
   `vkfill` through RADV, gfx ring report `Navi33,ClientGfx`, screen dump). Expect `L2_STATUS
   0->0`, flushes > 0, misses 0, every client exact, `ClientGfx state 7`, VKFILL OK. If the

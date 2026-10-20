@@ -138,29 +138,38 @@ struct Fake {
     }
     // The gfx pipe (G40): runs RB0 in VMID 0 from its RPTR to the WPTR just written, once PFP/ME are
     // unhalted, RB_ACTIVE is set and both pipes got their program counters.
-    unsigned gfxCsb=0, gfxPcs=0; bool gfxBroken=false;
+    unsigned gfxCsb=0, gfxPcs=0, gfxCntx=0, gfxFrames=0, gfxIbs=0; bool gfxBroken=false, gfxHold=false;
     void runGfx() {
         namespace gr=navi33::gfx_ring;
         const gr::Regs &g=r.gfx;
-        if(gfxBroken || (mem[g.meCntl]&(gr::kPfpHalt|gr::kMeHalt|gr::kPfpReset|gr::kMeReset)) || !mem[g.rbActive] || gfxPcs<4u)return;
+        if(gfxBroken || gfxHold || (mem[g.meCntl]&(gr::kPfpHalt|gr::kMeHalt|gr::kPfpReset|gr::kMeReset)) || !mem[g.rbActive] || gfxPcs<4u)return;
         const uint64_t ring=((uint64_t(mem[g.rb0BaseHi])<<32)|mem[g.rb0Base])<<8;
         assert(ring>=kFb && mem[g.rb0Cntl]==gr::kRb0CntlValue);
         // Kicked by its doorbell (DOORBELL_EN, offset 0x116, the RB range covering it, the MEC range below it).
         assert((mem[g.rbDoorbellCntl]&gr::kDoorbellEn) && ((mem[g.rbDoorbellCntl]&gr::kDoorbellOffsetMask)>>2)==gr::kDoorbellDword);
         assert(mem[g.rbDbLower]<=gr::kDoorbellByte && mem[g.rbDbUpper]>=gr::kDoorbellByte && mem[r.mecDbUpper]<gr::kDoorbellByte);
-        for(uint32_t i=mem[g.rb0Rptr];i<gfxWptr;) {
-            const uint32_t h=get(ring-kFb+4u*i);
+        auto at=[&](uint64_t d){return ring-kFb+4u*(d%gr::kRingDwords);};
+        for(uint64_t i=gfxRptr;i<gfxWptr;) {
+            const uint32_t h=get(at(i));
             if(h==mq::kNop){++i;continue;}
             const uint32_t op=(h>>8)&0xffu,n=((h>>16)&0x3fffu)+1u;
-            std::vector<uint32_t> b(n);for(uint32_t j=0;j<n;++j)b[j]=get(ring-kFb+4u*(i+1u+j));
-            if(op==gr::kSetContextReg || op==gr::kPreambleCntl || op==gr::kContextControl || op==gr::kClearState)++gfxCsb;
-            else if(op==gd::kReleaseMem){const uint64_t to=b[2]|(uint64_t(b[3])<<32);vram[to-kFb]=b[4];}
+            std::vector<uint32_t> b(n);for(uint32_t j=0;j<n;++j)b[j]=get(at(i+1u+j));
+            if(op==gr::kSetContextReg || op==gr::kPreambleCntl || op==gr::kClearState)++gfxCsb;
+            else if(op==gr::kContextControl){++gfxCsb;++gfxCntx;}
+            else if(op==gr::kFrameControl)++gfxFrames;
+            else if(op==0x3fu) {                                   // a client IB in its VMID (no VALID bit on gfx)
+                const uint32_t k=b[2]>>24;assert(!(b[2]&(1u<<23)) && k>=cg::kFirstVmid && k<cg::kFirstVmid+cg::kClients);
+                uint64_t pgm=0,karg=0;uint32_t masks=0;faultNow=false;
+                exec(k,b[0]|(uint64_t(b[1]&0xffffu)<<32),0,b[2]&0xfffffu,false,pgm,karg,masks);++gfxIbs;
+            }
+            else if(op==gd::kReleaseMem){const uint64_t to=b[2]|(uint64_t(b[3])<<32);vram[to-kFb]=b[4];
+                                          if((b[1]>>29)==2u)vram[to-kFb+4u]=b[5];}
             else assert(!"unexpected gfx packet");
             i+=1u+n;
         }
-        mem[g.rb0Rptr]=uint32_t(gfxWptr);
+        gfxRptr=gfxWptr;mem[g.rb0Rptr]=uint32_t(gfxWptr%gr::kRingDwords);
     }
-    uint64_t gfxWptr=0;
+    uint64_t gfxWptr=0, gfxRptr=0;
     void runQueue(uint32_t k) {
         const uint32_t qs=qsOf(k);
         if(stuck || paused.count(k) || !(bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]&1u))return;
@@ -647,9 +656,23 @@ int main() {
         assert(nf::waitOnce(f.dev,ss,N48N_SEQ_LAST,w)==nf::R::Ok && !w[0]);
         App view{};view.slot=ss.slot;view.image=uint32_t(im[0]);assert(imageOk(f,view,42));
         uint64_t fb=0;assert(f.dev.boRange(ss.slot,uint32_t(fe[0]),fb,by) && f.q(fb+16u)==1u);     // the user fence
-        // Refusals: graphics IBs (no GFX ring yet), unknown ctx, bad fence, bad IB flags.
+        // A graphics submission (G40): the same IB on the kernel's gfx ring in this client's VMID, with
+        // CONTEXT_CONTROL, FRAME_CONTROL around it, the user fence at its MC address.
         n48n_cs_ib gfx=one;gfx.ip_type=N48N_HW_IP_GFX;
-        assert(nf::submit(f.dev,ss,h,&gfx,seq)==nf::R::Unsupported);
+        const unsigned cntx0=f.gfxCntx, ibs0=f.gfxIbs;
+        assert(nf::submit(f.dev,ss,h,&gfx,seq)==nf::R::Ok && seq==2u && nf::waitOnce(f.dev,ss,seq,w)==nf::R::Ok && w[1]==2u);
+        assert(f.gfxCntx==cntx0+1u && f.gfxIbs==ibs0+1u && f.q(fb+16u)==2u && imageOk(f,view,42));
+        // In-order retire across the two rings: a held gfx ring keeps seq 3 open, so the compute seq 4
+        // that finishes first does not retire until the gfx work lands.
+        f.gfxHold=true;
+        uint64_t s3=0,s4=0;
+        assert(nf::submit(f.dev,ss,h,&gfx,s3)==nf::R::Ok && nf::submit(f.dev,ss,h,&one,s4)==nf::R::Ok && s3==3u && s4==4u);
+        assert(nf::waitOnce(f.dev,ss,s4,w)==nf::R::Ok && w[0] && w[1]==2u);              // busy: retired stays 2
+        f.gfxHold=false;f.runGfx();
+        assert(nf::waitOnce(f.dev,ss,s4,w)==nf::R::Ok && !w[0] && w[1]==4u);
+        n48n_cs_in two=h;two.num_ibs=2;n48n_cs_ib mixed[2]={one,gfx};
+        assert(nf::submit(f.dev,ss,two,mixed,seq)==nf::R::BadArgument);                   // one ring per submission
+        // Refusals: unknown ctx, bad fence, bad IB flags.
         n48n_cs_in badCtx=h;badCtx.ctx_id=2;assert(nf::submit(f.dev,ss,badCtx,&one,seq)==nf::R::BadArgument);
         n48n_cs_in badFence=h;badFence.fence_offset=4092;assert(nf::submit(f.dev,ss,badFence,&one,seq)==nf::R::BadArgument);
         n48n_cs_in roFence=h;roFence.fence_handle=uint32_t(ib[0]);roFence.fence_offset=0;

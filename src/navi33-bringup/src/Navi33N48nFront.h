@@ -108,14 +108,16 @@ inline R submit(cg::Device &d,const Session &s,const n48n_cs_in &h,const n48n_cs
     if(h.abi!=N48N_ABI_VERSION || h.reserved || (h.flags&~N48N_CS_HAS_FENCE) || !h.num_ibs || h.num_ibs>cg::kMaxIbs ||
        !h.ctx_id || h.ctx_id>kMaxCtx || !(s.ctxIds&(1ull<<(h.ctx_id-1u))))return R::BadArgument;
     cg::Device::Ib list[cg::kMaxIbs];
+    const uint32_t ip=ibs[0].ip_type;                     // one submission, one ring (as amdgpu's CS)
     for(uint32_t i=0;i<h.num_ibs;++i) {
         const n48n_cs_ib &b=ibs[i];
-        if(b._pad || (b.flags&~kAllowedIbFlags) || b.ip_instance || b.ring || !b.ib_bytes || (b.ib_bytes&3u))
+        if(b._pad || (b.flags&~kAllowedIbFlags) || b.ip_instance || b.ring || !b.ib_bytes || (b.ib_bytes&3u) ||
+           b.ip_type!=ip)
             return R::BadArgument;
-        if(b.ip_type==N48N_HW_IP_GFX)return R::Unsupported;            // no graphics ring yet
-        if(b.ip_type!=N48N_HW_IP_COMPUTE)return R::BadArgument;
+        if(b.ip_type!=N48N_HW_IP_COMPUTE && b.ip_type!=N48N_HW_IP_GFX)return R::BadArgument;
         list[i]={b.va_start,b.ib_bytes/4u};
     }
+    if(ip==N48N_HW_IP_GFX && !d.gfxReady())return R::Unsupported;   // the gfx pipe did not come up (G40)
     uint64_t fence=0;
     if(h.flags&N48N_CS_HAS_FENCE) {
         uint64_t va=0,bytes=0;
@@ -123,7 +125,7 @@ inline R submit(cg::Device &d,const Session &s,const n48n_cs_in &h,const n48n_cs
            uint64_t(h.fence_offset)+8u>bytes)return R::BadArgument;
         fence=va+h.fence_offset;
     } else if(h.fence_handle || h.fence_offset) return R::BadArgument;
-    return from(d.submit(s.slot,list,h.num_ibs,seq,fence));
+    return from(ip==N48N_HW_IP_GFX ? d.submitGfx(s.slot,list,h.num_ibs,seq,fence) : d.submit(s.slot,list,h.num_ibs,seq,fence));
 }
 // One non-blocking look; the IOKit side loops with sleeps up to the timeout.
 inline R waitOnce(cg::Device &d,const Session &s,uint64_t seq,uint64_t out[3]) {
