@@ -121,12 +121,13 @@ struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
     uint64_t dequeue=0, invReq=0, invAck=0, invRangeLo=0, invRangeHi=0, l2Status=0, scheduler=0, gfxMapped=0;
+    gfx_map::HdpPlan hdp{};            // only consumed by the opt-in G42 mapping stage
     gfx_ring::Regs gfx{};           // the kernel's gfx ring 0 (G40)
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
     uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0, pqStatus=0;
     bool valid=false;
 };
-inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
+inline Regs resolve(const IPDiscovery &d,uint64_t bytes,uint32_t pageBytes=static_cast<uint32_t>(vh::kPage)) {
     Regs r{};r.g=vg::resolve(d,bytes);
     if(!r.g.valid)return r;
     auto one=[&](uint32_t dw,uint64_t &out){
@@ -142,6 +143,7 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
     const auto scheduler=resolveDword(d,Engine::GFX11,gfx_map::kSchedulerSeg,gfx_map::kSchedulerDw,bytes);
     if(scheduler.code!=AddressCode::Pass || !one(gfx_map::kMappedDw,r.gfxMapped))return r;
     r.scheduler=scheduler.bar5ByteOffset;
+    r.hdp=gfx_map::resolveHdp(d,bytes,pageBytes);
     r.gfx=gfx_ring::resolve(d,bytes);
     if(!r.gfx.valid || !one(kDequeueRequest,r.dequeue) || !one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) ||
        !one(kInvRangeLo17,r.invRangeLo) || !one(kInvRangeHi17,r.invRangeHi) || !one(kL2Status,r.l2Status) ||
@@ -164,7 +166,18 @@ inline bool allowed(const Regs &r,uint64_t off) {
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
 }
-inline bool mapAllowed(const Regs &r,uint64_t off) { return r.valid && off==r.scheduler; }
+inline bool mapAllowed(const Regs &r,uint64_t off) {
+    return r.valid && r.hdp.valid() &&
+        (off==r.hdp.remapMem || off==r.hdp.remapReg || off==r.hdp.flush);
+}
+inline bool mapWriteAllowed(const Regs &r,uint64_t off,uint32_t value) {
+    if(!mapAllowed(r,off))return false;
+    if(off==r.hdp.remapMem)return value==r.hdp.remapBytes;
+    if(off==r.hdp.remapReg)return value==r.hdp.remapBytes+4u;
+    if(off==r.hdp.flush)return value==0u;
+    return false;
+}
+static_assert(gfx_map::kSupportedPageBytes==vh::kPage,"G42 HDP remap and the Navi33 GPU VM must use the same 4 KiB page size");
 struct Hw {
     void *ctx=nullptr;
     bool (*read)(void *,uint64_t,uint32_t *)=nullptr;
@@ -580,7 +593,7 @@ private:
     struct TableIo { Device *dev=nullptr; };
     bool rd(uint64_t off,uint32_t &v) { return h_.read(h_.ctx,off,&v) && v!=0xffffffffu; }
     bool wr(uint64_t off,uint32_t v) {
-        if((!allowed(*r_,off) && !(gfxMapGate_ && mapAllowed(*r_,off))) || !h_.write(h_.ctx,off,v))return false;
+        if((!allowed(*r_,off) && !(gfxMapGate_ && mapWriteAllowed(*r_,off,v))) || !h_.write(h_.ctx,off,v))return false;
         ++writes_;if(off==r_->g.v.q.grbm)select_=v;
         return true;
     }
@@ -708,6 +721,9 @@ private:
         if(gfxMapAttempted_)return false;
         gfxMap_.state=gm::State::Refused;
         if(!h_.stageWrite || !h_.stageRead)return false;
+        gfxMap_.hdp.plan=r_->hdp.code;
+        gfxMap_.hdp.remapBytes=r_->hdp.remapBytes;
+        if(!r_->hdp.valid()) {gfxMap_.hdp.state=gm::HdpState::PlanUnavailable;return false;}
         gm::Snapshot &s=gfxMap_.before;
         if(!rd(r_->scheduler,s.scheduler) || !rd(r_->gfxMapped,s.mapped) || !sel(mq::grbmSelect(1u,0u,0u)))return false;
         const mq::Regs &q=r_->g.v.q;
@@ -722,13 +738,53 @@ private:
            !h_.stageRead(h_.ctx,mq::kFenceOff,&s.fence,1u))return false;
         s.wptrLo=wp[0];s.wptrHi=wp[1];
         if(!gm::ready(s,fbBase_))return false;
+        if(!rd(r_->hdp.remapMem,gfxMap_.hdp.remapMemBefore) ||
+           !rd(r_->hdp.remapReg,gfxMap_.hdp.remapRegBefore)) {
+            gfxMap_.hdp.state=gm::HdpState::PreflightFailed;return false;
+        }
+        const bool remapReset=!gfxMap_.hdp.remapMemBefore && !gfxMap_.hdp.remapRegBefore;
+        const bool remapReady=gfxMap_.hdp.remapMemBefore==r_->hdp.remapBytes &&
+                              gfxMap_.hdp.remapRegBefore==r_->hdp.remapBytes+4u;
+        if(!remapReset && !remapReady) {
+            gfxMap_.hdp.state=gm::HdpState::UnexpectedRemap;return false;
+        }
         uint32_t image[gm::kMqdDwords]{};gm::mqd(mc,image);
-        if(!vramPut(gfxMemVram_+gm::kMqdOff,image,gm::kMqdDwords))return false;
         uint32_t packets[16]{};gm::packets(mc,fbBase_,packets);
         const uint32_t zero=0, next[2]={gm::kEndWptr,0u};
-        gfxMapAttempted_=true;gfxMap_.state=gm::State::Attempted; // latch before the first stage write
-        if(!stagePut(gm::kMapFenceOff,&zero,1u) || !stagePut(gm::kAppendOff,packets,16u) ||
+        gfxMapAttempted_=true;gfxMap_.state=gm::State::Attempted; // latch before any new MMIO or VRAM write
+        if(remapReset) {
+            if(!wr(r_->hdp.remapMem,r_->hdp.remapBytes)) {
+                gfxMap_.hdp.state=gm::HdpState::RemapWriteFailed;gfxMap_.state=gm::State::HdpFailed;return false;
+            }
+            ++gfxMap_.hdp.writes;
+            if(!wr(r_->hdp.remapReg,r_->hdp.remapBytes+4u)) {
+                gfxMap_.hdp.state=gm::HdpState::RemapWriteFailed;gfxMap_.state=gm::State::HdpFailed;return false;
+            }
+            ++gfxMap_.hdp.writes;gfxMap_.hdp.state=gm::HdpState::Remapped;
+            if(!rd(r_->hdp.remapMem,gfxMap_.hdp.remapMemAfter) ||
+               !rd(r_->hdp.remapReg,gfxMap_.hdp.remapRegAfter) ||
+               gfxMap_.hdp.remapMemAfter!=r_->hdp.remapBytes ||
+               gfxMap_.hdp.remapRegAfter!=r_->hdp.remapBytes+4u) {
+                gfxMap_.hdp.state=gm::HdpState::RemapReadbackFailed;gfxMap_.state=gm::State::HdpFailed;return false;
+            }
+        } else {
+            gfxMap_.hdp.remapMemAfter=gfxMap_.hdp.remapMemBefore;
+            gfxMap_.hdp.remapRegAfter=gfxMap_.hdp.remapRegBefore;
+            gfxMap_.hdp.state=gm::HdpState::AlreadyConfigured;
+        }
+        if(!vramPut(gfxMemVram_+gm::kMqdOff,image,gm::kMqdDwords) ||
+           !stagePut(gm::kMapFenceOff,&zero,1u) || !stagePut(gm::kAppendOff,packets,16u) ||
            !stagePut(mq::kWptrOff,next,2u))return false;
+        if(!wr(r_->hdp.flush,0u)) {
+            gfxMap_.hdp.state=gm::HdpState::FlushWriteFailed;gfxMap_.state=gm::State::HdpFailed;return false;
+        }
+        ++gfxMap_.hdp.writes;
+        nbio4::Plan capacityPlan{};capacityPlan.code=nbio4::Code::Pass;capacityPlan.byteOffset=r_->hdp.memsize;
+        const nbio4::Sample capacity=nbio4::inspect(capacityPlan,h_.read,h_.ctx);
+        if(capacity.code!=nbio4::Code::Pass) {
+            gfxMap_.hdp.state=gm::HdpState::FlushReadbackFailed;gfxMap_.state=gm::State::HdpFailed;return false;
+        }
+        gfxMap_.hdp.memsize=capacity.capacityMiB;gfxMap_.hdp.state=gm::HdpState::Complete;
         if(!sel(mq::grbmSelect(1u,0u,0u)) || !wr(q.poll1,1u) || !sel(0u))return false;
         gfxMap_.state=gm::State::MapTimeout;
         for(uint32_t us=0;us<gfx_ring::kFenceTimeoutUs;us+=100u) {

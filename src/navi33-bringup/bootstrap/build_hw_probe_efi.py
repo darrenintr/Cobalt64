@@ -43,7 +43,7 @@ def _validate_kext(kext: pathlib.Path) -> None:
     try:
         pl = plistlib.loads(info.read_bytes())
         p = pl["IOKitPersonalities"]["Navi33Probe"]
-        if (pl.get("CFBundleVersion") != "0.0.58" or
+        if (pl.get("CFBundleVersion") != "0.0.59" or
                 pl["CFBundleIdentifier"] != "com.cobalt64.navi33probe" or
                 pl["CFBundleExecutable"] != "Navi33Probe" or
                 p["IOPCIPrimaryMatch"] != "0x74801002" or

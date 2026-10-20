@@ -38,8 +38,8 @@ inline uint16_t sum(const std::vector<uint8_t> &v,size_t a,size_t b) {
     return c;
 }
 // Same v1 binary header / v3 IPDS layout as test_hardware_plan.cpp.
-// mmhubRevision lets a test present a different MMHUB IP version.
-inline std::vector<uint8_t> blob(uint8_t mmhubRevision=2u) {
+// Optional revisions let focused plans exercise exact IP-version refusals.
+inline std::vector<uint8_t> blob(uint8_t mmhubRevision=2u,uint8_t nbifRevision=1u,uint8_t hdpRevision=1u) {
     std::vector<uint8_t> v(1024,0);
     put32(v,0,0x28211407u);
     put16(v,4,1);
@@ -56,7 +56,7 @@ inline std::vector<uint8_t> blob(uint8_t mmhubRevision=2u) {
         v[p+2]=0;
         v[p+3]=static_cast<uint8_t>(ip.bases.size());
         v[p+4]=ip.maj;v[p+5]=ip.min;
-        v[p+6]=ip.id==ipid::MMHUB ? mmhubRevision : ip.rev;v[p+7]=0;
+        v[p+6]=ip.id==ipid::MMHUB ? mmhubRevision : ip.id==ipid::NBIF ? nbifRevision : ip.id==ipid::HDP ? hdpRevision : ip.rev;v[p+7]=0;
         p+=8;
         for(uint32_t b:ip.bases){put32(v,p,b);p+=4;}
     }

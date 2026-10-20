@@ -154,18 +154,25 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      FRAME_CONTROL around the IBs, as `amdgpu_ib_schedule`), and fences at MC addresses: the
      client's gfx fence (queue buffer + 0x4010), its user fence, the ring's own sequence. A
      client's sequence numbers retire in order across its compute queue and the gfx ring.
-   - **G42 graphics mapping (kext 0.0.57, 2026-10-20):** the user's "please go"
+   - **G42 graphics mapping (kext 0.0.57; HDP prelude 0.0.59, 2026-10-20):** the user's "please go"
      after the G40 mapping/activation blocker authorizes building and testing one
      bounded MAP_QUEUES on G34 (ME1/pipe0/queue0) for graphics ME0/pipe0/queue0.
      Own `navi33-gfx-map=1` gate, killed by `navi33-gfx-map-off`, `navi33-mec-off`,
-     the client GPU gate or `navi33-psp-off`; off by default. Only additional MMIO:
-     RLC_CP_SCHEDULERS (GC segment1 dword0x98a), preserve high24 bits and set low
-     byte0xa0. Existing poll1 bit0 kicks G34. CPU writes outside the heap only at
+     the client GPU gate or `navi33-psp-off`; off by default. Gated G34 init may
+     write RLC_CP_SCHEDULERS (GC segment1 dword0x98a), preserving high24 bits and
+     setting low byte0xa0. The 0.0.59 HDP prelude additionally allows at most
+     three exact BAR5 writes: remap controls at NBIF BASE_IDX2 + dwords0x12d/0x12e
+     to `0x80000-PAGE_SIZE` and `+4` only when both read zero, and a zero write
+     to that aperture after staging but before poll1. It requires runtime
+     `PAGE_SIZE=4096`, NBIF4.3.1/HDP6.0.1, exact remap readback and two stable
+     plausible NBIO capacity reads. An exact pre-existing remap pair is reused;
+     any other value refuses. Latch before first possible remap/MQD/stage write.
+     Existing poll1 bit0 kicks G34. CPU writes outside the heap only at
      VRAM250MiB +0x2040 (16 dwords), +0x3008 (2 dwords), +0x4008 (1 dword), exact
      callback allowlist, readback required. MQD stays in live GFXR heap memory.
      Requires G34's exact original base/VMID/privilege/RPTR16/WPTR16/fence and
      scheduler HIQ clear before gated G34 initialization and low byte 0xa0
-     after it, gfx MAPPED0; own latch before first stage-window write.
+     after it, gfx MAPPED0.
      Fixed MAP_QUEUES + confirmed WRITE_DATA fence only, no user-controlled stream.
      Further attempts after a stage write require full power-off. Recovery remains
      guest/host SSH and host full power-off. Design: `GFX_MAP_DESIGN.md`.
@@ -176,7 +183,8 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      0.0.58 run's G34 RPTR readback ended at 0 (pre-run value 16), not the
      expected 32, so MAP_QUEUES completion was not confirmed. Further attempts after
      a stage write need full power-off and renewed explicit approval.
-   No other register write, firmware load or command submission.
+     No register write outside these exact lists, firmware load or command
+     submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
    that alters the ROM image or its flash chip, in any situation and under
@@ -436,7 +444,7 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (2026-10-20 17:33 HKT; updated 2026-10-20): G42 follow-up
+## Resume here (2026-10-20 18:14 HKT; updated 2026-10-20): G42 follow-up
 
 - Prior 0.0.54 baseline: the user confirmed full power-off and requested continued work
   toward a **GPU-rendered macOS desktop, wallpaper and apps**. Framebuffer output is not
@@ -515,20 +523,35 @@ output survives a hang and Linux can inspect a stuck guest.
   path (`amdgpu_gfx_enable_kgq()`) calls `amdgpu_device_flush_hdp()` before it
   commits MAP_QUEUES. G42 stages its ring/WPTR/fence through BAR0 with
   `sfence; mfence` but has no HDP flush; this is the strongest current
-  source-backed follow-up lead, not a proven cause. The generic helper writes
-  zero to the remapped HDP memory-flush control register and reads memory size.
-  Resolve Navi33's exact device-specific mapping from matching upstream IP
-  discovery and register headers before designing any change.
+  source-backed follow-up lead, not a proven cause. The card's IPD is NBIF
+  4.3.1/HDP 6.0.1, selecting upstream NBIO v4.3 and HDP v6.0; HDP v6.0 uses
+  the generic flush. For a non-SR-IOV 4 KiB mapping, upstream remaps the flush
+  registers to BAR5+0x7f000. NBIO BASE_IDX 2 dwords 0x12d/0x12e resolve to BAR5
+  byte offsets 0x3934/0x3938 (fixture BASE_IDX 2 = 0xd20); upstream programs
+  them to remapOffset and remapOffset+4. The flush is a zero write to
+  BAR5+0x7f000 followed by a read of NBIO memory size.
+  Kext 0.0.59 implements this bounded candidate: at most two remap writes and
+  one flush write after staging G42's MQD/ring/fence/WPTR and before the poll
+  trigger. Darwin passes XNU `PAGE_SIZE`; the plan accepts only 4096 bytes and
+  exact NBIF 4.3.1/HDP 6.0.1. Only remap values 0x7f000/0x7f004 and a zero
+  flush are permitted. A zero pair may be configured, an exact pair is reused,
+  and any other pair refuses. It verifies remap readback and two stable,
+  plausible NBIO capacity reads before triggering the queue. The G42 latch is
+  consumed before the first possible remap/MQD/stage write. Host tests cover
+  exact offsets/values, operation order, reset/already-configured states and
+  write/readback failure stops. Host fake does not prove physical HDP
+  visibility or queue behavior. No 0.0.59 artifact has run on the GPU.
   `SET_RESOURCES` is emitted in the separate `amdgpu_gfx_enable_kcq()` compute
   path; `amdgpu_gfx_enable_kgq()` does not emit it. Treat it only as an indirect
-  KIQ setup question, not a confirmed missing GFX step. The host fake models
-  neither effect. Do not expand packet or stage-window allowlists without a
-  new bounded design and renewed approval. Sources: upstream Linux
+  KIQ setup question, not a confirmed missing GFX step. The host fake checks HDP
+  operation order, not real HDP visibility or the need for SET_RESOURCES. Do not
+  expand packet or stage-window allowlists without a new bounded design and
+  renewed approval. Sources: upstream Linux
   `amdgpu_gfx.c`, `gfx_v11_0.c`, `amdgpu_hdp.c`, and `amdgpu_device.c`.
-- The G42 latch and stage-window attempt are consumed. Any further GPU write
-  attempt requires a full host power-off and renewed explicit approval. Keep
-  the current VM running on 0.0.58 until then; do not reboot, shut it down, or
-  touch the GPU. No Metal nub/accelerator is installed or enabled.
+- The 0.0.58 G42 latch and stage-window attempt are consumed. A 0.0.59 GPU
+  write attempt requires a full host power-off and renewed explicit approval.
+  Keep the current VM running on 0.0.58 until then; do not reboot, shut it down,
+  or touch the GPU. No Metal nub/accelerator is installed or enabled.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
   (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
   as a clean cold run. Preserve that memory until dequeue/recovery is verified.
@@ -538,6 +561,11 @@ output survives a hang and Linux can inspect a stuck guest.
 - Safe gfx reads: PFP/ME RS64 instruction pointers nonzero, RB0 base correct,
   CP_RB0_WPTR/RPTR 0, GFX_HQD_ACTIVE 1 but MAPPED 0 (`gfx-safe-reads.txt`). No new
   gfx-HQD configuration writes or accelerator installation performed. Metal not proven.
+- **0.0.59 local candidate:** the HDP prelude is implemented and documented;
+  GCC host-test, Clang ASan/UBSan host-test (with a 32 MiB stack for the large
+  existing client-GPU test frame), 43 bootstrap tests and `git diff --check`
+  pass. The CI artifact has not been built yet. The current VM remains on 0.0.58;
+  no GPU read/write, reboot or power-off was made during this offline work.
 - Guest auxiliary build staging remains `/Users/darren/auxbuild`; preserve it. Previous
   handoff found no built accelerator kext, only Navi33GOPFB installed.
 
@@ -2410,9 +2438,16 @@ parser got two of them wrong:
   from pre-run value 16, rather than the expected 32. Upstream
   `amdgpu_gfx_enable_kcq()` emits
   `SET_RESOURCES` before KIQ queue mapping; `amdgpu_gfx_enable_kgq()` flushes
-  HDP before committing graphics MAP_QUEUES. G42 models neither step. This is a
-  source-backed lead only: the final RPTR, zero fence and unmapped bit do not
-  establish whether the packet was fetched, so no cause is yet proven.
+  HDP before committing graphics MAP_QUEUES. G42 0.0.58 had no HDP flush. This
+  is a source-backed lead only: the final RPTR, zero fence and unmapped bit do
+  not establish whether the packet was fetched, so no cause is yet proven.
+- **G42 bounded HDP candidate (0.0.59, offline):** after the user's request to
+  continue, code now resolves the exact NBIF 4.3.1/HDP 6.0.1 path using the
+  runtime XNU page size. It permits at most two remap writes plus one zero
+  flush write, verifies remap readback and stable plausible NBIO capacity, and
+  stops before MAP_QUEUES on any failure. Host tests and static manifest checks
+  pass. No 0.0.59 artifact or physical run yet; further GPU writes still need a
+  full host power-off and renewed explicit approval.
 
 ## Adding a register read
 

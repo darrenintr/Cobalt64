@@ -34,7 +34,10 @@ constexpr uint32_t qsOf(uint32_t k){return mq::grbmSelect(1,cg::pipeOf(k-cg::kFi
 // invalidation engine 17 flushes that VMID, and a CP that runs each queue's ring:
 // INDIRECT_BUFFER in the queue's VMID, the gradient dispatch, RELEASE_MEM.
 struct Fake {
-    bool g42=false,mapStuck=false;unsigned stageWrites=0;
+    bool g42=false,mapStuck=false;unsigned stageWrites=0,hdpWrites=0,mapTriggers=0;
+    bool hdpFlushSeen=false,hdpMemsizeReadAfterFlush=false,corruptRemapReadback=false;
+    bool failHdpRegWrite=false,failHdpFlushWrite=false;
+    std::vector<unsigned> hdpEvents;
     cg::Regs r; vh::Heap heap; cg::Device dev;
     std::map<uint64_t,uint32_t> mem; std::map<std::pair<uint32_t,uint64_t>,uint32_t> bank;
     std::unordered_map<uint64_t,uint32_t> vram;
@@ -52,7 +55,8 @@ struct Fake {
         mem={{v.q.sos,42},{v.q.rlc,0xc000001fu},{v.q.grbm,0},{v.q.cntl,0x3c000000u},{v.q.scratch,0xdeadbeefu},
              {v.q.poll1,0},{v.l1,v1::kL1Default},{v.l2,v1::kL2Default},{v.l2c2,0},{v.l2c3,v1::kL2Cntl3Default},
              {v.l2c4,v1::kL2Cntl4Default},{v.l2c5,v1::kL2Cntl5Default},{v.faultStatus,0},{v.faultAddr,0},
-             {r.invReq,0x02f80000u},{r.invAck,0},{r.l2Status,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u}};
+             {r.invReq,0x02f80000u},{r.invAck,0},{r.l2Status,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u},
+             {r.hdp.remapMem,0u},{r.hdp.remapReg,0u},{r.hdp.memsize,8192u}};
         for(auto o:v.ident)mem[o]=0;
         const navi33::gfx_ring::Regs &g=r.gfx;
         for(uint64_t o:{g.pfpStart,g.pfpStartHi,g.meStart,g.meStartHi,g.cpStat,g.maxContext,g.deviceId,g.wptrDelay,g.rbVmid,
@@ -190,13 +194,21 @@ struct Fake {
     static bool read(void *c,uint64_t off,uint32_t *v) {
         auto &f=*static_cast<Fake *>(c);
         if(f.banked(off)){*v=f.bank[{f.sel(),off}];return true;}
-        assert(f.mem.count(off));*v=f.mem[off];return true;
+        assert(f.mem.count(off));
+        if(off==f.r.hdp.remapMem && f.corruptRemapReadback && f.hdpWrites>=2u)*v=0u;
+        else *v=f.mem[off];
+        if(off==f.r.hdp.memsize && f.hdpFlushSeen){f.hdpMemsizeReadAfterFlush=true;f.hdpEvents.push_back(5u);}
+        return true;
     }
     static bool write(void *c,uint64_t off,uint32_t v) {
         auto &f=*static_cast<Fake *>(c);
-        assert(cg::allowed(f.r,off) || (f.g42 && cg::mapAllowed(f.r,off)));
+        assert(cg::allowed(f.r,off) || (f.g42 && cg::mapWriteAllowed(f.r,off,v)));
+        if((off==f.r.hdp.remapReg && f.failHdpRegWrite) || (off==f.r.hdp.flush && f.failHdpFlushWrite))return false;
         f.writes.emplace_back(off,v);
         if(f.banked(off))f.bank[{f.sel(),off}]=v; else f.mem[off]=v;
+        if(off==f.r.hdp.remapMem){++f.hdpWrites;f.hdpEvents.push_back(1u);}
+        if(off==f.r.hdp.remapReg){++f.hdpWrites;f.hdpEvents.push_back(2u);}
+        if(off==f.r.hdp.flush){++f.hdpWrites;f.hdpFlushSeen=true;f.hdpEvents.push_back(4u);}
         // GCVM_L2_CNTL2 with the invalidate bits latched keeps the hub L2 busy (the card,
         // 2026-10-20 13:58), and a busy L2 serves no invalidation engine.
         if(off==f.r.gfx.rb0Wptr && !(f.mem[f.r.gfx.rbDoorbellCntl]&navi33::gfx_ring::kDoorbellEn)) {
@@ -235,8 +247,11 @@ struct Fake {
         if(off==mq::hqd(f.r.g.v.q,kiq::kCpHqdActive) && (v&1u))
             for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.runQueue(k);
         if(f.g42 && off==f.r.g.v.q.poll1 && f.sel()==mq::grbmSelect(1,0,0) && v==1u && !f.mapStuck) {
+            ++f.mapTriggers;f.hdpEvents.push_back(6u);
             namespace gm=navi33::gfx_map;
             const uint64_t p=gm::kG34Vram+gm::kAppendOff;
+            assert(f.mem[f.r.hdp.remapMem]==f.r.hdp.remapBytes && f.mem[f.r.hdp.remapReg]==f.r.hdp.remapBytes+4u &&
+                   f.hdpFlushSeen && f.hdpMemsizeReadAfterFlush);
             assert(f.mem[f.r.scheduler]==0x30a0u && f.get(p)==0xc005a200u && f.get(p+4)==0x30000000u);
             assert(f.get(p+28)==0xc0033700u && f.get(p+32)==0x100500u && f.get(p+44)==gm::kMapFence);
             assert(f.q(p+36)==kFb+gm::kG34Vram+gm::kMapFenceOff);
@@ -289,6 +304,7 @@ struct Fake {
     }
     static bool stageWrite(void *c,uint32_t off,const uint32_t *p,uint32_t n) {
         auto &f=*static_cast<Fake *>(c);assert(f.g42 && gfx_map::stageRange(off,n,true));++f.stageWrites;
+        f.hdpEvents.push_back(3u);
         for(uint32_t i=0;i<n;++i)f.vram[gfx_map::kG34Vram+off+4u*i]=p[i];
         return true;
     }
@@ -362,6 +378,18 @@ int main() {
     auto b=rx7600_fixture::blob();IPDiscovery d;assert(d.parse(b.data(),b.size()));
     const auto r=cg::resolve(d,rx7600_fixture::kBar5);
     assert(r.valid && r.dequeue==(0x1260u+0x1fc1u)*4u && cg::allowed(r,r.g.v.l2c2));
+    assert(r.hdp.valid() && r.hdp.remapMem==0x3934u && r.hdp.remapReg==0x3938u &&
+           r.hdp.flush==0x7f000u && r.hdp.memsize==0x378cu && r.hdp.remapBytes==0x7f000u);
+    assert(!cg::allowed(r,r.hdp.remapMem) && cg::mapAllowed(r,r.hdp.remapMem) &&
+           cg::mapWriteAllowed(r,r.hdp.remapMem,r.hdp.remapBytes) &&
+           !cg::mapWriteAllowed(r,r.hdp.remapMem,r.hdp.remapBytes+4u) &&
+           cg::mapWriteAllowed(r,r.hdp.flush,0u) && !cg::mapWriteAllowed(r,r.hdp.flush,1u));
+    assert(!gfx_map::resolveHdp(d,rx7600_fixture::kBar5,8192u).valid());
+    assert(!gfx_map::resolveHdp(d,0x7f000u,4096u).valid());
+    {auto bad=rx7600_fixture::blob(2u,0u,1u);IPDiscovery x;assert(x.parse(bad.data(),bad.size()));
+     assert(gfx_map::resolveHdp(x,rx7600_fixture::kBar5,4096u).code==gfx_map::HdpCode::UnsupportedNbif);}
+    {auto bad=rx7600_fixture::blob(2u,1u,0u);IPDiscovery x;assert(x.parse(bad.data(),bad.size()));
+     assert(gfx_map::resolveHdp(x,rx7600_fixture::kBar5,4096u).code==gfx_map::HdpCode::UnsupportedHdp);}
     // Of the invalidation engines only engine 17's REQ and address range are written (never a SEM or ACK).
     assert(r.invReq==(0x1260u+0x16bcu)*4u && r.invAck==(0x1260u+0x16ceu)*4u && r.l2Status==(0x1260u+0x15bfu)*4u);
     for(uint32_t dw=0x1699u;dw<=0x16f2u;++dw)assert(cg::allowed(r,(0x1260u+dw)*4u)==(dw==0x16bcu || dw==0x16f1u || dw==0x16f2u));
@@ -612,14 +640,42 @@ int main() {
         assert(!gfx_map::stageRange(mq::kFenceOff,1u,true));
         assert(!gfx_map::stageRange(gfx_map::kAppendOff,17u,true));
         assert(!gfx_map::stageRange(gfx_map::kAppendOff-4u,16u,true));
-        assert(!cg::allowed(r,r.scheduler) && cg::mapAllowed(r,r.scheduler) && !cg::mapAllowed(r,r.gfxMapped));
+        assert(!cg::allowed(r,r.scheduler) && !cg::mapAllowed(r,r.scheduler) && !cg::mapAllowed(r,r.gfxMapped));
         auto f=std::make_unique<Fake>(r);f->g34();
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady() && !f->stageWrites);
         assert(f->mem[r.scheduler]==0x30a0u);
         f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->dev.gfxReady());
-        assert(f->dev.gfxMapReport().state==gfx_map::State::Mapped && f->stageWrites==3u);
+        assert(f->dev.gfxMapReport().state==gfx_map::State::Mapped && f->stageWrites==3u && f->hdpWrites==3u);
+        assert(f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::Complete && f->dev.gfxMapReport().hdp.writes==3u &&
+               f->dev.gfxMapReport().hdp.remapMemAfter==0x7f000u && f->dev.gfxMapReport().hdp.remapRegAfter==0x7f004u &&
+               f->dev.gfxMapReport().hdp.memsize==8192u);
+        assert((f->hdpEvents==std::vector<unsigned>{1u,2u,3u,3u,3u,4u,5u,5u,6u}));
         const auto count=f->writes.size();assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->writes.size()==count);
+        f=std::make_unique<Fake>(r);f->g34();f->mem[r.hdp.remapMem]=0x7f000u;f->mem[r.hdp.remapReg]=0x7f004u;f->dev.setGfxMap(true);
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->dev.gfxReady() && f->hdpWrites==1u);
+        assert(f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::Complete && f->dev.gfxMapReport().hdp.writes==1u);
+        assert((f->hdpEvents==std::vector<unsigned>{3u,3u,3u,4u,5u,5u,6u}));
+        f=std::make_unique<Fake>(r);f->g34();f->mem[r.hdp.remapMem]=0x7f000u;f->mem[r.hdp.remapReg]=0x111u;f->dev.setGfxMap(true);
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::UnexpectedRemap && f->hdpWrites==0u && f->stageWrites==0u);
+        f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);f->corruptRemapReadback=true;
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().state==gfx_map::State::HdpFailed &&
+               f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::RemapReadbackFailed && f->hdpWrites==2u && !f->stageWrites && !f->mapTriggers);
+        f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);f->failHdpRegWrite=true;
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().state==gfx_map::State::HdpFailed &&
+               f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::RemapWriteFailed &&
+               f->dev.gfxMapReport().hdp.writes==1u && f->hdpWrites==1u && !f->stageWrites && !f->mapTriggers);
+        f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);f->mem[r.hdp.memsize]=0xffffffffu;
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().state==gfx_map::State::HdpFailed &&
+               f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::FlushReadbackFailed && f->hdpWrites==3u && !f->mapTriggers);
+        f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);f->failHdpFlushWrite=true;
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().state==gfx_map::State::HdpFailed &&
+               f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::FlushWriteFailed && f->hdpWrites==2u && !f->mapTriggers);
         f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);
         f->vram[gfx_map::kG34Vram+mq::kWptrOff]=32u;
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());

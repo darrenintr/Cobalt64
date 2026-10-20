@@ -8,6 +8,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <mach/vm_param.h>
 
 namespace navi33 { namespace darwin_client {
 namespace {
@@ -22,7 +23,7 @@ bool read32(void *ctx,uint64_t off,uint32_t *out) {
 }
 bool write32(void *ctx,uint64_t off,uint32_t value) {
     Host *h=static_cast<Host *>(ctx);
-    if(!cg::allowed(h->r,off) && !(h->gfxMapGate && cg::mapAllowed(h->r,off)))return false;
+    if(!cg::allowed(h->r,off) && !(h->gfxMapGate && cg::mapWriteAllowed(h->r,off,value)))return false;
     if(!h->regs || (off&3u) || off>h->regs->getLength() || h->regs->getLength()-off<4u)
         return false;
     *reinterpret_cast<volatile uint32_t *>(static_cast<uintptr_t>(h->regs->getVirtualAddress())+off)=value;
@@ -98,7 +99,7 @@ client_gpu::Code start(Host &h,IOPCIDevice *pci,const darwin_psp::Request &req,v
     const pl::Range console=boot.phys ? boot :
         pl::hostConsole(boot,req.hostConsole,req.hostConsoleOffset,req.hostConsoleBytes,bar0Range);
     const pl::Registers pregs=pl::resolve(disc,bar5Bytes);
-    h.r=cg::resolve(disc,bar5Bytes);h.heap=&heap;
+    h.r=cg::resolve(disc,bar5Bytes,static_cast<uint32_t>(PAGE_SIZE));h.heap=&heap;
     if(pregs.valid && h.r.valid)h.regs=bar5->map();
     pl::Snapshot snap{};
     if(h.regs && pl::readSnapshot(pregs,read32,&h,snap)) {

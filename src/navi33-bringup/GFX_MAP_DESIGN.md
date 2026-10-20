@@ -40,18 +40,64 @@ does not include the G34 HQD block.
 Read-only source comparison, corrected 2026-10-20 17:42 HKT: the direct GFX
 path in `amdgpu_gfx_enable_kgq()` calls `amdgpu_device_flush_hdp()` before it
 commits MAP_QUEUES. G42 stages the ring, WPTR and fence through BAR0 using
-`sfence; mfence`, but has no HDP flush; the flush is the strongest current
-source-backed follow-up lead, not a proven cause. The generic HDP helper writes
-zero to the remapped HDP memory-flush control register and reads memory size;
-Navi33's exact device-specific mapping still needs to be resolved from matching
-upstream IP discovery and register headers before designing any change.
+`sfence; mfence`, but has no HDP flush; this is the strongest current
+source-backed follow-up lead, not a proven cause.
+
+Resolved against this card's captured IP Discovery (`NBIF 4.3.1`, `HDP 6.0.1`)
+and upstream Linux on 2026-10-20: `amdgpu_discovery.c` selects NBIO v4.3 and HDP
+v6.0 for these versions; HDP v6.0 uses `amdgpu_hdp_generic_flush()`. For the
+non-SR-IOV 4 KiB-page mapping, `nbio_v4_3_set_reg_remap()` chooses
+`MMIO_REG_HOLE_OFFSET = 0x80000 - PAGE_SIZE`, or `0x7f000` at 4 KiB. It maps
+the memory-flush control at that BAR5 aperture offset. The v4.3 register header
+defines `REMAP_HDP_MEM_FLUSH_CNTL` and `REMAP_HDP_REG_FLUSH_CNTL` at dwords
+`0x12d` and `0x12e`, BASE_IDX 2. This card's NBIF BASE_IDX 2 is dword `0xd20`,
+so the corresponding BAR5 byte offsets are `0x3934` and `0x3938`. Upstream
+programs those remap registers with `remapOffset + 0` and `remapOffset + 4`.
+The generic flush then writes zero to BAR5 + `0x7f000` and reads NBIO memory
+size (`NBIO_MEMSIZE`, dword `0xc3`) as its ordering/readback operation.
+
+Before 0.0.59, G42 performed none of the remap setup or flush. The bounded
+candidate therefore permits at most three exact GPU writes
+beyond the existing G42 writes: if both remap registers are reset to zero, set
+them to the selected aperture offset and offset+4; if already set to those
+exact values, leave them alone; refuse any other values. Then write zero to the
+remapped HDP memory-flush register after the G34 MQD/ring/fence/WPTR have been
+staged and before the poll trigger. Read the two remap registers back after
+setup and read NBIO memory size after the flush. Compute the remap offset from
+the guest kernel page size using the upstream `0x80000 - PAGE_SIZE` rule, and
+refuse if the resulting aperture is outside BAR5. The G42 one-shot latch must
+move before the first possible remap write, and a failed setup or readback must
+stop before MAP_QUEUES. This adds no packet types or VRAM span, but it is a new
+MMIO write set.
+
+## 0.0.59 bounded implementation
+
+The user asked to continue the G42 investigation. Kext 0.0.59 implements only
+the candidate above. The Darwin path passes the current XNU `PAGE_SIZE` into
+the host-independent resolver; it refuses unless that is 4096 bytes and the
+captured NBIF/HDP versions are exactly 4.3.1 / 6.0.1. The remap writes accept
+only `0x7f000` and `0x7f004`; the aperture accepts only a zero flush write.
+Unexpected old remap values refuse before the latch. The latch is consumed
+before the first possible remap, MQD, or staging-window write. After staging,
+the code writes the flush, then requires the two-read NBIO capacity check to
+pass before it triggers G34. Every failure stops before MAP_QUEUES. Ioreg
+`Navi33,GfxMap` now reports the HDP plan, state, old/new remap values, number
+of successful HDP writes, aperture, and capacity readback.
+
+Host coverage verifies the RX 7600 offsets, exact values, reset and already-set
+remaps, unexpected remap refusal, partial remap write failure, remap readback
+failure, flush write/readback failure, strict operation order, and that all
+failure cases stop before the poll trigger. `make host-test` and the manifest
+checks pass. This is still only host evidence: no 0.0.59 kext has run on the
+card. Any physical attempt still needs a full host power-off and renewed
+explicit approval; the current 0.0.58 VM must remain untouched until then.
 
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
 setup question only, not a confirmed missing step in the GFX map path. The host
 fake models neither HDP visibility nor these KIQ hardware effects. Do not add
 operations or enlarge a stage-write span without a new bounded design and
-renewed approval. Sources: [amdgpu_gfx.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_gfx.c), [gfx_v11_0.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/gfx_v11_0.c), [amdgpu_hdp.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_hdp.c), [amdgpu_device.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c).
+renewed approval. Sources: [amdgpu_gfx.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_gfx.c), [amdgpu_discovery.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c), [nbio_v4_3.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/nbio_v4_3.c), [nbio_4_3_0_offset.h](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/include/asic_reg/nbio/nbio_4_3_0_offset.h), [amdgpu_hdp.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_hdp.c), [hdp_v6_0.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/hdp_v6_0.c), [kfd_ioctl.h](https://github.com/torvalds/linux/blob/master/include/uapi/linux/kfd_ioctl.h).
 
 ## Gate and plan
 
@@ -98,6 +144,7 @@ missing boot logs. A later attempt after any stage write needs a full power-off.
 The host fake requires a mapped gfx queue for G42. It checks the fixed packet
 header/engine selection, privileged MQD, G34 pointer/fence updates and resulting
 clear-state/fence execution. Tests cover default-off, exact window bounds,
-refusal of a consumed G34 ring before stage writes, timeout, and idempotent start.
-CI builds the real kext and matched tools. Judge actual mapping, graphics fetch
-and rendered output only from the live run, separately from host model results.
+refusal of a consumed G34 ring before stage writes, HDP ordering and failure
+stops, timeout, and idempotent start. CI builds the real kext and matched tools.
+Judge actual mapping, graphics fetch and rendered output only from the live run,
+separately from host model results.
