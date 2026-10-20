@@ -247,7 +247,7 @@ int main() {
         assert(f.dev.wait(c.slot,s,1000,ret)==cg::Code::Ok && ret==s);
         // Close: drain, dequeue, disable context, flush, give back every page.
         assert(f.dev.close(c.slot)==cg::Code::Ok && f.dev.close(a.slot)==cg::Code::Ok);
-        assert(f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && !(f.mem[r.ctx[0][0]]&1u));
+        assert((f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && !(f.mem[r.ctx[0][0]]&1u)));
         assert(f.heap.usedBytes(cg::kTagClient)==0u && f.heap.usedBytes(gv::kTagTables)==0u && f.heap.consistent());
     }
     // 2. Teardown returns every page; reopening reuses the slot.
@@ -315,7 +315,7 @@ int main() {
         assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok);
         const uint64_t used=f.heap.usedBytes(cg::kTagClient);
         assert(f.dev.close(a.slot)==cg::Code::Quarantined && f.heap.usedBytes(cg::kTagClient)==used);
-        assert(f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==1u);   // never dequeued under work
+        assert((f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==1u));   // never dequeued under work
     }
     // 4. A fault in the client's VMID ends that client (not the others); it can still be torn down.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);

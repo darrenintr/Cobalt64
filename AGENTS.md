@@ -1970,6 +1970,16 @@ parser got two of them wrong:
   on a card in the autostart state with an untouched GFXHUB (the 07:52 autostart of boot
   `ec268858-…` qualifies if nothing ran since).
 
+- **2026-10-20, built, not yet run on the card:** G39 (kext 0.0.28, VRAM heap, CI run
+  39348576674, UUID `F6C9901E-C227-3118-98C4-B526DBAAC66C`, cached `artifact-0.0.28`) and B4
+  step 1 (kext 0.0.29, ABI 21, client GPU contexts and `n33gpu`, CI run 39350341455 (kext
+  jobs green; the host-test failure was the glibc one-argument assert, fixed next commit), UUID
+  `C77872A1-4C8E-35F0-AC46-9525F7F3358E`, cached `artifact-0.0.29`). The permission check
+  blocked the agent from starting either VM run even after the user's "please do it for me";
+  the user runs them with `!`: `vm/client-gpu.sh` (B4, uses --autostart) or `vm/stage.sh vma
+  "--vm-gradient" "--vm-alloc-plan --fw gradient.co" "--vm-alloc --fw gradient.co"` (G39, needs
+  an untouched GFXHUB: one of G36/G38/G39/B4 per power cycle, since B4 also sets the hub).
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
