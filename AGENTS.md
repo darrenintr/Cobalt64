@@ -511,12 +511,20 @@ output survives a hang and Linux can inspect a stuck guest.
   Vulkan fill wrote and verified 65,536 words. Guest SSH and WindowServer
   survived. `Navi33GOPFB` still reports host-console scanout. No GPU-rendered
   desktop, wallpaper/apps, or Metal output is established.
-- Read-only source comparison found upstream sends `SET_RESOURCES` before
-  mapping compute queues, and `amdgpu_gfx_enable_kgq()` flushes HDP before
-  submitting graphics MAP_QUEUES. G42 models neither. These are investigation
-  leads, not a diagnosed cause; host fake tests do not model KIQ scheduling or
-  HDP visibility. Do not expand packet or stage-window allowlists without a
-  new bounded design and renewed approval.
+- Read-only source comparison, corrected 2026-10-20 17:42 HKT: the direct GFX
+  path (`amdgpu_gfx_enable_kgq()`) calls `amdgpu_device_flush_hdp()` before it
+  commits MAP_QUEUES. G42 stages its ring/WPTR/fence through BAR0 with
+  `sfence; mfence` but has no HDP flush; this is the strongest current
+  source-backed follow-up lead, not a proven cause. The generic helper writes
+  zero to the remapped HDP memory-flush control register and reads memory size.
+  Resolve Navi33's exact device-specific mapping from matching upstream IP
+  discovery and register headers before designing any change.
+  `SET_RESOURCES` is emitted in the separate `amdgpu_gfx_enable_kcq()` compute
+  path; `amdgpu_gfx_enable_kgq()` does not emit it. Treat it only as an indirect
+  KIQ setup question, not a confirmed missing GFX step. The host fake models
+  neither effect. Do not expand packet or stage-window allowlists without a
+  new bounded design and renewed approval. Sources: upstream Linux
+  `amdgpu_gfx.c`, `gfx_v11_0.c`, `amdgpu_hdp.c`, and `amdgpu_device.c`.
 - The G42 latch and stage-window attempt are consumed. Any further GPU write
   attempt requires a full host power-off and renewed explicit approval. Keep
   the current VM running on 0.0.58 until then; do not reboot, shut it down, or

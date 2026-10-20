@@ -37,13 +37,21 @@ The post-stage BAR5-only `n33peek` capture is
 `runs/20261020-172609/gfxmap-post-n33peek.txt`; it reports no GPU writes and
 does not include the G34 HQD block.
 
-Read-only comparison with upstream exposed two additional path elements that
-G42 does not model: `amdgpu_gfx_enable_kcq()` sends `SET_RESOURCES` before its
-map operations, and `amdgpu_gfx_enable_kgq()` calls `amdgpu_device_flush_hdp()`
-before committing the GFX MAP_QUEUES ring. These are plausible follow-up
-investigation points, not proven causes. The host fake does not model their
-hardware effects. Do not add those operations or enlarge a stage-write span
-without a new bounded design and renewed approval.
+Read-only source comparison, corrected 2026-10-20 17:42 HKT: the direct GFX
+path in `amdgpu_gfx_enable_kgq()` calls `amdgpu_device_flush_hdp()` before it
+commits MAP_QUEUES. G42 stages the ring, WPTR and fence through BAR0 using
+`sfence; mfence`, but has no HDP flush; the flush is the strongest current
+source-backed follow-up lead, not a proven cause. The generic HDP helper writes
+zero to the remapped HDP memory-flush control register and reads memory size;
+Navi33's exact device-specific mapping still needs to be resolved from matching
+upstream IP discovery and register headers before designing any change.
+
+`SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
+path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
+setup question only, not a confirmed missing step in the GFX map path. The host
+fake models neither HDP visibility nor these KIQ hardware effects. Do not add
+operations or enlarge a stage-write span without a new bounded design and
+renewed approval. Sources: [amdgpu_gfx.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_gfx.c), [gfx_v11_0.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/gfx_v11_0.c), [amdgpu_hdp.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_hdp.c), [amdgpu_device.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c).
 
 ## Gate and plan
 
