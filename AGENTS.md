@@ -453,12 +453,13 @@ output survives a hang and Linux can inspect a stuck guest.
 
 ## Resume here (2026-10-20; offline audit after 0.0.62): KIQ completion unresolved
 
-- **Current task boundary:** analysis/planning and local documentation commit
-  only; no push. The user reports headless VFIO host and possibly running
-  0.0.62 VM in tmux `n33-g42-0.0.62`. This audit did not contact, shut down,
-  boot or modify the VM/card. Ask before changing that physical state.
-  Any further GPU write attempt requires explicit approval and full host
-  power-off. No VBIOS modifications under any circumstances.
+- **Physical state (2026-10-20 20:55):** all work is pushed to
+  `feature/navi33-dma-backend`. The 0.0.62 VM was shut down cleanly, then the
+  host was fully powered off and booted normal Ubuntu (boot `0e550a43-…`):
+  amdgpu owns the RX 7600, no VM runs, and our test firmware is gone. The
+  next card experiment needs the headless VFIO boot
+  (`sudo grub-reboot cobalt64-navi33-vm && sudo poweroff`), a disk rebuilt from
+  that boot's hostfb record, and explicit approval. Never modify the VBIOS.
 - **Latest evidence:** 0.0.61, `runs/20261020-200423`, loaded/cached UUID
   `7CE1D94A-FD2C-39B0-9285-163AA3578AF5`: remap/flush written (3 HDP writes),
   FlushReadbackFailed because `0x1ff0` (8176 MiB) failed the old 256 MiB
