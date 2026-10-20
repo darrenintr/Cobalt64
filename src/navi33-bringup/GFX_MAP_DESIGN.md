@@ -258,3 +258,17 @@ reports 8 GiB minus a 16 MiB reserve, so the granularity is now 16 MiB and
 `test_nbio43_capacity` checks that 8176 passes and 8200 still refuses. The
 host suite passes. Not run on the card; any new G42 attempt needs a full
 host power-off and renewed approval.
+
+## 0.0.62 run: MAP_QUEUES still times out (offline analysis)
+
+Run `runs/20261020-202558`: the remap pair and flush now pass (HDP Complete,
+memsize 8176 MiB), but `GfxMap` is state 3 (MapTimeout): `mapped` stays 0, the
+gfx HQD shows `valid 1 active 0`, and the G34 KIQ RPTR reads 0 after the run,
+so the packets appended at offset 64 were not consumed. Checked against
+upstream `gfx_v11_0.c` (`gfx11_kiq_map_queues`, `gfx_v11_0_ring_emit_fence_kiq`,
+fetched 2026-10-20): the 16-dword G42 packet matches on header 0xa2 with 5
+body dwords, engine 4, one queue, ME 0 (the gfx ring is `me = 0`), doorbell
+offset, MQD and WPTR addresses, and the WRITE_DATA fence (dst sel 5, confirm).
+No encoding bug was found. The open question is why the MEC does not fetch the
+packets from the G34 KIQ queue; the next check is the KIQ HQD and MQD fields
+against upstream. Not run on the card.
