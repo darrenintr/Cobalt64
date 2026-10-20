@@ -1992,6 +1992,40 @@ parser got two of them wrong:
   "--vm-gradient" "--vm-alloc-plan --fw gradient.co" "--vm-alloc --fw gradient.co"` (G39, needs
   an untouched GFXHUB: one of G36/G38/G39/B4 per power cycle, since B4 also sets the hub).
 
+- **2026-10-20 09:22-10:26, kext 0.0.30..0.0.41 in the VM (card up since the 07:52 autostart,
+  boot `ec268858-…`): USER PROGRAMS RAN THEIR OWN GPU WORK. Phase B4 on hardware.**
+  Run `runs/20261020-102619` (`client-gpu.txt`, `client-ioreg-*.txt`), kext 0.0.41 UUID
+  `1834424D-DEDD-3B04-8E20-1E87A2F21D07`, CI run of commit "client IBs must be executable".
+  - `n33gpu --nop` (VMID 2): IB fetched, fence written. `n33gpu` (VMID 3): the gradient,
+    4096/4096 pixels exact. `n33gpu --repeat 200` (VMID 4): 200 submit/wait/check, all exact,
+    41 ms each. `n33n48n` (VMID 5, RADV's N48N calls): HELLO build 41, QUERYINFO GB_ADDR_CONFIG
+    `0x343`, VRAM visible 223/224 MiB, user fence 1, all pixels exact.
+  - Device start: the VMID1-era GFXHUB words recognised, VRAM heap 8031 MiB free, doorbells:
+    NBIO aperture was 0 (set to 1 in the 09:55 boot), MEC doorbell range was 0x110..0xffc
+    (MES), `CP_PQ_STATUS.DOORBELL_ENABLE` 0 -> 2.
+  - What it took, learned run by run (all on the same card state, no power-off):
+    1. 0.0.30: every client call refused before the kext: IOKit always passes an inband
+       struct-output buffer; the policy must check sizes only (as 0.0.3 learned for scalars).
+    2. 0.0.31: engine 17 (MMIO TLB invalidation) never ACKs on the GFXHUB. amdgpu flushes only
+       on invalidation (`amdgpu_vm_update_range`), so open/map no longer flush.
+    3. 0.0.32..0.0.39: a client queue loaded with an empty ring never fetched afterwards: not
+       with the one-shot poll, an MMIO write of the active HQD's WPTR (reads back 0), a doorbell
+       (with aperture, range and DOORBELL_ENABLE), on pipe 0 queue >= 2, on pipes 1..3, on pipe
+       0 queue 1, nor with the queue structures identity-mapped. No fault in any of them.
+       Pipe 0 queues >= 2 also show MES activity (queue 4 active before use, queue 5 going
+       inactive), so clients use queue 0/1 of pipes 1..3 and pipe 0 queue 1.
+    4. 0.0.40: what works: invalidate the hub through `GCVM_L2_CNTL2` at context open (as
+       G36), and load the HQD at the first submission with its WPTR already in memory (G36's
+       activation fetch). After that first run later kicks (doorbell + poll) work: 200 in a row.
+       The first fetch then stopped with `CP_HQD_ERROR` 0x200 because the IB was mapped
+       without EXECUTE.
+    5. 0.0.41: IBs must be in executable mappings (the CP fetches them as code). All pass.
+  - Still open: closing a context needs the TLB flush, which engine 17 never ACKs, so every
+    close quarantines (memory kept, slot retired until the next boot's reclaim). Next: emit
+    the flush on the client's own queue (`gmc_v11_0_emit_flush_gpu_tlb`, WAIT_REG_MEM).
+  - The permission rule the user granted (`.claude` allow for `vm/*` scripts and `ssh
+    macos-vm`) let the agent run these VM stages itself.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
