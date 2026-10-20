@@ -2029,6 +2029,27 @@ parser got two of them wrong:
   - The permission rule the user granted (`.claude` allow for `vm/*` scripts and `ssh
     macos-vm`) let the agent run these VM stages itself.
 
+- **2026-10-20 13:05, kext 0.0.42 (CI run 39370523702) in the VM: engine 17's address range
+  is not why the TLB flush never ACKs.** Run `runs/20261020-130539` (`client-gpu.txt`,
+  `client-ioreg-*.txt`), fresh headless boot `347bf886-…`, disk built with `--autostart
+  --client-gpu`; the user ran `vm/client-gpu.sh` with `!` (the permission check blocked the agent).
+  - Autostart `DONE reached 8/8` with the same states and write counts as before.
+  - `GCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32/HI32` read `0/0` at device start (never programmed
+    since power-on) and read back `ffffffff/1f` after the write, as upstream
+    `gfxhub_v3_0_program_invalidation` sets them.
+  - Every close still missed the ACK: 4 misses (VMIDs 2..5, REQ read back equal to the request,
+    e.g. `f80020`, ACK 0), `flushes 0`, each close returned `0xe00002eb` (quarantined), so no slot
+    was reused. The range hypothesis is refuted.
+  - The work itself was unchanged: `n33gpu --nop` (VMID 2), the gradient (VMID 3, 0 wrong
+    pixels), `--repeat 200` (VMID 4, all exact, 41.6 ms each) and `n33n48n` (VMID 5, HELLO build
+    42, 0 wrong pixels). Doorbell setup: aperture `0->1`, MEC range `0x110..0xffc` kept, pq `0->2`.
+  - Remaining candidates: Linux never uses the MMIO path once MES or KIQ is up
+    (`gmc_v11_0_flush_gpu_tlb` sends `amdgpu_gmc_fw_reg_write_reg_wait` through them, "necessary
+    ... for GFXOFF to function properly under bare metal"), and ring flushes use per-ring engines
+    (`amdgpu_gmc_allocate_vm_inv_eng`: bitmap `0x1FFF3`, engine 5 reserved for MES firmware), not 17.
+    Next options: the flush emitted on the client's own ring (`gmc_v11_0_emit_flush_gpu_tlb`,
+    WAIT_REG_MEM write-then-wait) before dequeue, or a try with another engine.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
