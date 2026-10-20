@@ -37,7 +37,6 @@ struct Fake {
     std::vector<std::pair<uint64_t,uint32_t>> writes;
     std::set<uint32_t> paused;                                      // queues that do not run
     unsigned dispatches=0,flushes=0; bool noAck=false,stuck=false,noFlushModel=false;
-    std::set<uint32_t> hung;                                        // queues stopped in a WAIT_REG_MEM
     explicit Fake(cg::Regs regs):r(regs) {
         const v1::Regs &v=r.g.v;
         mem={{v.q.sos,42},{v.q.rlc,0xc000001fu},{v.q.grbm,0},{v.q.cntl,0x3c000000u},{v.q.scratch,0xdeadbeefu},
@@ -45,7 +44,6 @@ struct Fake {
              {v.l2c4,v1::kL2Cntl4Default},{v.l2c5,v1::kL2Cntl5Default},{v.faultStatus,0},{v.faultAddr,0},
              {r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u}};
         for(auto o:v.ident)mem[o]=0;
-        for(uint32_t i=0;i<cg::kClients;++i){mem[r.invReq[i]]=0;mem[r.invAck[i]]=0;mem[r.invRange[i][0]]=0;mem[r.invRange[i][1]]=0;}
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
         assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
                heap.reserve(240ull<<20,16ull<<20,0x53544753u)==vh::Code::Ok);
@@ -82,19 +80,6 @@ struct Fake {
     uint32_t rd(uint32_t k,uint64_t va){uint64_t p=0;return translate(k,va,p) ? get(p) : 0xdeadu;}
     void wr(uint32_t k,uint64_t va,uint32_t v){uint64_t p=0;if(translate(k,va,p,true))vram[p]=v;}
     // Run PM4 [from, to) in VMID k (ring or IB); returns false on a fault.
-    // WAIT_REG_MEM write-then-wait from queue k: only its own engine; the engine flushes the
-    // VMIDs in the request and ACKs them only once its range is set (as the card's engine 17
-    // never did without it, and never did from MMIO at all).
-    bool waitRegMem(uint32_t k,const std::vector<uint32_t> &b) {
-        const uint32_t slot=k-cg::kFirstVmid;
-        assert(b.size()==6u && b[0]==cg::kWaitRegMemWriteWait && b[5]==cg::kWaitRegMemPoll);
-        assert(4ull*b[1]==r.invReq[slot] && 4ull*b[2]==r.invAck[slot] && b[3]==cg::invalidateReq(k) && b[4]==(1u<<k));
-        mem[r.invReq[slot]]=b[3];++flushes;
-        if(!noFlushModel)for(auto i=tlb.begin();i!=tlb.end();)i=i->first.first==k ? tlb.erase(i) : std::next(i);
-        const bool range=mem[r.invRange[slot][0]]==cg::kInvRangeLoValue && mem[r.invRange[slot][1]]==cg::kInvRangeHiValue;
-        mem[r.invAck[slot]]=noAck || !range ? 0u : (b[3]&0xffffu);
-        return (mem[r.invAck[slot]]&b[4])==(b[3]&b[4]);
-    }
     void exec(uint32_t k,uint64_t base,uint64_t from,uint64_t to,bool ring,uint64_t &pgm,uint64_t &karg,uint32_t &masks) {
         for(uint64_t i=from;i<to;) {
             auto at=[&](uint64_t d){return base+4u*(ring ? d%cg::kRingDwords : d);};
@@ -126,9 +111,6 @@ struct Fake {
                         if(x<w && y<hh)wr(k,px+4ull*(y*pitch+x),gfx11_shader::gradientPixel(x,y,w,hh,fr));
                 }
                 masks=0;
-            } else if(op==cg::kWaitRegMem) {
-                assert(ring);
-                if(!waitRegMem(k,b)){hung.insert(k);return;}
             } else if(op==gd::kReleaseMem) {
                 const uint64_t to=b[2]|(uint64_t(b[3])<<32);wr(k,to,b[4]);
                 if((b[1]>>29)==2u)wr(k,to+4u,b[5]);
@@ -139,7 +121,7 @@ struct Fake {
     }
     void runQueue(uint32_t k) {
         const uint32_t qs=qsOf(k);
-        if(stuck || paused.count(k) || hung.count(k) || !(bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]&1u))return;
+        if(stuck || paused.count(k) || !(bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]&1u))return;
         assert((bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdVmid)}]==k));
         const uint64_t mqd=bank[{qs,mq::hqd(r.g.v.q,0x1fa9u)}]|(uint64_t(bank[{qs,mq::hqd(r.g.v.q,0x1faau)}])<<32);
         assert(mqd>=kFb && heap.covers(mqd-kFb,4096));
@@ -150,7 +132,6 @@ struct Fake {
         const uint64_t wptr=rd(k,poll)|(uint64_t(rd(k,poll+4))<<32);
         uint64_t pgm=0,karg=0;uint32_t masks=0;faultNow=false;
         exec(k,ring,rptr[k],wptr,true,pgm,karg,masks);
-        if(hung.count(k))return;
         rptr[k]=wptr;bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqRptr)}]=uint32_t(wptr%cg::kRingDwords);
     }
     static bool read(void *c,uint64_t off,uint32_t *v) {
@@ -163,6 +144,8 @@ struct Fake {
         assert(cg::allowed(f.r,off));
         f.writes.emplace_back(off,v);
         if(f.banked(off))f.bank[{f.sel(),off}]=v; else f.mem[off]=v;
+        // GCVM_L2_CNTL2 with both invalidate bits: every TLB entry of every VMID goes.
+        if(off==f.r.g.v.l2c2 && (v&3u)==3u){++f.flushes;if(!f.noFlushModel)f.tlb.clear();}
         if(off==f.r.dequeue && v==cg::kDrainPipe && !f.stuck) {
             f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdActive)}]=0u;
             for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.rptr[k]=0;   // a reload starts the ring at 0
@@ -253,12 +236,10 @@ int main() {
     const gfx11_shader::Kernel k=gr::kernelOf(co.data(),co.size());assert(k.code==gfx11_shader::Code::Ok);
     auto b=rx7600_fixture::blob();IPDiscovery d;assert(d.parse(b.data(),b.size()));
     const auto r=cg::resolve(d,rx7600_fixture::kBar5);
-    assert(r.valid && r.invReq[0]==(0x1260u+0x16b2u)*4u && r.invAck[5]==(0x1260u+0x16c9u)*4u && r.dequeue==(0x1260u+0x1fc1u)*4u);
-    assert(r.gcDw==0x1260u && r.invRange[0][0]==(0x1260u+0x16ddu)*4u && r.invRange[5][1]==(0x1260u+0x16e8u)*4u);
-    for(uint32_t i=0;i<cg::kClients;++i)assert(cg::allowed(r,r.invRange[i][0]) && cg::allowed(r,r.invRange[i][1]) &&
-                                               !cg::allowed(r,r.invReq[i]) && !cg::allowed(r,r.invAck[i]));
-    assert(!cg::allowed(r,(0x1260u+0x16bcu)*4u) && !cg::allowed(r,(0x1260u+0x16f1u)*4u));   // engine 17 no more
-    assert(r.ctx[0][0]==(0x1260u+0x168au)*4u && r.ctx[5][6]==(0x1260u+0x1742u)*4u && r.gbAddrConfig==0x263eu*4u);
+    assert(r.valid && r.dequeue==(0x1260u+0x1fc1u)*4u && cg::allowed(r,r.g.v.l2c2));
+    // No invalidation engine register (REQ 0x16ab.., ACK 0x16bd.., ranges 0x16cf..0x16f2) is ever written.
+    for(uint32_t dw=0x16abu;dw<=0x16f2u;++dw)assert(!cg::allowed(r,(0x1260u+dw)*4u));
+    assert(r.ctx[0][0]==(0x1260u+0x1690u)*4u && r.ctx[5][6]==(0x1260u+0x174eu)*4u && r.gbAddrConfig==0x263eu*4u);
     assert(!cg::allowed(r,r.gbAddrConfig));
     // Never context 0/1, SCRATCH, the MEC controls or the fault registers.
     for(uint64_t o:{r.g.v.ctx,r.g.v.baseLo,r.g.v.endHi,r.g.v.q.scratch,r.g.v.q.cntl,r.g.v.q.pc,r.g.v.faultStatus})
@@ -266,18 +247,14 @@ int main() {
     // 1. Two clients, each its own VMID, queue, buffers and image.
     {   Fake f(r);
         {uint32_t none=0;assert(f.dev.open(&f,none)==cg::Code::NotReady);}
-        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u+12u);
-        // The clients' engine ranges as gfxhub_v3_0_program_invalidation, before-values kept.
-        assert(f.mem[r.invRange[3][0]]==0xffffffffu && f.mem[r.invRange[3][1]]==0x1fu);
-        {   const cg::InvRange iv=f.dev.stats().inv;
-            assert(iv.loBefore==0u && iv.hiBefore==0u && iv.lo==0xffffffffu && iv.hi==0x1fu && iv.written==12u);}
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u);
         // Doorbells: MEC range 0..0x450 bytes, NBIO aperture bit 0 set, the rest of the word kept.
         assert(f.mem[r.mecDbLower]==0u && f.mem[r.mecDbUpper]==0x450u && f.mem[r.nbioAperEn]==0x101u);
         {   const cg::DoorbellSetup db=f.dev.stats().db;
             assert(db.aperBefore==0x100u && db.lowerBefore==0x1234u && db.upperBefore==0u && db.aper==0x101u && db.upper==0x450u);}
         assert(cg::allowed(r,r.nbioAperEn) && r.nbioAperEn==(0xd20u+0xc0u)*4u && r.mecDbLower==(0x1260u+0x1dfcu)*4u);
         App a=setup(f,co,k,7,0x100000000ull), c=setup(f,co,k,99,0x100000000ull);   // same VAs, different VMIDs
-        assert(a.slot==0 && c.slot==1 && f.dev.client(0)->vmid==2u && f.dev.client(1)->vmid==3u);
+        assert(a.slot==0 && c.slot==1 && f.dev.client(0)->vmid==8u && f.dev.client(1)->vmid==9u);
         uint64_t sa=0,sc=0,ret=0;
         const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
         assert(f.dev.submit(a.slot,&ia,1,sa)==cg::Code::Ok && sa==1u);
@@ -287,7 +264,7 @@ int main() {
         assert(f.dev.client(0)->loaded && (f.mem[r.pqStatus]&cg::kPqStatusDoorbellEnable) && f.rings==0u);   // loaded with work, no kick yet
         // VMID k's context: depth 3 at the client's root; SH_MEM for VMID k only.
         assert(f.mem[r.ctx[0][0]]==0x01fffe07u && (f.mem[r.ctx[0][1]]&~0xfffu)==f.dev.client(0)->space.rootVram());
-        assert((f.bank[{2u<<4,r.g.shMem}]==gr::kShMemDefault) && (f.bank[{0u,r.g.shMem}]==0u));
+        assert((f.bank[{8u<<4,r.g.shMem}]==gr::kShMemDefault) && (f.bank[{0u,r.g.shMem}]==0u));
         // An IB must sit in an executable mapping (the CP fetches it as code).
         {   uint32_t ro=0;uint64_t vro=0,sq=0;
             assert(f.dev.boCreate(c.slot,4096,ro,vro)==cg::Code::Ok && f.dev.vaMap(c.slot,ro,0x300000000ull,false,false)==cg::Code::Ok);
@@ -299,7 +276,7 @@ int main() {
         for(int i=0;i<300;++i){assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok);assert(f.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok);}
         assert(s==301u && f.dev.client(0)->wptr>cg::kRingDwords && imageOk(f,a,7));
         // Back-pressure: a paused queue fills its ring and the next submission is Busy, not an overwrite.
-        f.paused.insert(3u);
+        f.paused.insert(cg::kFirstVmid+1u);
         cg::Code code=cg::Code::Ok;int n=0;
         while((code=f.dev.submit(c.slot,&ia,1,s))==cg::Code::Ok)++n;
         assert(code==cg::Code::Busy && n>0 && n<64);
@@ -307,11 +284,11 @@ int main() {
         {   const cg::QueueSnap &sn=f.dev.client(c.slot)->snap;     // the timeout snapshot
             assert(sn.taken && sn.reg[0]==1u && sn.wptrMem==uint32_t(f.dev.client(c.slot)->wptr) && sn.fence<s);
             assert(f.mem[r.g.v.q.grbm]==0u);}
-        f.paused.clear();f.runQueue(3);              // the queue catches up
+        f.paused.clear();f.runQueue(cg::kFirstVmid+1u);              // the queue catches up
         assert(f.dev.wait(c.slot,s,1000,ret)==cg::Code::Ok && ret==s);
         // Close: drain, dequeue, disable context, flush, give back every page.
         assert(f.dev.close(c.slot)==cg::Code::Ok && f.dev.close(a.slot)==cg::Code::Ok);
-        assert((f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && !(f.mem[r.ctx[0][0]]&1u)));
+        assert((f.bank[{qsOf(cg::kFirstVmid),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && !(f.mem[r.ctx[0][0]]&1u)));
         assert(f.heap.usedBytes(cg::kTagClient)==0u && f.heap.usedBytes(gv::kTagTables)==0u && f.heap.consistent());
     }
     // 2. Teardown returns every page; reopening reuses the slot.
@@ -386,11 +363,11 @@ int main() {
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
         App a=setup(f,co,k,7,0x100000000ull);uint64_t s=0;
         const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
-        f.paused.insert(2u);
+        f.paused.insert(cg::kFirstVmid);
         assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok);
         const uint64_t used=f.heap.usedBytes(cg::kTagClient);
         assert(f.dev.close(a.slot)==cg::Code::Quarantined && f.heap.usedBytes(cg::kTagClient)==used);
-        assert((f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==1u));   // never dequeued under work
+        assert((f.bank[{qsOf(cg::kFirstVmid),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==1u));   // never dequeued under work
     }
     // 3f. The user fence (cs_chunk_fence): the 64-bit sequence lands in the user's buffer;
     //     a fence outside a writeable mapping is refused; a GPU null pointer faults.
@@ -436,50 +413,36 @@ int main() {
         assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Quarantined);
         uint32_t slot=0;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==1u);   // the slot stays taken
     }
-    // A flush that never ACKs leaves the queue in its WAIT_REG_MEM: the unmap quarantines.
+    // 5a. Close issues no invalidation (nothing runs in the VMID once dequeued); the next
+    //     open of the slot invalidates before enabling the context, and the new client's work
+    //     lands in its own buffers even at the same VAs. Unmap invalidates once.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
-        App a=setup(f,co,k,7,0x100000000ull);uint32_t x=0;uint64_t vx=0,s=0,ret=0;
-        const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
-        assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok && f.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok);
-        assert(f.dev.boCreate(a.slot,4096,x,vx)==cg::Code::Ok);
-        f.noAck=true;
-        const unsigned before=f.flushes;
-        assert(f.dev.vaMap(a.slot,x,0x500000,true,false)==cg::Code::Ok && f.flushes==before);   // new PTEs: no flush
-        assert(f.dev.boFree(a.slot,x)==cg::Code::Quarantined && f.heap.covers(vx,4096));      // unmap needs the ACK
-        const cg::FlushMiss m=f.dev.stats().miss;
-        assert(m.vmid==2u && m.eng==7u && m.req==cg::invalidateReq(2) && m.reqBack==cg::invalidateReq(2) && m.ack==0u && m.misses==1u);
-        assert(f.dev.stats().tlbFlushes==0u);
-    }
-    // 5a. Ranges already set are not rewritten; a client that never submitted closes with no
-    //     flush (nothing ran in its VMID), one that did flushes once on its own queue and the
-    //     slot is reused, the new client's work landing in its own buffers.
-    {   Fake f(r);
-        for(const auto &e:r.invRange){f.mem[e[0]]=0xffffffffu;f.mem[e[1]]=0x1fu;}
-        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.dev.stats().inv.written==0u);
-        for(const auto &w:f.writes)for(const auto &e:r.invRange)assert(w.first!=e[0] && w.first!=e[1]);
-        uint32_t slot=0;assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.close(slot)==cg::Code::Ok);
-        assert(f.dev.stats().tlbFlushes==0u && f.flushes==0u);
+        const unsigned f0=f.flushes;                                               // the hub setup's own
         App a=setup(f,co,k,7,0x100000000ull);uint64_t s=0,ret=0;
+        assert(f.flushes==f0+1u);                                                  // open
         const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
         assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok && f.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok && imageOk(f,a,7));
-        assert(f.dev.close(a.slot)==cg::Code::Ok && f.dev.stats().tlbFlushes==1u && f.flushes==1u && f.dev.stats().miss.misses==0u);
-        App b=setup(f,co,k,9,0x100000000ull);assert(b.slot==a.slot);
+        assert(f.dev.close(a.slot)==cg::Code::Ok && f.flushes==f0+1u);
+        App b=setup(f,co,k,9,0x100000000ull);assert(b.slot==a.slot && f.flushes==f0+2u);
         assert(f.dev.submit(b.slot,&ia,1,s)==cg::Code::Ok && f.dev.wait(b.slot,s,1000,ret)==cg::Code::Ok && imageOk(f,b,9));
+        uint32_t x=0;uint64_t vx=0;
+        assert(f.dev.boCreate(b.slot,4096,x,vx)==cg::Code::Ok && f.dev.vaMap(b.slot,x,0x500000,true,false)==cg::Code::Ok);
+        assert(f.flushes==f0+2u && f.dev.boFree(b.slot,x)==cg::Code::Ok && f.flushes==f0+3u && f.dev.stats().tlbFlushes==3u);
     }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
-        f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
-        uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==1u && f.dev.client(1)->vmid==3u);
+        f.bank[{qsOf(cg::kFirstVmid),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
+        uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==1u && f.dev.client(1)->vmid==9u);
         assert(f.dev.client(0)->state==cg::State::Quarantined && f.mem[r.g.v.q.grbm]==0u);
     }
     // 5c. An earlier boot's stuck client queues are drained and dequeued at start; one that
     //     will not go is retired. DOORBELL_ENABLE is set once a queue is loaded.
     {   Fake f(r);
-        f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;f.bank[{qsOf(5),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
+        f.bank[{qsOf(cg::kFirstVmid),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;f.bank[{qsOf(cg::kFirstVmid+3u),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
         assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.dev.stats().db.reclaimed==2u);
-        assert((f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && f.mem[r.g.v.q.grbm]==0u));
+        assert((f.bank[{qsOf(cg::kFirstVmid),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && f.mem[r.g.v.q.grbm]==0u));
         uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==0u && !f.dev.client(0)->loaded);
-        Fake g(r);g.stuck=true;g.bank[{qsOf(3),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
+        Fake g(r);g.stuck=true;g.bank[{qsOf(cg::kFirstVmid+1u),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::Ok && g.dev.stats().db.reclaimed==0u &&
                g.dev.client(1)->state==cg::State::Quarantined);
     }
@@ -504,9 +467,8 @@ int main() {
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
         h.mem[r.mecDbLower]=0x110u;h.mem[r.mecDbUpper]=0xffcu;h.mem[r.nbioAperEn]=1u;   // MES's range covers ours
-        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==12u+12u);
-        for(size_t i=0;i<12u;++i)assert(h.writes[i].first==r.invRange[i/2u][i%2u]);   // G36-G39 never set them
-        for(size_t i=12;i<h.writes.size();++i)assert(h.writes[i].first==r.g.v.q.grbm);  // only the HQD ACTIVE checks
+        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==12u);
+        for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm);          // only the HQD ACTIVE checks
     }
     // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.
     {   namespace nf=n48n_front;
@@ -516,7 +478,7 @@ int main() {
         assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_VRAM,0},o4)==nf::R::NotReady);
         assert(f.dev.open(&ss,ss.slot)==cg::Code::Ok);ss.open=true;
         n48n_info inf{};nf::info(f.dev,ss,f.heap,0x26010042u,29u,inf);
-        assert(inf.abi_version==1u && inf.vmid==2u && inf.gc_version==0x0b0002u && inf.gb_addr_config==0x26010042u);
+        assert(inf.abi_version==1u && inf.vmid==8u && inf.gc_version==0x0b0002u && inf.gb_addr_config==0x26010042u);
         assert(inf.va_low_first==0x10000u && inf.va_low_last==0x7fffffffffffull && inf.max_ibs==16u && inf.ring_size_dw==1024u);
         assert(inf.vram_vis_total==(256ull-32ull)<<20 && inf.vram_vis_free<inf.vram_vis_total && inf.gtt_cap>0u && !inf.flags);
         // Buffers: GTT is served from BAR0 VRAM; refused flags and domains.

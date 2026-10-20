@@ -4,7 +4,8 @@
 // amdgpu's DRM interface (and of the Navi48 N48N ABI that RADV's Darwin backend
 // speaks). No hardware I/O except callbacks; the caller serializes.
 //
-// Each client owns VMID k (k = 2..7; VMID 1 stays with the G36-G39 proofs), a compute
+// Each client owns VMID k (k = 8..13, the range amdgpu leaves to KFD compute; VMID 1 stays
+// with the G36-G39 proofs, 2..7 were burnt on 2026-10-20 13:05 by un-ACKed flushes), a compute
 // queue (queue 0/1 of MEC pipe 1..3, see pipeOf), its own four-level address space (Navi33Gmc11Vm.h)
 // and its buffers, all from the kernel's VRAM heap. The queue is loaded as
 // hqd_load_v11 does (KFD without a scheduler), its ring and fence live in kernel
@@ -37,7 +38,7 @@ namespace mq=mec_queue;
 namespace kiq=gfx11_kiq;
 namespace gd=gfx11_dispatch;
 namespace v1=vmid1;
-constexpr uint32_t kFirstVmid=2u, kClients=6u;                 // VMIDs 2..7
+constexpr uint32_t kFirstVmid=8u, kClients=6u;                 // VMIDs 8..13
 // Each client's HQD. Queues 2 and up of every pipe belong to MES (amdgpu_mes:
 // compute_hqd_mask 0xc; MES runs since the autostart): on the card (2026-10-20 09:37)
 // queue 3 never took its WPTR, queue 4 was active before use, queue 5 went inactive by
@@ -59,7 +60,7 @@ constexpr uint64_t kUserVaMin=0x10000u, kUserVaMax=gv::kVaLimit;   // [min, max)
 // 09:30..10:08), while VMID 0 (MC addresses) did (G35). That range is closed to user maps.
 constexpr uint64_t kMaxBoBytes=64ull<<20;
 constexpr uint32_t kTagClient=0x434c4e54u;
-// gc_11_0_0_offset.h (GC segment 0): context k registers, invalidation engine 17,
+// gc_11_0_0_offset.h (GC segment 0): context k registers,
 // CP_HQD_DEQUEUE_REQUEST (in the HQD block, banked by GRBM select).
 constexpr uint32_t ctxCntl(uint32_t k) { return 0x1688u+k; }
 constexpr uint32_t ctxBaseLo(uint32_t k) { return 0x16f3u+2u*k; }
@@ -68,23 +69,15 @@ constexpr uint32_t ctxEndLo(uint32_t k) { return 0x1733u+2u*k; }
 static_assert(ctxCntl(1)==0x1689u && ctxBaseLo(2)==0x16f7u && ctxStartLo(2)==0x1717u && ctxEndLo(7)+1u==0x1742u,
               "context register strides (gfxhub_v3_0 ctx_distance 1, ctx_addr_distance 2)");
 constexpr uint32_t kDequeueRequest=0x1fc1u;
-// TLB flushes go through the client's own queue, as Linux does once MES/KIQ run: the MMIO
-// path on engine 17 kept every request and never ACKed on the card, with or without its
-// address range set (2026-10-20 10:26 and 13:05). Each client gets an engine as amdgpu's
-// ring engines are handed out (amdgpu_gmc_allocate_vm_inv_eng: 0x1FFF3 less MES's 5; the
-// compute rings land on 7.. on this chip), 7 + slot, and its address range as
-// gfxhub_v3_0_program_invalidation sets it (0xffffffff / 0x1f).
-constexpr uint32_t kInvReq0=0x16abu, kInvAck0=0x16bdu, kInvRangeLo0=0x16cfu, kInvEngFirst=7u;
-constexpr uint32_t kInvRangeLoValue=0xffffffffu, kInvRangeHiValue=0x1fu;
-constexpr uint32_t invEng(uint32_t slot) { return kInvEngFirst+slot; }
-constexpr uint32_t invReqDw(uint32_t eng) { return kInvReq0+eng; }
-constexpr uint32_t invAckDw(uint32_t eng) { return kInvAck0+eng; }
-constexpr uint32_t invRangeLoDw(uint32_t eng) { return kInvRangeLo0+2u*eng; }
-static_assert(invReqDw(17)==0x16bcu && invAckDw(17)==0x16ceu && invRangeLoDw(17)==0x16f1u && invEng(5)==12u,
-              "gc_11_0_0_offset.h GCVM_INVALIDATE_ENG* (eng_distance 1, eng_addr_distance 2)");
-// nvd.h PACKET3_WAIT_REG_MEM: FUNCTION(3) equal, MEM_SPACE(0) register, OPERATION(1)
-// write reg0 then wait on reg1, ENGINE(0) ME; poll interval 0x20 (as upstream).
-constexpr uint32_t kWaitRegMem=0x3cu, kWaitRegMemWriteWait=3u|(1u<<6), kWaitRegMemPoll=0x20u;
+// No GFXHUB invalidation engine ACKs on this card: engine 17 from MMIO (2026-10-20 10:26,
+// 13:05, with and without its address range) and engine 12 from the CP (WAIT_REG_MEM, 13:21)
+// latched the request and never answered, and a VMID left with such a request never ran
+// again in that power cycle. So none is ever used. TLBs are cleared the way open() and
+// G36 do it, GCVM_L2_CNTL2 INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE (no handshake):
+// - close: nothing runs in VMID k once its queue is dequeued and context k disabled, and
+//   the next open() of the slot invalidates before it enables the context again;
+// - unmap: the queue is idle and the PTEs are cleared before the invalidation, and the
+//   pages are freed only after it.
 constexpr uint32_t kDrainPipe=1u;
 constexpr uint32_t kGbAddrConfig=0x13deu;                       // regGB_ADDR_CONFIG, read only
 // Doorbells (the only way upstream gfx11 kicks a compute queue): gc_11_0_0_offset.h
@@ -103,9 +96,6 @@ constexpr uint32_t doorbellDword(uint32_t slot) { return (kDbFirst+slot)<<1; }
 constexpr uint32_t doorbellByte(uint32_t slot) { return 4u*doorbellDword(slot); }
 constexpr uint32_t kDbOffsetMask=0x0ffffffcu, kDbEn=1u<<30;      // CP_HQD_PQ_DOORBELL_CONTROL
 static_assert(kMecDbUpperValue==0x450u && doorbellByte(5)+8u<=0x450u && doorbellByte(0)==0x200u,"doorbells");                               // enum hqd_dequeue_request_type
-// gfxhub_v3_0_get_invalidate_req(vmid, 0): PER_VMID bit, FLUSH_TYPE 0, L2 PTES/PDE0/1/2, L1 PTES.
-constexpr uint32_t invalidateReq(uint32_t vmid) { return (1u<<vmid)|(1u<<19)|(1u<<20)|(1u<<21)|(1u<<22)|(1u<<23); }
-static_assert(invalidateReq(2)==0x00f80004u,"GCVM_INVALIDATE_ENG0_REQ word");
 constexpr uint32_t kFaultVmidShift=20u, kFaultVmidMask=0xf00000u;
 // The queue buffer at its own MC address, mec_queue's layout: page 0 unmapped, EOP 0x1000, ring
 // 0x2000 (GPU read-only), RPTR/WPTR 0x3000/0x3008, fence 0x4000.
@@ -119,8 +109,6 @@ enum class Code : uint8_t {
 struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
-    uint64_t invReq[kClients]{}, invAck[kClients]{}, invRange[kClients][2]{};   // BAR5 bytes, engine 7 + slot
-    uint32_t gcDw=0;                // GC segment 0 base (dwords): register addresses in packets
     uint64_t dequeue=0;
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
     uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0, pqStatus=0;
@@ -139,12 +127,6 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         const uint32_t dws[7]={ctxCntl(k),ctxBaseLo(k),ctxBaseLo(k)+1u,ctxStartLo(k),ctxStartLo(k)+1u,ctxEndLo(k),ctxEndLo(k)+1u};
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
-    for(uint32_t i=0;i<kClients;++i) {
-        const uint32_t e=invEng(i);
-        if(!one(invReqDw(e),r.invReq[i]) || !one(invAckDw(e),r.invAck[i]) ||
-           !one(invRangeLoDw(e),r.invRange[i][0]) || !one(invRangeLoDw(e)+1u,r.invRange[i][1]))return r;
-    }
-    r.gcDw=static_cast<uint32_t>(r.invReq[0]/4u)-invReqDw(invEng(0));
     if(!one(kDequeueRequest,r.dequeue) ||
        !one(kGbAddrConfig,r.gbAddrConfig) || !one(kMecDbLower,r.mecDbLower) || !one(kMecDbUpper,r.mecDbUpper) ||
        !one(kCpPqStatus,r.pqStatus))return r;
@@ -154,14 +136,12 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
     r.nbioAperEn=(nbif.bases[2]+kNbioAperEn)*4u;
     r.valid=true;return r;
 }
-// Writable registers: the GFXHUB words, contexts 2..7, the address range of the
-// clients' invalidation engines (their REQ is written by the CP only), SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
+// Writable registers: the GFXHUB words (GCVM_L2_CNTL2 for invalidation), contexts 8..13, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
 // (CP_HQD_DEQUEUE_REQUEST lies inside it). Never the MEC program counters/control,
 // SCRATCH_REG0, context 0/1, the fault registers or anything outside GC.
 inline bool allowed(const Regs &r,uint64_t off) {
     if(!r.valid || off==r.g.v.q.scratch || off==r.g.v.ctx || off==r.g.v.baseLo || off==r.g.v.baseHi ||
        off==r.g.v.startLo || off==r.g.v.startHi || off==r.g.v.endLo || off==r.g.v.endHi)return false;
-    for(const auto &e:r.invRange)if(off==e[0] || off==e[1])return true;
     if(off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
@@ -196,17 +176,11 @@ struct Client {
     QueueSnap snap{};
     bool loaded=false;          // the HQD is loaded at the first submission (see submit)
 };
-// The last TLB flush that did not complete: the VMID, its engine, the request the queue
-// wrote, what that engine's REQ and ACK read back.
-struct FlushMiss { uint32_t vmid=0, eng=0, req=0, reqBack=0, ack=0, misses=0; };
 // The doorbell setup found at start (before any write) and after it.
 struct DoorbellSetup { uint32_t aperBefore=0, lowerBefore=0, upperBefore=0, aper=0, lower=0, upper=0;
                        uint32_t pqBefore=0, pq=0, reclaimed=0; };
-// The clients' engine ranges at start: before any write (slot 0 and the number not
-// already set) and after.
-struct InvRange { uint32_t loBefore=0, hiBefore=0, lo=0, hi=0, written=0; };
 struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
-               FlushMiss miss{}; DoorbellSetup db{}; InvRange inv{}; };
+               DoorbellSetup db{}; };
 
 class Device {
 public:
@@ -235,17 +209,6 @@ public:
             return Code::Hub;                // a hub we do not recognise: touch nothing
         }
         if(fault)faultSeen_=fault;
-        // The clients' engine ranges as gfxhub_v3_0_program_invalidation (LO32 is all-ones, so raw reads).
-        for(uint32_t i=0;i<kClients;++i) {
-            uint32_t lo=0,hi=0;
-            if(!h.read(h.ctx,r.invRange[i][0],&lo) || !h.read(h.ctx,r.invRange[i][1],&hi))return Code::HwFailed;
-            if(!i){inv_.loBefore=lo;inv_.hiBefore=hi;}
-            if(lo!=kInvRangeLoValue){if(!wr(r.invRange[i][0],kInvRangeLoValue))return Code::HwFailed;++inv_.written;}
-            if(hi!=kInvRangeHiValue){if(!wr(r.invRange[i][1],kInvRangeHiValue))return Code::HwFailed;++inv_.written;}
-            if(!h.read(h.ctx,r.invRange[i][0],&lo) || !h.read(h.ctx,r.invRange[i][1],&hi) ||
-               lo!=kInvRangeLoValue || hi!=kInvRangeHiValue)return Code::HwFailed;
-            if(!i){inv_.lo=lo;inv_.hi=hi;}
-        }
         // Doorbells: the MEC range as gfx_v11_0_kiq_init_register, the NBIO aperture as
         // nbio_v4_3_enable_doorbell_aperture; only what is not already so is written.
         uint32_t aper=0,lower=0,upper=0,pq=0;
@@ -314,11 +277,9 @@ public:
         for(const auto &x:ctx)if(!wr(x.off,x.val))return fail(c,Code::HwFailed);
         if(!sel(c.vmid<<4) || !wr(r_->g.shMem,gradient::kShMemDefault) || !wr(r_->g.shBases,vg::kShMemBasesValue) ||
            !sel(0u))return fail(c,Code::HwFailed);
-        // Every L1 TLB and the L2 cache invalidated, as gfxhub_v3_0_init_cache_regs and G36
-        // did before enabling a context: engine 17 never ACKed on the card, and VMIDs 2..7
-        // were never invalidated since power-on.
-        uint32_t c2=0;
-        if(!rd(r_->g.v.l2c2,c2) || !wr(r_->g.v.l2c2,v1::l2Cntl2Word(c2)))return fail(c,Code::HwFailed);
+        // Every L1 TLB and the L2 cache invalidated before the context is used (see kFirstVmid's
+        // note): a previous client of this slot may have left translations behind.
+        if(!invalidate())return fail(c,Code::HwFailed);
         return Code::Ok;
     }
     // A zeroed, CPU-visible VRAM buffer. Returns handle 1..kMaxBos.
@@ -362,7 +323,7 @@ public:
         if(!b->va)return Code::BadArgs;
         const Code idle=waitIdle(*c);
         if(idle!=Code::Ok)return idle;
-        if(c->space.unmap(b->va,b->bytes)!=gv::Code::Ok || !flush(*c)){quarantine(*c);return Code::Quarantined;}
+        if(c->space.unmap(b->va,b->bytes)!=gv::Code::Ok || !invalidate()){quarantine(*c);return Code::Quarantined;}
         b->va=0;b->vaFlags=0;return Code::Ok;
     }
     Code boFree(uint32_t slot,uint32_t handle) {
@@ -452,8 +413,7 @@ public:
         Client *c=live(slot);
         if(!c)return Code::NotFound;
         if(c->state==State::Quarantined){c->owner=nullptr;return Code::Quarantined;}
-        // The flush runs on the queue, so before it is dequeued; nothing runs in VMID k after it.
-        if(c->state==State::Open && (waitIdle(*c)!=Code::Ok || !flush(*c))){quarantine(*c);c->owner=nullptr;return Code::Quarantined;}
+        if(c->state==State::Open && waitIdle(*c)!=Code::Ok){quarantine(*c);c->owner=nullptr;return Code::Quarantined;}
         if(c->loaded && !dequeue(*c)){quarantine(*c);c->owner=nullptr;return Code::Quarantined;}
         uint32_t cntl=0;
         if(!rd(r_->ctx[slot][0],cntl) || !wr(r_->ctx[slot][0],cntl&~1u))
@@ -489,7 +449,7 @@ public:
             ++s.clients;s.emitted+=c.emitted;s.retired+=c.retired;
             for(const Bo &b:c.bo)if(b.live)++s.bos;
         }
-        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.miss=miss_;s.db=db_;s.inv=inv_;return s;
+        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.db=db_;return s;
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
@@ -544,26 +504,13 @@ private:
         const uint32_t slot=index(c);
         return h_.doorbell(h_.ctx,doorbellByte(slot),end) && sel(qsel(slot)) && wr(r_->g.v.q.poll1,pollBit(slot)) && sel(0u);
     }
-    // gmc_v11_0_emit_flush_gpu_tlb on the client's idle queue: WAIT_REG_MEM writes the
-    // request to its engine and waits for the VMID's ACK bit, then a fence; the flush is
-    // done when the fence lands. A queue never loaded never ran in VMID k since open()
-    // invalidated the hub, so it has nothing to flush.
-    bool flush(Client &c) {
-        if(!c.loaded)return true;
-        const uint32_t slot=index(c), eng=invEng(slot), req=invalidateReq(c.vmid);
-        if(c.emitted!=c.retired || c.wptr+16u-retiredWptr(c)>kRingDwords)return false;     // callers wait idle first
-        const uint64_t s=c.emitted+1u, fence=c.queue.va+mq::kFenceOff;
-        const uint32_t p[16]={gd::packet3(kWaitRegMem,5u),kWaitRegMemWriteWait,r_->gcDw+invReqDw(eng),r_->gcDw+invAckDw(eng),
-                              req,1u<<c.vmid,kWaitRegMemPoll,
-                              gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,
-                              static_cast<uint32_t>(fence),static_cast<uint32_t>(fence>>32),static_cast<uint32_t>(s),0u,0u,mq::kNop};
-        if(!push(c,p,16u))return false;
-        uint64_t r=0;
-        if(wait(slot,s,kTlbTimeoutUs,r)==Code::Ok){++flushes_;return true;}
-        uint32_t back=0,ack=0;
-        h_.read(h_.ctx,r_->invReq[slot],&back);h_.read(h_.ctx,r_->invAck[slot],&ack);
-        miss_={c.vmid,eng,req,back,ack,miss_.misses+1u};
-        return false;
+    // GCVM_L2_CNTL2 INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE. The bits read back set after
+    // G36 wrote them (2026-10-20, 0x00000003), so they are cleared first: each invalidation
+    // is a 0 -> 1 write, whether the hub acts on the write or on the edge.
+    bool invalidate() {
+        uint32_t c2=0;
+        if(!rd(r_->g.v.l2c2,c2) || !wr(r_->g.v.l2c2,c2&~3u) || !wr(r_->g.v.l2c2,v1::l2Cntl2Word(c2&~3u)))return false;
+        ++flushes_;return true;
     }
     // hqd_load_v11 for queue k in VMID k (as G38, with the poll bit of queue k).
     Code loadQueue(Client &c) {
@@ -688,8 +635,6 @@ private:
     TableIo tio_{};
     uint32_t select_=0, writes_=0, flushes_=0, faultSeen_=0;
     uint64_t retiredBytes_=0;
-    FlushMiss miss_{};
-    InvRange inv_{};
     DoorbellSetup db_{};
     bool started_=false;
 };

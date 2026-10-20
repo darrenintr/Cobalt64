@@ -134,11 +134,11 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      (read-modify-write, only if clear), and 64-bit writes into BAR2 at the six client
      doorbells (byte 0x200 + 8 k); before-values in ioreg. Since 0.0.37 device start also
      drain-dequeues client HQDs an earlier boot left active (CP_HQD_DEQUEUE_REQUEST).
-     Since 0.0.43 the CPU no longer writes any invalidation REQ: TLB flushes are a
-     WAIT_REG_MEM write-then-wait packet the kext puts on the client's own queue
-     (`gmc_v11_0_emit_flush_gpu_tlb`), on engine 7 + slot; device start sets those six
-     engines' `ADDR_RANGE_LO32/HI32` (`0xffffffff`/`0x1f`, `gfxhub_v3_0_program_invalidation`)
-     if they differ, with before-values in ioreg. (0.0.42 set engine 17's range instead.)
+     Since 0.0.44 clients use **VMIDs 8..13** (contexts 8..13, SH_MEM under VMID k) and no
+     invalidation engine is touched at all (none ACKs on this card, findings 13:21): TLBs are
+     cleared with `GCVM_L2_CNTL2` INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE (written 0 then
+     1) at every open and unmap; close frees after dequeue and context disable. (0.0.42 set
+     engine 17's range, 0.0.43 flushed from the queue on engines 7..12: both never ACKed.)
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
