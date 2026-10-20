@@ -1,0 +1,291 @@
+From 502220e2ac9693531180f25b19aade54cfc01ea6 Mon Sep 17 00:00:00 2001
+From: Cobalt64 contributors <noreply@example.invalid>
+Date: Tue, 20 Oct 2026 14:16:37 +0800
+Subject: [PATCH] radv/darwin: pick the canned device from the kext's GC
+ version (navi33 for the RX 7600, gfx1201 for Navi48)
+
+QueryInfo's gc_version selects the canned amdgpu_devices.c table (GC 11.0.2:
+navi33, GC 12.0.1: gfx1201; RADV_DARWIN_CANNED=<name> overrides and is the
+stand-ins' table). GB_ADDR_CONFIG is checked against that table, the VA
+manager reserves half the range for PRT only on GC 12 (as libdrm), the
+enumerated PCI identity is the table's, and the N48N open falls back to
+the Navi33Probe service when no Navi48Bringup exists.
+---
+ src/amd/common/darwin/ac_darwin_drm.c   | 82 +++++++++++++++++++++----
+ src/amd/common/darwin/ac_darwin_drm.h   |  1 +
+ src/amd/common/darwin/ac_darwin_iokit.c |  4 ++
+ src/amd/common/darwin/ac_darwin_kext.c  |  2 +
+ src/amd/common/darwin/ac_darwin_kext.h  |  3 +
+ src/amd/vulkan/radv_physical_device.c   | 10 ++-
+ 6 files changed, 90 insertions(+), 12 deletions(-)
+
+diff --git a/src/amd/common/darwin/ac_darwin_drm.c b/src/amd/common/darwin/ac_darwin_drm.c
+index 9e35f84..d59f2ad 100644
+--- a/src/amd/common/darwin/ac_darwin_drm.c
++++ b/src/amd/common/darwin/ac_darwin_drm.c
+@@ -62,6 +62,7 @@ struct acd_core {
+    uint32_t minor; /* ABI minor the kernel reported */
+    bool shared; /* the process-wide core (false: the private HOST_BO stand-in core) */
+    struct acd_kext *kext; /* NULL in the HOST_BO stand-in */
++   const struct amdgpu_device *canned; /* the table for the GPU the kext reported (QueryInfo gc_version) */
+    struct amdgpu_va_manager *va_mgr;
+    struct util_sync_provider *sync; /* master; every device holds a clone */
+    pthread_mutex_t bo_lock;
+@@ -96,6 +97,36 @@ find_canned(const char *name)
+    return NULL;
+ }
+ 
++/* The canned table of the GPU behind the kext, from QueryInfo's gc_version ((maj << 16) | (min << 8) | rev):
++ * GC 12.0.1 is the RX 9070 XT (Navi48, gfx1201), GC 11.0.2 the RX 7600 (Navi33, gfx1102). RADV_DARWIN_CANNED=<name>
++ * picks any table of amdgpu_devices.c instead (and is the table of the kext-less stand-ins). */
++static const struct amdgpu_device *
++canned_for_gc(uint32_t gc_version)
++{
++   const char *forced = getenv("RADV_DARWIN_CANNED");
++   if (forced && forced[0])
++      return find_canned(forced);
++   switch (gc_version) {
++   case (12u << 16) | (0u << 8) | 1u:
++      return find_canned("gfx1201");
++   case (11u << 16) | (0u << 8) | 2u:
++      return find_canned("navi33");
++   default:
++      return NULL;
++   }
++}
++
++/* A register value the canned table answers (AMDGPU_INFO_READ_MMR_REG), 0 if it has none. */
++static uint32_t
++canned_reg(const struct amdgpu_device *d, uint32_t reg)
++{
++   for (uint32_t i = 0; i < d->mmr_reg_count; i++) {
++      if (d->mmr_regs[i * 3] == reg)
++         return d->mmr_regs[i * 3 + 2];
++   }
++   return 0;
++}
++
+ /* kext wait callback for the sync provider: -ETIME from the kernel means "hung". */
+ static int
+ acd_backend_wait_seq(void *ctx, uint64_t seq, uint64_t rel_ns, bool *busy, uint64_t *retired)
+@@ -116,7 +147,7 @@ env_is_1(const char *name)
+ 
+ /* Hello, live checks and the info snapshot; every failure is one clear stderr line. */
+ static int
+-acd_native_handshake(struct acd_kext *kext, const struct amdgpu_device *canned, uint32_t *minor_out)
++acd_native_handshake(struct acd_kext *kext, const struct amdgpu_device **canned_out, uint32_t *minor_out)
+ {
+    struct acd_hello h;
+    int r = acd_kext_hello(kext, &h);
+@@ -142,6 +173,14 @@ acd_native_handshake(struct acd_kext *kext, const struct amdgpu_device *canned,
+       return r;
+    }
+ 
++   const struct amdgpu_device *canned = canned_for_gc(info.gc_version);
++   if (!canned) {
++      fprintf(stderr, "radv-darwin: no canned device info for GC %u.%u.%u (QueryInfo gc_version 0x%06x)\n",
++              info.gc_version >> 16, (info.gc_version >> 8) & 0xff, info.gc_version & 0xff, info.gc_version);
++      return -ENODEV;
++   }
++   *canned_out = canned;
++
+    /* GB_ADDR_CONFIG: the tiling layout the canned info and S1d's image assume. QueryInfo carries the live value
+     * (n48n_info.gb_addr_config); ReadRegs is root-only and refused for a user-application (G4 APP) session, so it is
+     * only the fallback for a kernel that left the field 0. */
+@@ -153,10 +192,11 @@ acd_native_handshake(struct acd_kext *kext, const struct amdgpu_device *canned,
+          return r;
+       }
+    }
+-   if (gb != ACD_GB_ADDR_CONFIG_GFX1201 && !env_is_1("RADV_DARWIN_ALLOW_ADDRCFG")) {
+-      fprintf(stderr, "radv-darwin: live GB_ADDR_CONFIG 0x%08x != canned gfx1201 0x%08x (set "
++   const uint32_t canned_gb = canned_reg(canned, ACD_GB_ADDR_CONFIG_REG);
++   if (gb != canned_gb && !env_is_1("RADV_DARWIN_ALLOW_ADDRCFG")) {
++      fprintf(stderr, "radv-darwin: live GB_ADDR_CONFIG 0x%08x != canned %s 0x%08x (set "
+                       "RADV_DARWIN_ALLOW_ADDRCFG=1 to override)\n",
+-              gb, ACD_GB_ADDR_CONFIG_GFX1201);
++              gb, canned->name, canned_gb);
+       return -ENODEV;
+    }
+ 
+@@ -197,6 +237,7 @@ acd_device_kext(acd_device_handle dev, uint32_t *abi_minor)
+ static int
+ acd_core_create(const struct amdgpu_device *canned, bool host_bo, struct acd_core **out)
+ {
++   /* canned: the stand-ins' table; with a kext the handshake chooses it. */
+    struct acd_core *c = calloc(1, sizeof(*c));
+    if (!c)
+       return -ENOMEM;
+@@ -206,7 +247,7 @@ acd_core_create(const struct amdgpu_device *canned, bool host_bo, struct acd_cor
+    if (!host_bo) {
+       int r = acd_kext_open(&c->kext);
+       if (r == 0)
+-         r = acd_native_handshake(c->kext, canned, &c->minor);
++         r = acd_native_handshake(c->kext, &canned, &c->minor);
+       if (r) {
+          acd_kext_destroy(c->kext);
+          pthread_mutex_destroy(&c->bo_lock);
+@@ -228,10 +269,12 @@ acd_core_create(const struct amdgpu_device *canned, bool host_bo, struct acd_cor
+       return -ENOMEM;
+    }
+ 
++   c->canned = canned;
+    const struct drm_amdgpu_info_device *di = &canned->dev;
+-   /* gfx12: RADV needs half of the VA range reserved for PRT, as on Linux. */
++   /* gfx12: RADV needs half of the VA range reserved for PRT, as on Linux (libdrm sets it for GC 12 only). */
+    amdgpu_va_manager_init2(c->va_mgr, di->virtual_address_offset, di->virtual_address_max, di->high_va_offset,
+-                           di->high_va_max, di->virtual_address_alignment, AMDGPU_VA_MGR_RESERVE_HALF_VA_FOR_PRT);
++                           di->high_va_max, di->virtual_address_alignment,
++                           di->family >= AMDGPU_FAMILY_GC_12_0_0 ? AMDGPU_VA_MGR_RESERVE_HALF_VA_FOR_PRT : 0);
+    *out = c;
+    return 0;
+ }
+@@ -250,6 +293,21 @@ acd_core_destroy(struct acd_core *c)
+    free(c);
+ }
+ 
++/* The PCI identity of the GPU RADV will see (the canned table's), for the enumeration's drmDevice. */
++int
++acd_device_pci_identity(uint16_t *device_id, uint8_t *revision)
++{
++   uint32_t major, minor;
++   acd_device_handle dev;
++   int r = acd_device_initialize(&major, &minor, &dev);
++   if (r)
++      return r;
++   *device_id = dev->canned->dev.device_id;
++   *revision = dev->canned->dev.pci_rev;
++   acd_device_deinitialize(dev);
++   return 0;
++}
++
+ int
+ acd_device_initialize(uint32_t *drm_major, uint32_t *drm_minor, acd_device_handle *out)
+ {
+@@ -257,8 +315,9 @@ acd_device_initialize(uint32_t *drm_major, uint32_t *drm_minor, acd_device_handl
+    if (!dev)
+       return -ENOMEM;
+ 
+-   dev->canned = find_canned("gfx1201");
+-   if (!dev->canned) {
++   /* The stand-ins (no kext) use RADV_DARWIN_CANNED or gfx1201; a kext core uses the table its handshake chose. */
++   const struct amdgpu_device *standin = canned_for_gc((12u << 16) | (0u << 8) | 1u);
++   if (!standin) {
+       free(dev);
+       return -ENODEV;
+    }
+@@ -268,14 +327,14 @@ acd_device_initialize(uint32_t *drm_major, uint32_t *drm_minor, acd_device_handl
+ 
+    int r = 0;
+    if (dev->host_bo) {
+-      r = acd_core_create(dev->canned, true, &dev->core); /* private, no kext */
++      r = acd_core_create(standin, true, &dev->core); /* private, no kext */
+    } else {
+       pthread_mutex_lock(&g_core_lock);
+       if (g_core) {
+          g_core->refcount++;
+          dev->core = g_core;
+       } else {
+-         r = acd_core_create(dev->canned, false, &g_core);
++         r = acd_core_create(standin, false, &g_core);
+          if (r == 0) {
+             g_core->shared = true;
+             dev->core = g_core;
+@@ -287,6 +346,7 @@ acd_device_initialize(uint32_t *drm_major, uint32_t *drm_minor, acd_device_handl
+       free(dev);
+       return r;
+    }
++   dev->canned = dev->core->canned;
+ 
+    dev->sync = dev->core->sync->clone(dev->core->sync);
+    if (!dev->sync) {
+diff --git a/src/amd/common/darwin/ac_darwin_drm.h b/src/amd/common/darwin/ac_darwin_drm.h
+index 0d92684..12c15d2 100644
+--- a/src/amd/common/darwin/ac_darwin_drm.h
++++ b/src/amd/common/darwin/ac_darwin_drm.h
+@@ -33,6 +33,7 @@ typedef struct acd_device *acd_device_handle;
+ 
+ int acd_device_initialize(uint32_t *drm_major, uint32_t *drm_minor, acd_device_handle *dev);
+ void acd_device_deinitialize(acd_device_handle dev);
++int acd_device_pci_identity(uint16_t *device_id, uint8_t *revision);
+ struct util_sync_provider *acd_device_get_sync_provider(acd_device_handle dev);
+ 
+ /* Emulates the DRM_AMDGPU_* command ioctls that ac_linux_drm.c issues. */
+diff --git a/src/amd/common/darwin/ac_darwin_iokit.c b/src/amd/common/darwin/ac_darwin_iokit.c
+index 5fe860c..e1c8a8d 100644
+--- a/src/amd/common/darwin/ac_darwin_iokit.c
++++ b/src/amd/common/darwin/ac_darwin_iokit.c
+@@ -70,6 +70,10 @@ acd_kext_open_iokit(struct acd_kext **out)
+ {
+    const char *svc_class = acd_kext_service_class(); /* G6: Navi48Bringup unless the bundle chose the accelerator */
+    io_service_t svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(svc_class));
++   if (!svc && !strcmp(svc_class, ACD_SERVICE_BRINGUP)) { /* no Navi48 kext: the Navi33 one, if loaded */
++      svc_class = ACD_SERVICE_NAVI33;
++      svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(svc_class));
++   }
+    if (!svc) {
+       fprintf(stderr, "radv-darwin: IOServiceGetMatchingService(%s) found nothing: the Navi48 kext is "
+                       "not loaded (native backend unavailable)\n", svc_class);
+diff --git a/src/amd/common/darwin/ac_darwin_kext.c b/src/amd/common/darwin/ac_darwin_kext.c
+index 15cf72d..eb8141e 100644
+--- a/src/amd/common/darwin/ac_darwin_kext.c
++++ b/src/amd/common/darwin/ac_darwin_kext.c
+@@ -86,6 +86,8 @@ acd_kext_set_service_class(const char *cls)
+       acd_service_class = ACD_SERVICE_BRINGUP;
+    else if (!strcmp(cls, ACD_SERVICE_ACCELERATOR))
+       acd_service_class = ACD_SERVICE_ACCELERATOR;
++   else if (!strcmp(cls, ACD_SERVICE_NAVI33))
++      acd_service_class = ACD_SERVICE_NAVI33;
+    else
+       return -EINVAL;
+    return 0;
+diff --git a/src/amd/common/darwin/ac_darwin_kext.h b/src/amd/common/darwin/ac_darwin_kext.h
+index 115188e..72a521a 100644
+--- a/src/amd/common/darwin/ac_darwin_kext.h
++++ b/src/amd/common/darwin/ac_darwin_kext.h
+@@ -106,6 +106,9 @@ int acd_kext_open(struct acd_kext **out);
+  * otherwise, and the previous value stays). Process-wide; the setter is not meant to be called while a connection is being opened. */
+ #define ACD_SERVICE_BRINGUP     "Navi48Bringup"
+ #define ACD_SERVICE_ACCELERATOR "Navi48Accelerator"
++/* The RX 7600 (Navi33, gfx1102) kext: its N48N user client hangs off the Navi33Probe service. The open falls back to it when
++ * no Navi48Bringup service exists. */
++#define ACD_SERVICE_NAVI33      "Navi33Probe"
+ int acd_kext_set_service_class(const char *cls);
+ const char *acd_kext_service_class(void);
+ int acd_kext_open_iokit(struct acd_kext **out);      /* ac_darwin_iokit.c */
+diff --git a/src/amd/vulkan/radv_physical_device.c b/src/amd/vulkan/radv_physical_device.c
+index 1730aab..bf2efbd 100644
+--- a/src/amd/vulkan/radv_physical_device.c
++++ b/src/amd/vulkan/radv_physical_device.c
+@@ -2993,13 +2993,15 @@ create_drm_physical_device(struct vk_instance *vk_instance, struct _drmDevice *d
+  * RADV_DARWIN_MOCK=1 / RADV_DARWIN_HOST_BO=1 stand-ins).  If the backend cannot
+  * open it says why on stderr and no device is enumerated.  RADV_DARWIN_FAKE=1 is
+  * accepted for compatibility with S1a and changes nothing. */
++int acd_device_pci_identity(uint16_t *device_id, uint8_t *revision); /* amd/common/darwin/ac_darwin_drm.h */
++
+ VkResult
+ radv_darwin_enumerate_physical_devices(struct vk_instance *vk_instance)
+ {
+    struct radv_instance *instance = (struct radv_instance *)vk_instance;
+    struct radv_physical_device *pdev = NULL;
+ 
+-   /* Fake PCI identity of the RX 9070 XT (vendor 0x1002, device 0x7550). */
++   /* PCI identity: the canned table's for the GPU behind the kext (RX 9070 XT 0x7550 or RX 7600 0x7480). */
+    static char *nodes[DRM_NODE_MAX];
+    static drmPciBusInfo bus_info;
+    static drmPciDeviceInfo device_info = {
+@@ -3017,6 +3019,12 @@ radv_darwin_enumerate_physical_devices(struct vk_instance *vk_instance)
+       .deviceinfo.pci = &device_info,
+    };
+ 
++   uint16_t pci_device;
++   uint8_t pci_rev;
++   if (acd_device_pci_identity(&pci_device, &pci_rev) == 0) {
++      device_info.device_id = pci_device;
++      device_info.revision_id = pci_rev;
++   }
+    VkResult result = radv_physical_device_try_create(instance, &drm_device, &pdev);
+    if (result != VK_SUCCESS) {
+       /* The backend already said why on stderr (kext missing, Hello refused, ...): no device. */
+-- 
+2.55.0
+

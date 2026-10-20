@@ -1,0 +1,59 @@
+name: RADV for macOS (Navi33 / Navi48 Darwin backend)
+
+# Builds Mesa's RADV (libvulkan_radeon.dylib, x86_64) from the pinned upstream commit plus
+# mesa-patches/*.patch, the user-space half of the N48N native ABI that the Navi33 and Navi48
+# kexts serve. Not boot-tested here: the artifact is what the Metal bundle ships.
+on:
+  push:
+    branches: ['feature/navi33-*']
+    paths: ['mesa-patches/**', '.github/workflows/navi33-mesa.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  radv:
+    runs-on: macos-15-intel
+    env:
+      MESA_COMMIT: f5cb8ee032adabef599ae892ec4e42d796b84da9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          brew install meson ninja pkg-config bison flex || true
+          python3 -m pip install --break-system-packages mako pyyaml packaging
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+      - name: Mesa at the pinned commit plus our patches
+        run: |
+          git init -q mesa && cd mesa
+          git remote add origin https://gitlab.freedesktop.org/mesa/mesa.git
+          git fetch -q --depth 1 origin "$MESA_COMMIT"
+          git checkout -q FETCH_HEAD
+          git -c user.name=ci -c user.email=ci@example.invalid am -q ../mesa-patches/*.patch
+          git log --oneline | head -12
+      - name: Configure
+        working-directory: mesa
+        run: |
+          meson setup build --buildtype=release \
+            -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms= \
+            -Dllvm=disabled -Dopengl=false -Dglx=disabled -Degl=disabled -Dgles1=disabled -Dgles2=disabled \
+            -Dzstd=disabled -Dexpat=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dbuild-tests=false
+      - name: Build libvulkan_radeon
+        working-directory: mesa
+        run: |
+          ninja -C build src/amd/vulkan/libvulkan_radeon.dylib
+          file build/src/amd/vulkan/libvulkan_radeon.dylib
+          nm -gU build/src/amd/vulkan/libvulkan_radeon.dylib | grep -E 'vk_icdGetInstanceProcAddr|radv_darwin_' | head
+      - name: Package
+        run: |
+          mkdir -p out
+          cp mesa/build/src/amd/vulkan/libvulkan_radeon.dylib out/
+          cp mesa/build/src/amd/vulkan/radeon_icd.*.json out/ 2>/dev/null || true
+          (cd mesa && git log --oneline | head -12) > out/mesa-commits.txt
+          shasum -a 256 out/* > out/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: radv-darwin-x86_64
+          path: out/
