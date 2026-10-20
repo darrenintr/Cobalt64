@@ -23,7 +23,9 @@ for i in $(seq 1 60); do
 done
 "$V/guest-run.sh" "$ART" > "$R/guest-run-before.txt" 2>&1 || true
 ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|VramHeap)"' > "$R/client-ioreg-before.txt" 2>&1 || true
-ssh macos-vm 'cd ~/navi33 && sudo ./n33gpu --fw gradient.co --nop; sudo ./n33gpu --fw gradient.co --frame 11 && sudo ./n33gpu --fw gradient.co --frame 200 --repeat 200 && sudo ./n33n48n --fw gradient.co' \
+# CMDS=... replaces the guest command list (run in ~/navi33 as darren).
+CMDS="${CMDS:-sudo ./n33gpu --fw gradient.co --nop; sudo ./n33gpu --fw gradient.co --frame 11 && sudo ./n33gpu --fw gradient.co --frame 200 --repeat 200 && sudo ./n33n48n --fw gradient.co}"
+ssh macos-vm "cd ~/navi33 && $CMDS" \
   > "$R/client-gpu.txt" 2>&1 || true
 cat "$R/client-gpu.txt"
 ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|ClientGpuStall|ClientGpuFault|VramHeap)"; sudo dmesg | grep -E "Navi33Probe: client GPU" | tail -8' \

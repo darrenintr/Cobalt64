@@ -2052,6 +2052,32 @@ parser got two of them wrong:
     Next options: the flush emitted on the client's own ring (`gmc_v11_0_emit_flush_gpu_tlb`,
     WAIT_REG_MEM write-then-wait) before dequeue, or a try with another engine.
 
+- **2026-10-20 13:19-13:23, kext 0.0.43 (CI run 39374075778, UUID `DFDF52B1-3B33-3C6A-90BF-B31AD488199C`)
+  in the VM, same host boot `347bf886-…` as 13:05 (no power-off): no invalidation engine ACKs, by
+  any path, and a VMID left with an un-ACKed request stalls for the rest of the power cycle.**
+  Runs `runs/20261020-131927` and `runs/20261020-132144` (the agent ran them itself; autostart
+  refused with 0 writes, card already up; device start wrote the ranges of engines 7..12, 12 writes).
+  - 13:19 (`client-gpu.sh`): VMIDs 2 and 3 both stalled at their first submission: IB fetched
+    (`IB_RPTR` 8 / 0x38), `PQ_RPTR` = `PQ_WPTR` = 0xc, but neither the fence nor the RPTR report
+    landed, no fault, `ERROR` 0, `HQ_STATUS0` `0x40008040`. Context 2/3 enabled (`0x01fffe07`).
+  - 13:21 (six `n33gpu` in a row, `CMDS=` added to `client-gpu.sh`): VMIDs 2, 3, 4, 5 stalled
+    the same way; VMID 6 never fetched its ring (`PQ_RPTR` 0); **VMID 7 ran the gradient, 0
+    wrong pixels**. Its close then put the queue flush on the ring: WAIT_REG_MEM on engine 12
+    wrote REQ (`f80080`, read back) and **never got the ACK** (ACK 0); the queue stopped there
+    (`PQ_RPTR` 0xc, `PQ_WPTR` 0x1c), so the close quarantined.
+  - So engine 17 from MMIO (10:26, 13:05) and engine 12 from the CP (13:21) behave the same:
+    the request is latched and never acknowledged. The address range is not the cause.
+  - VMIDs 2..5 are exactly those that got an un-ACKed engine 17 request at 13:05; there each
+    new client used a VMID not yet pending and worked. Leading hypothesis (not proven): the
+    GFXHUB holds translations for a VMID with a pending invalidation. Alternative: a VMID
+    once used in this power cycle stalls (but VMIDs were reused across kext boots on 10-20
+    morning and worked at 10:26). Either way **every close currently burns its VMID until
+    power-off; VMIDs 2..7 are all burnt on this card now.**
+  - Next: compare the GFXHUB/UTCL2 state with Linux's (reference boot, read-only), and/or a
+    power-cycled test that issues no invalidation at all (close frees after dequeue and
+    context disable; open's `GCVM_L2_CNTL2` invalidate covers reuse) to see whether VMIDs can
+    then be reused with correct results.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
