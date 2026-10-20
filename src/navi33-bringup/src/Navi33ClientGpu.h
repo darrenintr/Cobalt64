@@ -52,8 +52,10 @@ constexpr uint32_t kMaxBos=512u, kMaxIbs=16u;
 // The client's queue lives below the first user page (Mesa's amdgpu VA manager starts at
 // 0x10000 and runs to the GMC hole), page 0 left unmapped so a null GPU pointer faults.
 constexpr uint64_t kUserVaMin=0x10000u, kUserVaMax=gv::kVaLimit;   // [min, max)
-constexpr uint64_t kKernelVa=0u;
-static_assert(kKernelVa+0x5000u<=kUserVaMin,"kernel VA range");
+// The client's queue structures are mapped at a VA equal to their MC address (identity),
+// so they read the same whether the CP translates them through the queue's VMID or not:
+// on the card a VMID >= 2 queue never re-read its WPTR after activation (2026-10-20
+// 09:30..10:08), while VMID 0 (MC addresses) did (G35). That range is closed to user maps.
 constexpr uint64_t kMaxBoBytes=64ull<<20;
 constexpr uint32_t kTagClient=0x434c4e54u;
 // gc_11_0_0_offset.h (GC segment 0): context k registers, invalidation engine 17,
@@ -87,7 +89,7 @@ static_assert(kMecDbUpperValue==0x450u && doorbellByte(5)+8u<=0x450u && doorbell
 constexpr uint32_t invalidateReq(uint32_t vmid) { return (1u<<vmid)|(1u<<19)|(1u<<20)|(1u<<21)|(1u<<22)|(1u<<23); }
 static_assert(invalidateReq(2)==0x00f80004u,"GCVM_INVALIDATE_ENG0_REQ word");
 constexpr uint32_t kFaultVmidShift=20u, kFaultVmidMask=0xf00000u;
-// The queue buffer at kKernelVa, mec_queue's layout: page 0 unmapped, EOP 0x1000, ring
+// The queue buffer at its own MC address, mec_queue's layout: page 0 unmapped, EOP 0x1000, ring
 // 0x2000 (GPU read-only), RPTR/WPTR 0x3000/0x3008, fence 0x4000.
 constexpr uint32_t kQueueBytes=0x5000u, kRingDwords=mq::kRingBytes/4u;
 constexpr uint32_t kSubmitMaxDwords=4u*kMaxIbs+8u+8u+8u;       // IBs, user fence, fence, padding
@@ -248,12 +250,12 @@ public:
             if(q.code==vh::Code::Ok)heap_->free(q.h);
             return Code::NoMemory;
         }
-        c.queue={q.h,q.offset,kQueueBytes,kKernelVa,0,true};c.mqd={m.h,m.offset,4096u,0,0,true};
+        c.queue={q.h,q.offset,kQueueBytes,fbBase_+q.offset,0,true};c.mqd={m.h,m.offset,4096u,0,0,true};
         tio_.dev=this;
         const gv::Io io{&tio_,zeroPage,putEntry};
         if(!zero(c.queue) || !zero(c.mqd) || c.space.init(*heap_,io)!=gv::Code::Ok ||
            // EOP, ring, RPTR/WPTR, fence as G36 mapped its queue (VRAM, RWX); page 0 unmapped.
-           c.space.map(kKernelVa+mq::kEopOff,q.offset+mq::kEopOff,0x4000u,gv::kPteVram)!=gv::Code::Ok) {
+           c.space.map(c.queue.va+mq::kEopOff,q.offset+mq::kEopOff,0x4000u,gv::kPteVram)!=gv::Code::Ok) {
             quarantineIfMapped(c);        // nothing is live on the GPU yet: free what we can
             return Code::NoMemory;
         }
@@ -298,6 +300,7 @@ public:
         if(c->state!=State::Open)return stateCode(*c);
         if(b->va || (va%4096u) || va<kUserVaMin || va>=kUserVaMax || b->bytes>kUserVaMax-va)return Code::BadArgs;
         for(const Bo &o:c->bo)if(o.live && o.va && va<o.va+o.bytes && o.va<va+b->bytes)return Code::BadArgs;
+        if(va<c->queue.va+kQueueBytes && c->queue.va<va+b->bytes)return Code::BadArgs;       // the kernel's queue
         const uint64_t flags=gv::kPteValid|gv::kPteRead|(writeable ? gv::kPteWrite : 0u)|(executable ? gv::kPteExec : 0u);
         if(c->space.map(va,b->vram,b->bytes,flags)!=gv::Code::Ok) {
             c->space.unmap(va,b->bytes);   // partial mappings point at our own buffer only
@@ -370,7 +373,7 @@ public:
             p[k++]=static_cast<uint32_t>(ibs[i].va);p[k++]=static_cast<uint32_t>(ibs[i].va>>32)&0xffffu;
             p[k++]=kIbValid|ibs[i].dwords|(c->vmid<<24);
         }
-        const uint64_t s=c->emitted+1u, fence=kKernelVa+mq::kFenceOff;
+        const uint64_t s=c->emitted+1u, fence=c->queue.va+mq::kFenceOff;
         if(userFence) {     // RELEASE_MEM DATA_SEL 2: the 64-bit sequence number
             const uint32_t u[8]={gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,2u<<29,
                                  static_cast<uint32_t>(userFence),static_cast<uint32_t>(userFence>>32),
@@ -500,7 +503,7 @@ private:
     }
     // hqd_load_v11 for queue k in VMID k (as G38, with the poll bit of queue k).
     Code loadQueue(Client &c) {
-        const gfx11_mqd::Result m=gfx11_mqd::buildKiqMqd(mq::queueFor(mq::Layout{kKernelVa}));
+        const gfx11_mqd::Result m=gfx11_mqd::buildKiqMqd(mq::queueFor(mq::Layout{c.queue.va}));
         if(m.code!=kiq::Code::PlanOnly)return Code::HwFailed;
         gfx11_mqd::Image img=m.image;
         const uint64_t mqdMc=fbBase_+c.mqd.vram;
@@ -515,7 +518,7 @@ private:
         for(uint32_t dw=mq::kHqdFirst;dw<=mq::kHqdLast;++dw)
             if(dw!=mq::kHqdHole && !wr(mq::hqd(q,dw),img.dw[gfx11_mqd::kCpMqdBaseAddrLo+(dw-mq::kHqdFirst)]))
                 {sel(0u);return Code::HwFailed;}
-        const uint64_t poll=kKernelVa+mq::kWptrOff;
+        const uint64_t poll=c.queue.va+mq::kWptrOff;
         const struct { uint32_t dw; uint32_t val; } tail[]={
             {kiq::kCpHqdPqDoorbellControl,(img.dw[gfx11_mqd::kCpHqdPqDoorbellControl]&~(kDbOffsetMask|kDbEn))|
                                           (doorbellDword(index(c))<<2)|kDbEn},

@@ -179,7 +179,8 @@ struct Fake {
         for(uint32_t i=0;i<cg::kClients;++i) {
             const uint32_t k=cg::kFirstVmid+i, dc=f.bank[{qsOf(k),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqDoorbellControl)}];
             if((dc&cg::kDbEn) && (dc&cg::kDbOffsetMask)==4u*byteOff/4u) {
-                const uint64_t poll=f.bank[{qsOf(k),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqWptrPollAddr)}];
+                const uint64_t poll=f.bank[{qsOf(k),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqWptrPollAddr)}]|
+                    (uint64_t(f.bank[{qsOf(k),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqWptrPollAddrHi)}])<<32);
                 uint64_t pa=0;assert(f.translate(k,poll,pa) && f.get(pa)==uint32_t(v));   // memory and doorbell agree
                 f.runQueue(k);
             }
@@ -442,6 +443,8 @@ int main() {
         for(uint64_t va:std::vector<uint64_t>{0x0ull,0x1000ull,0x500001ull,cg::kUserVaMax,0xf000ull,cg::kUserVaMax-4096u})assert(f.dev.vaMap(slot,x,va,true,false)==cg::Code::BadArgs);
         assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Ok && f.dev.vaMap(slot,x,0x900000,true,false)==cg::Code::BadArgs);
         uint32_t y=0;assert(f.dev.boCreate(slot,4096,y,vx)==cg::Code::Ok && f.dev.vaMap(slot,y,0x501000,true,false)==cg::Code::BadArgs);
+        {   const cg::Client *cl=f.dev.client(slot);                     // the queue sits at its own MC address
+            assert(cl->queue.va==kFb+cl->queue.vram && f.dev.vaMap(slot,y,cl->queue.va+0x1000u,true,false)==cg::Code::BadArgs);}
         uint64_t s=0;const cg::Device::Ib ib{0x500000,0};assert(f.dev.submit(slot,&ib,1,s)==cg::Code::BadArgs);
         assert(f.dev.wait(slot,5,0,s)==cg::Code::BadArgs && f.dev.boFree(7,1)==cg::Code::NotFound);
         for(uint32_t i=1;i<cg::kClients;++i){uint32_t o=0;assert(f.dev.open(&f+i,o)==cg::Code::Ok);}
