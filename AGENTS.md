@@ -496,9 +496,14 @@ output survives a hang and Linux can inspect a stuck guest.
   pixels/words. Guest SSH and WindowServer survived. No GPU-rendered desktop,
   wallpaper/apps, or Metal output is established. VM remains running in tmux
   `n33-cold`, artifact 0.0.57. No Metal nub/accelerator installed or enabled.
-  The G42 attempt needs another full power-off and renewed explicit approval
-  before any further GPU writes. The VM remains running on artifact 0.0.57;
-  do not reboot, shut it down, install/download artifacts, or touch hardware.
+  Follow-up commit `4d448f1` builds kext 0.0.58; CI run `39395217038` passed
+  host GCC/Clang/ASan/UBSan, bootstrap, and both macOS compile jobs. The
+  macos-26-intel CI artifact is cached at
+  `~/macos tahoe/navi33/cache/artifact-0.0.58-ci/navi33-usb-macos-26-intel/`;
+  its kext Mach-O UUID is `e777d011-ebb0-3fe7-81d8-f1597cc4728d`. It has not
+  been installed or run. The G42 attempt needs another full power-off and
+  renewed explicit approval before any further GPU writes. Keep the VM on
+  artifact 0.0.57 until then; do not reboot, shut it down, or touch hardware.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
   (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
   as a clean cold run. Preserve that memory until dequeue/recovery is verified.
