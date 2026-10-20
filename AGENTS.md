@@ -574,8 +574,14 @@ output survives a hang and Linux can inspect a stuck guest.
   upstream GC 11.0 register offsets. A failed diagnostic read only clears the
   snapshot-valid bit; it does not change the map result or add a write. Host
   tests pass, including exact RX 7600 offset resolution, write-allowlist
-  exclusion, and read-failure behavior. CI and the macos-26-intel artifact are
-  pending. No GPU read/write or reboot was performed for this change.
+  exclusion, and read-failure behavior. CI run `39408266841` passed all jobs,
+  including GCC/Clang/ASan/UBSan host tests and both macOS Intel kext builds.
+  The macos-26-intel artifact is cached at
+  `~/macos tahoe/navi33/cache/artifact-0.0.60-ci`; its plist version is 0.0.60
+  and Mach-O `LC_UUID` is `13B8975F-2F6C-399A-8C9C-27CC7E938E53`. It has not
+  run on the card. The VM remains running on 0.0.58; no GPU read/write, reboot
+  or power-off was made for this change. A physical G42 attempt still needs a
+  full host power-off and renewed explicit approval.
 - Guest auxiliary build staging remains `/Users/darren/auxbuild`; preserve it. Previous
   handoff found no built accelerator kext, only Navi33GOPFB installed.
 

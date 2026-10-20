@@ -106,8 +106,12 @@ does not change the G42 result or cause another write. None of these registers
 was added to either write allowlist. Host tests check the resolved offsets,
 reject them as write targets, and show that a failed diagnostic read leaves a
 MAP timeout intact. The values are raw evidence; zero is not interpreted as
-idle if GC is not answering. This change has host-test evidence only and has
-not run on the card.
+idle if GC is not answering. CI run `39408266841` passed GCC, Clang,
+ASan/UBSan and both macOS Intel kext builds. Its macos-26-intel artifact is
+cached at `~/macos tahoe/navi33/cache/artifact-0.0.60-ci`, plist version
+0.0.60, Mach-O UUID `13B8975F-2F6C-399A-8C9C-27CC7E938E53`. It has not run on
+the card; the VM remains on 0.0.58. A physical G42 attempt still needs a full
+host power-off and renewed explicit approval.
 
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
