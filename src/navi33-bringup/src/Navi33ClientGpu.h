@@ -574,7 +574,12 @@ private:
         h_.delayUs(h_.ctx,1000u);
         if(!wr(g.rb0Cntl,gr::kRb0CntlValue) || !wr(g.rb0Base,static_cast<uint32_t>(base)) ||
            !wr(g.rb0BaseHi,static_cast<uint32_t>(base>>32)) || !wr(g.rbActive,1u) || !rd(g.rbDoorbellCntl,dbc) ||
-           !wr(g.rbDoorbellCntl,dbc&~gr::kDoorbellEn))return;
+           !wr(g.rbDoorbellCntl,(dbc&~gr::kDoorbellOffsetMask)|(gr::kDoorbellDword<<2)|gr::kDoorbellEn) ||
+           !wr(g.rbDbLower,gr::kRbRangeLower) || !wr(g.rbDbUpper,gr::kRbRangeUpper))return;
+        // The MEC range must end below the gfx doorbell (the card had MES's 0x110..0xffc).
+        uint32_t mecUpper=0;
+        if(!rd(r_->mecDbUpper,mecUpper) ||
+           (mecUpper>gr::kMecRangeUpper && (!wr(r_->mecDbLower,kMecDbLowerValue) || !wr(r_->mecDbUpper,gr::kMecRangeUpper))))return;
         gfx_.state=GfxState::Unhalt;
         if(!wr(g.maxContext,gr::kMaxHwContexts-1u) || !wr(g.deviceId,1u) ||
            !wr(g.meCntl,me&~(gr::kPfpHalt|gr::kMeHalt)))return;
@@ -585,7 +590,9 @@ private:
         uint32_t k=gr::buildCsb(p);
         k+=gr::buildFence(p+k,mc+gr::kFenceOff,gr::kFenceValue);
         while(k%8u)p[k++]=mq::kNop;
-        if(!vramPut(gfxMemVram_+gr::kRingOff,p,k) || !wr(g.rb0Wptr,k) || !wr(g.rb0WptrHi,0u))return;
+        const uint32_t wp[2]={k,0u};
+        if(!vramPut(gfxMemVram_+gr::kRingOff,p,k) || !vramPut(gfxMemVram_+gr::kWptrOff,wp,2u) ||
+           !h_.doorbell(h_.ctx,gr::kDoorbellByte,k))return;
         gfx_.wptr=k;gfx_.state=GfxState::Timeout;
         for(uint32_t us=0;us<gr::kFenceTimeoutUs;us+=100u) {
             h_.vramRead(h_.ctx,gfxMemVram_+gr::kFenceOff,&gfx_.fence,1u);

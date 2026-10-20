@@ -6,7 +6,7 @@
 set -euo pipefail
 V=/home/darren/Cobalt64/src/navi33-bringup/vm; T=/home/darren/Cobalt64/src/navi33-bringup/tools/vkfill
 N="/home/darren/macos tahoe/navi33"
-ART="${ARTIFACT:-$N/cache/artifact-0.0.50}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
+ART="${ARTIFACT:-$N/cache/artifact-0.0.51}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
 RADV="${RADV:-$N/cache/radv-0010}"; VKINC="${VKINC:?set VKINC to a directory holding vulkan/vulkan.h}"
 pgrep -f "^qemu-system-x86_64" >/dev/null && { echo "a VM is already running" >&2; exit 1; }
 "$V/make-opencore.sh" "$ART" --oc "$OC" --hostfb /var/lib/cobalt64-navi33/hostfb.txt --autostart --client-gpu ${VK_EXTRA:-} | grep -E "UUID|boot-args"

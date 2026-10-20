@@ -142,7 +142,9 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      Since 0.0.49 (G40) service start also brings up the **gfx pipe**: CP_ME_CNTL (PFP/ME halt,
      pipe resets), CP_PFP/ME_PRGRM_CNTR_START(_HI) per gfx pipe (GRBM select ME 0 pipe 0/1),
      CP_RB_WPTR_DELAY, CP_RB_VMID, CP_RB0_CNTL/WPTR(_HI)/RPTR_ADDR(_HI)/BASE(_HI), CP_RB_WPTR_POLL_ADDR,
-     CP_RB_ACTIVE, CP_RB_DOORBELL_CONTROL (DOORBELL_EN cleared), CP_MAX_CONTEXT, CP_DEVICE_ID, and
+     CP_RB_ACTIVE, CP_RB_DOORBELL_CONTROL (offset 0x116, EN) and CP_RB_DOORBELL_RANGE_LOWER/UPPER (0x458/0x7f8;
+     since 0.0.51 the MEC range is moved to 0..0x450 if it covers 0x458), CP_MAX_CONTEXT, CP_DEVICE_ID,
+     the gfx doorbell at BAR2 0x458 (64-bit), and
      RB0 in a 20 KiB kernel heap buffer ('GFXR', VMID 0): upstream's clear-state preamble and a
      RELEASE_MEM ring test. Report in ioreg `Navi33,ClientGfx`; a failure leaves compute running.
    No other register write, firmware load or command submission.

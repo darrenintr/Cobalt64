@@ -26,7 +26,7 @@ constexpr Reg kMeCntl{1,0x0803u}, kPfpStart{0,0x1e44u}, kPfpStartHi{0,0x1e59u}, 
               kWptrDelay{0,0x0f61u}, kRbVmid{0,0x1df1u}, kRb0Cntl{0,0x1de1u}, kRb0Wptr{0,0x1df4u},
               kRb0WptrHi{0,0x1df5u}, kRb0Rptr{0,0x0f60u}, kRb0RptrAddr{0,0x1de3u}, kRb0RptrAddrHi{0,0x1de4u},
               kWptrPollLo{0,0x1e8bu}, kWptrPollHi{0,0x1e8cu}, kRb0Base{0,0x1de0u}, kRb0BaseHi{0,0x1e51u},
-              kRbActive{0,0x1f40u}, kRbDoorbellCntl{0,0x1e8du};
+              kRbActive{0,0x1f40u}, kRbDoorbellCntl{0,0x1e8du}, kRbDbLower{0,0x1dfau}, kRbDbUpper{0,0x1dfbu};
 // gc_11_0_0_sh_mask.h CP_ME_CNTL: PFP_PIPE0/1_RESET 18/19, ME_PIPE0/1_RESET 20/21, PFP_HALT 26,
 // ME_HALT 28 (CE_HALT 24 is left as it is: gfx11 has no CE). Default 0x15000000.
 constexpr uint32_t kPfpReset=(1u<<18)|(1u<<19), kMeReset=(1u<<20)|(1u<<21), kPfpHalt=1u<<26, kMeHalt=1u<<28;
@@ -39,7 +39,15 @@ constexpr uint32_t order2(uint32_t v) { uint32_t o=0; while((1u<<o)<v)++o; retur
 constexpr uint32_t kRbBufsz=order2(kRingBytes/8u);
 constexpr uint32_t kRb0CntlValue=kRbBufsz|((kRbBufsz-2u)<<8)|(1u<<29);
 static_assert(kRbBufsz==11u && kRb0CntlValue==0x2000090bu,"CP_RB0_CNTL for a 16 KiB ring");
-constexpr uint32_t kRptrAddrHiMask=0xffffu, kDoorbellEn=1u<<30;
+constexpr uint32_t kRptrAddrHiMask=0xffffu, kDoorbellEn=1u<<30, kDoorbellOffsetMask=0x0ffffffcu;
+// The ring is kicked by doorbell, as upstream's gfx ring (use_doorbell) and Navi48's RB0: the RS64 ME
+// never fetched RB0 after a CP_RB0_WPTR register write on the card (2026-10-20, RPTR stayed 0).
+// amdgpu_doorbell.h AMDGPU_NAVI10_DOORBELL_GFX_RING0 0x8b, GFX_USERQUEUE_END 0xff (64-bit doorbells):
+// ring->doorbell_index = 0x8b << 1 (dword 0x116, BAR2 byte 0x458); gfx_v11_0_cp_set_doorbell_range
+// puts the RB range at (0x8b * 2) << 2 .. (0xff * 2) << 2 and the MEC range at 0 .. (0x8a * 2) << 2.
+constexpr uint32_t kDoorbellDword=0x8bu<<1, kDoorbellByte=4u*kDoorbellDword;
+constexpr uint32_t kRbRangeLower=(0x8bu*2u)<<2, kRbRangeUpper=(0xffu*2u)<<2, kMecRangeUpper=(0x8au*2u)<<2;
+static_assert(kDoorbellByte==0x458u && kRbRangeLower==0x458u && kRbRangeUpper==0x7f8u && kMecRangeUpper==0x450u,"gfx doorbells");
 // gc_11_0_2_pfp.bin / gc_11_0_2_me.bin (linux-firmware 1522c78a; SHA-256 9020f537.. / f5fe48f9..):
 // gfx_firmware_header_v2_0 ucode_start_addr_lo 0x3000, _hi 0x70000 for both, as the MEC's.
 constexpr uint32_t kStartLo=0x3000u, kStartHi=0x70000u;
@@ -59,7 +67,7 @@ constexpr uint32_t kStatTimeoutUs=100000u, kFenceTimeoutUs=1000000u;
 struct Regs {
     uint64_t meCntl=0,pfpStart=0,pfpStartHi=0,meStart=0,meStartHi=0,cpStat=0,maxContext=0,deviceId=0,
              wptrDelay=0,rbVmid=0,rb0Cntl=0,rb0Wptr=0,rb0WptrHi=0,rb0Rptr=0,rb0RptrAddr=0,rb0RptrAddrHi=0,
-             wptrPollLo=0,wptrPollHi=0,rb0Base=0,rb0BaseHi=0,rbActive=0,rbDoorbellCntl=0;
+             wptrPollLo=0,wptrPollHi=0,rb0Base=0,rb0BaseHi=0,rbActive=0,rbDoorbellCntl=0,rbDbLower=0,rbDbUpper=0;
     bool valid=false;
 };
 inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
@@ -70,7 +78,8 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         {&r.wptrDelay,kWptrDelay},{&r.rbVmid,kRbVmid},{&r.rb0Cntl,kRb0Cntl},{&r.rb0Wptr,kRb0Wptr},
         {&r.rb0WptrHi,kRb0WptrHi},{&r.rb0Rptr,kRb0Rptr},{&r.rb0RptrAddr,kRb0RptrAddr},
         {&r.rb0RptrAddrHi,kRb0RptrAddrHi},{&r.wptrPollLo,kWptrPollLo},{&r.wptrPollHi,kWptrPollHi},
-        {&r.rb0Base,kRb0Base},{&r.rb0BaseHi,kRb0BaseHi},{&r.rbActive,kRbActive},{&r.rbDoorbellCntl,kRbDoorbellCntl}};
+        {&r.rb0Base,kRb0Base},{&r.rb0BaseHi,kRb0BaseHi},{&r.rbActive,kRbActive},{&r.rbDoorbellCntl,kRbDoorbellCntl},
+        {&r.rbDbLower,kRbDbLower},{&r.rbDbUpper,kRbDbUpper}};
     for(const auto &x:all) {
         const auto a=resolveDword(d,Engine::GFX11,x.reg.seg,x.reg.dw,bytes);
         if(a.code!=AddressCode::Pass)return r;
@@ -83,7 +92,7 @@ inline bool allowed(const Regs &r,uint64_t off) {
     if(!r.valid)return false;
     const uint64_t w[]={r.meCntl,r.pfpStart,r.pfpStartHi,r.meStart,r.meStartHi,r.maxContext,r.deviceId,r.wptrDelay,
                         r.rbVmid,r.rb0Cntl,r.rb0Wptr,r.rb0WptrHi,r.rb0RptrAddr,r.rb0RptrAddrHi,r.wptrPollLo,
-                        r.wptrPollHi,r.rb0Base,r.rb0BaseHi,r.rbActive,r.rbDoorbellCntl};
+                        r.wptrPollHi,r.rb0Base,r.rb0BaseHi,r.rbActive,r.rbDoorbellCntl,r.rbDbLower,r.rbDbUpper};
     for(uint64_t o:w)if(off==o)return true;
     return false;
 }

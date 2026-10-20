@@ -48,10 +48,10 @@ bool vramRead(void *ctx,uint64_t off,uint32_t *dst,uint32_t dwords) {
     for(uint32_t i=0;i<dwords;++i)dst[i]=w[i];
     return true;
 }
-// Only the six client queues' 64-bit doorbells, inside the mapped BAR2.
+// Only the six client queues' and the gfx ring's 64-bit doorbells, inside the mapped BAR2.
 bool doorbell(void *ctx,uint32_t off,uint64_t value) {
     IOMemoryMap *m=static_cast<Host *>(ctx)->doorbells;
-    bool client=false;
+    bool client=off==navi33::gfx_ring::kDoorbellByte;
     for(uint32_t i=0;i<cg::kClients;++i)if(off==cg::doorbellByte(i))client=true;
     if(!m || !client || off>m->getLength() || m->getLength()-off<8u)return false;
     __asm__ __volatile__("mfence" ::: "memory");     // ring and WPTR in VRAM first

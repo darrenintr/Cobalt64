@@ -23,9 +23,9 @@ namespace gd=gfx11_dispatch;
 namespace kiq=gfx11_kiq;
 constexpr uint64_t kFb=0x8000000000ull;
 // G40's register writes on a fresh pipe: PFP counters (pipe 0 is select 0, already current: 2; pipe 1:
-// select + 2), select 0, reset and release; the same for ME; RB0 (9, then 5 after the delay, with the
-// doorbell control); MAX_CONTEXT, DEVICE_ID, unhalt; WPTR lo/hi.
-constexpr size_t kGfxStartWrites=(2u+3u+1u+2u)*2u+9u+5u+3u+2u;
+// select + 2), select 0, reset and release; the same for ME; RB0 (9, then 7 after the delay: base, base hi,
+// active, doorbell control, RB doorbell range); MAX_CONTEXT, DEVICE_ID, unhalt. The kick is a doorbell.
+constexpr size_t kGfxStartWrites=(2u+3u+1u+2u)*2u+9u+7u+3u;
 // The HQD of the client with VMID k (queue 0/1 of MEC pipe 1..3).
 constexpr uint32_t qsOf(uint32_t k){return mq::grbmSelect(1,cg::pipeOf(k-cg::kFirstVmid),cg::queueOf(k-cg::kFirstVmid));}
 // A fake GC after the autostart: banked HQDs (GRBM select), contexts 2..7 that walk
@@ -55,7 +55,7 @@ struct Fake {
         const navi33::gfx_ring::Regs &g=r.gfx;
         for(uint64_t o:{g.pfpStart,g.pfpStartHi,g.meStart,g.meStartHi,g.cpStat,g.maxContext,g.deviceId,g.wptrDelay,g.rbVmid,
                         g.rb0Cntl,g.rb0Wptr,g.rb0WptrHi,g.rb0Rptr,g.rb0RptrAddr,g.rb0RptrAddrHi,g.wptrPollLo,g.wptrPollHi,
-                        g.rb0Base,g.rb0BaseHi,g.rbActive,g.rbDoorbellCntl})mem[o]=0;
+                        g.rb0Base,g.rb0BaseHi,g.rbActive,g.rbDoorbellCntl,g.rbDbLower,g.rbDbUpper})mem[o]=0;
         mem[g.meCntl]=navi33::gfx_ring::kMeCntlDefault;
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
         assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
@@ -145,7 +145,10 @@ struct Fake {
         if(gfxBroken || (mem[g.meCntl]&(gr::kPfpHalt|gr::kMeHalt|gr::kPfpReset|gr::kMeReset)) || !mem[g.rbActive] || gfxPcs<4u)return;
         const uint64_t ring=((uint64_t(mem[g.rb0BaseHi])<<32)|mem[g.rb0Base])<<8;
         assert(ring>=kFb && mem[g.rb0Cntl]==gr::kRb0CntlValue);
-        for(uint32_t i=mem[g.rb0Rptr];i<mem[g.rb0Wptr];) {
+        // Kicked by its doorbell (DOORBELL_EN, offset 0x116, the RB range covering it, the MEC range below it).
+        assert((mem[g.rbDoorbellCntl]&gr::kDoorbellEn) && ((mem[g.rbDoorbellCntl]&gr::kDoorbellOffsetMask)>>2)==gr::kDoorbellDword);
+        assert(mem[g.rbDbLower]<=gr::kDoorbellByte && mem[g.rbDbUpper]>=gr::kDoorbellByte && mem[r.mecDbUpper]<gr::kDoorbellByte);
+        for(uint32_t i=mem[g.rb0Rptr];i<gfxWptr;) {
             const uint32_t h=get(ring-kFb+4u*i);
             if(h==mq::kNop){++i;continue;}
             const uint32_t op=(h>>8)&0xffu,n=((h>>16)&0x3fffu)+1u;
@@ -155,8 +158,9 @@ struct Fake {
             else assert(!"unexpected gfx packet");
             i+=1u+n;
         }
-        mem[g.rb0Rptr]=mem[g.rb0Wptr];
+        mem[g.rb0Rptr]=uint32_t(gfxWptr);
     }
+    uint64_t gfxWptr=0;
     void runQueue(uint32_t k) {
         const uint32_t qs=qsOf(k);
         if(stuck || paused.count(k) || !(bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]&1u))return;
@@ -208,7 +212,6 @@ struct Fake {
         }
         {   namespace gr=navi33::gfx_ring;
             if((off==f.r.gfx.pfpStart || off==f.r.gfx.meStart) && v==gr::kPcStart)++f.gfxPcs;
-            if(off==f.r.gfx.rb0Wptr)f.runGfx();
         }
         if(off==mq::hqd(f.r.g.v.q,mq::kEopRptr) && (v&0x80000000u))
             for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.eopStale.erase(k);
@@ -234,7 +237,12 @@ struct Fake {
     // aperture is on and the MEC range covers it; the value is the new WPTR.
     unsigned rings=0;
     static bool doorbell(void *c,uint32_t byteOff,uint64_t v) {
-        auto &f=*static_cast<Fake *>(c);++f.rings;
+        auto &f=*static_cast<Fake *>(c);
+        if(byteOff==navi33::gfx_ring::kDoorbellByte) {           // the gfx ring (RB range, not MEC's)
+            if((f.mem[f.r.nbioAperEn]&1u) && byteOff>=f.mem[f.r.gfx.rbDbLower] && byteOff<=f.mem[f.r.gfx.rbDbUpper]){f.gfxWptr=v;f.runGfx();}
+            return true;
+        }
+        ++f.rings;                                                  // client queue doorbells
         if(!(f.mem[f.r.nbioAperEn]&1u) || !(f.mem[f.r.pqStatus]&cg::kPqStatusDoorbellEnable) ||
            byteOff<f.mem[f.r.mecDbLower] || byteOff>=f.mem[f.r.mecDbUpper])return true;
         for(uint32_t i=0;i<cg::kClients;++i) {
@@ -575,8 +583,8 @@ int main() {
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
         h.mem[r.mecDbLower]=0x110u;h.mem[r.mecDbUpper]=0xffcu;h.mem[r.nbioAperEn]=1u;   // MES's range covers ours
-        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==14u+12u+kGfxStartWrites);
-        for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm || navi33::gfx_ring::allowed(r.gfx,w.first));          // only the HQD ACTIVE checks
+        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==14u+12u+kGfxStartWrites+2u);   // + the MEC range moved below the gfx doorbell
+        for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm || navi33::gfx_ring::allowed(r.gfx,w.first) || w.first==r.mecDbLower || w.first==r.mecDbUpper);          // only the HQD ACTIVE checks
     }
     // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.
     {   namespace nf=n48n_front;
