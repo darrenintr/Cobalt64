@@ -632,6 +632,9 @@ for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory','mmhu
 for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert 'n33gpu' not in code and 'navi33-client-gpu' not in code
+assert 'h->gfxMapGate && cg::mapAllowed(h->r,off)' in cgw
+assert '!h->gfxMapGate || !gfx_map::stageRange(off,n,write)' in cgw
+assert 'gfxMapAttempted_=true;' in cgh
 print('Navi33 client GPU contexts: own gate, allowlist, heap-bounded CPU access, close with the client: passed')
 # CPU mappings of client buffers are removed and unmapped before their pages can be reused.
 assert 'while (IOMemoryMap *map = removeMappingForDescriptor(gpuBoMd_[i]))' in nclient

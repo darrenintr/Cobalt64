@@ -34,6 +34,7 @@ constexpr uint32_t qsOf(uint32_t k){return mq::grbmSelect(1,cg::pipeOf(k-cg::kFi
 // invalidation engine 17 flushes that VMID, and a CP that runs each queue's ring:
 // INDIRECT_BUFFER in the queue's VMID, the gradient dispatch, RELEASE_MEM.
 struct Fake {
+    bool g42=false,mapStuck=false;unsigned stageWrites=0;
     cg::Regs r; vh::Heap heap; cg::Device dev;
     std::map<uint64_t,uint32_t> mem; std::map<std::pair<uint32_t,uint64_t>,uint32_t> bank;
     std::unordered_map<uint64_t,uint32_t> vram;
@@ -143,9 +144,9 @@ struct Fake {
     void runGfx() {
         namespace gr=navi33::gfx_ring;
         const gr::Regs &g=r.gfx;
-        if(gfxBroken || gfxHold || (mem[g.meCntl]&(gr::kPfpHalt|gr::kMeHalt|gr::kPfpReset|gr::kMeReset)) || !mem[g.rbActive] || gfxPcs<4u)return;
+        if(gfxBroken || gfxHold || (g42 && !mem[r.gfxMapped]) || (mem[g.meCntl]&(gr::kPfpHalt|gr::kMeHalt|gr::kPfpReset|gr::kMeReset)) || !mem[g.rbActive] || gfxPcs<4u)return;
         const uint64_t ring=((uint64_t(mem[g.rb0BaseHi])<<32)|mem[g.rb0Base])<<8;
-        assert(ring>=kFb && mem[g.rb0Cntl]==gr::kRb0CntlValue);
+        assert(ring>=kFb && (mem[g.rb0Cntl]&~0x00a00000u)==gr::kRb0CntlValue);
         // Kicked by its doorbell (DOORBELL_EN, offset 0x116, the RB range covering it, the MEC range below it).
         assert(!(mem[g.rbDoorbellCntl]&gr::kDoorbellEn) || ((mem[g.rbDoorbellCntl]&gr::kDoorbellOffsetMask)>>2)==gr::kDoorbellDword);
         assert(mem[g.rbDbLower]<=gr::kDoorbellByte && mem[g.rbDbUpper]>=gr::kDoorbellByte && mem[r.mecDbUpper]<gr::kDoorbellByte);
@@ -193,7 +194,7 @@ struct Fake {
     }
     static bool write(void *c,uint64_t off,uint32_t v) {
         auto &f=*static_cast<Fake *>(c);
-        assert(cg::allowed(f.r,off));
+        assert(cg::allowed(f.r,off) || (f.g42 && cg::mapAllowed(f.r,off)));
         f.writes.emplace_back(off,v);
         if(f.banked(off))f.bank[{f.sel(),off}]=v; else f.mem[off]=v;
         // GCVM_L2_CNTL2 with the invalidate bits latched keeps the hub L2 busy (the card,
@@ -223,7 +224,7 @@ struct Fake {
         // queues 2+, never pipe 0 queue 0 (G34's).
         if(off==f.r.g.v.q.grbm && v && !(v&0xf0u)) {
             if(!((v>>2)&3u))assert((v&3u)<=1u && !((v>>8)&7u));
-            else assert(((v>>2)&3u)==1u && ((v>>8)&7u)<=1u && ((v&3u) || ((v>>8)&7u)==1u));
+            else assert(((v>>2)&3u)==1u && ((v>>8)&7u)<=1u && (f.g42 || (v&3u) || ((v>>8)&7u)==1u));
         }
         {   namespace gr=navi33::gfx_ring;
             if((off==f.r.gfx.pfpStart || off==f.r.gfx.meStart) && v==gr::kPcStart)++f.gfxPcs;
@@ -233,6 +234,21 @@ struct Fake {
         // Activation fetches the ring (G36): only once ACTIVE is set.
         if(off==mq::hqd(f.r.g.v.q,kiq::kCpHqdActive) && (v&1u))
             for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.runQueue(k);
+        if(f.g42 && off==f.r.g.v.q.poll1 && f.sel()==mq::grbmSelect(1,0,0) && v==1u && !f.mapStuck) {
+            namespace gm=navi33::gfx_map;
+            const uint64_t p=gm::kG34Vram+gm::kAppendOff;
+            assert(f.mem[f.r.scheduler]==0x30a0u && f.get(p)==0xc005a200u && f.get(p+4)==0x30000000u);
+            assert(f.get(p+28)==0xc0033700u && f.get(p+32)==0x100500u && f.get(p+44)==gm::kMapFence);
+            assert(f.q(p+36)==kFb+gm::kG34Vram+gm::kMapFenceOff);
+            const uint64_t mqd=f.q(p+12)-kFb;
+            assert(f.get(mqd+162u*4u)==0x100u && f.get(mqd+130u*4u)==1u);
+            const uint64_t base=f.q(mqd+136u*4u);
+            f.mem[f.r.gfx.rb0Base]=uint32_t(base);f.mem[f.r.gfx.rb0BaseHi]=uint32_t(base>>32);
+            f.mem[f.r.gfx.rb0Cntl]=f.get(mqd+145u*4u);f.mem[f.r.gfx.rbActive]=1u;f.mem[f.r.gfxMapped]=1u;
+            f.gfxWptr=f.q(f.q(p+20)-kFb);f.runGfx();
+            f.vram[gm::kG34Vram+gm::kMapFenceOff]=gm::kMapFence;
+            f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqRptr)}]=32u;
+        }
         if(off==f.r.g.v.q.poll1)for(uint32_t i=0;i<cg::kClients;++i)if(v&cg::pollBit(i))f.runQueue(cg::kFirstVmid+i);
 
         return true;
@@ -271,7 +287,30 @@ struct Fake {
         }
         return true;
     }
-    cg::Hw hw(){return {this,read,write,vw,vr,delay,doorbell};}
+    static bool stageWrite(void *c,uint32_t off,const uint32_t *p,uint32_t n) {
+        auto &f=*static_cast<Fake *>(c);assert(f.g42 && gfx_map::stageRange(off,n,true));++f.stageWrites;
+        for(uint32_t i=0;i<n;++i)f.vram[gfx_map::kG34Vram+off+4u*i]=p[i];
+        return true;
+    }
+    static bool stageRead(void *c,uint32_t off,uint32_t *p,uint32_t n) {
+        auto &f=*static_cast<Fake *>(c);assert(f.g42 && gfx_map::stageRange(off,n,false));
+        for(uint32_t i=0;i<n;++i)p[i]=f.get(gfx_map::kG34Vram+off+4u*i);
+        return true;
+    }
+    void g34() {
+        g42=true;mem[r.scheduler]=0x3038u;mem[r.gfxMapped]=0u;
+        const uint32_t qs=mq::grbmSelect(1,0,0);
+        const uint64_t base=(kFb+gfx_map::kG34Vram+mq::kRingOff)>>8;
+        bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
+        bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdVmid)}]=0u;
+        bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqBase)}]=uint32_t(base);
+        bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqBaseHi)}]=uint32_t(base>>32);
+        bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqControl)}]=0xd0308509u;
+        bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqRptr)}]=16u;
+        vram[gfx_map::kG34Vram+mq::kWptrOff]=16u;
+        vram[gfx_map::kG34Vram+mq::kFenceOff]=mq::kFenceValue;
+    }
+    cg::Hw hw(){return {this,read,write,vw,vr,delay,doorbell,stageWrite,stageRead};}
     // CPU write into a client's buffer (what the user's CPU mapping does).
     void put(uint32_t slot,uint32_t handle,uint32_t off,const std::vector<uint32_t> &v) {
         uint64_t base=0,bytes=0;assert(dev.boRange(slot,handle,base,bytes) && off+4u*v.size()<=bytes);
@@ -566,6 +605,28 @@ int main() {
         Fake h(r);h.gfxBroken=true;assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.dev.stats().gfx.state==cg::GfxState::Timeout);
         App a=setup(h,co,k,7,0x100000000ull);uint64_t s=0,ret=0;const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
         assert(h.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok && h.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok && imageOk(h,a,7));
+    }
+    // G42: unmapped gfx cannot run. A validated G34 queue maps it once; malformed
+    // ownership/pointers refuse before any stage-window or scheduler write.
+    {
+        assert(!gfx_map::stageRange(mq::kFenceOff,1u,true));
+        assert(!gfx_map::stageRange(gfx_map::kAppendOff,17u,true));
+        assert(!gfx_map::stageRange(gfx_map::kAppendOff-4u,16u,true));
+        assert(!cg::allowed(r,r.scheduler) && cg::mapAllowed(r,r.scheduler) && !cg::mapAllowed(r,r.gfxMapped));
+        auto f=std::make_unique<Fake>(r);f->g34();
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady() && !f->stageWrites);
+        assert(f->mem[r.scheduler]==0x3038u);
+        f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().state==gfx_map::State::Mapped && f->stageWrites==3u);
+        const auto count=f->writes.size();assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->writes.size()==count);
+        f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);
+        f->vram[gfx_map::kG34Vram+mq::kWptrOff]=32u;
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().state==gfx_map::State::Refused && f->stageWrites==0u && f->mem[r.scheduler]==0x3038u);
+        f=std::make_unique<Fake>(r);f->g34();f->mapStuck=true;f->dev.setGfxMap(true);
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().state==gfx_map::State::MapTimeout && f->stageWrites==3u);
     }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);

@@ -154,6 +154,20 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      FRAME_CONTROL around the IBs, as `amdgpu_ib_schedule`), and fences at MC addresses: the
      client's gfx fence (queue buffer + 0x4010), its user fence, the ring's own sequence. A
      client's sequence numbers retire in order across its compute queue and the gfx ring.
+   - **G42 graphics mapping (kext 0.0.57, 2026-10-20):** the user's "please go"
+     after the G40 mapping/activation blocker authorizes building and testing one
+     bounded MAP_QUEUES on G34 (ME1/pipe0/queue0) for graphics ME0/pipe0/queue0.
+     Own `navi33-gfx-map=1` gate, killed by `navi33-gfx-map-off`, `navi33-mec-off`,
+     the client GPU gate or `navi33-psp-off`; off by default. Only additional MMIO:
+     RLC_CP_SCHEDULERS (GC segment1 dword0x98a), preserve high24 bits and set low
+     byte0xa0. Existing poll1 bit0 kicks G34. CPU writes outside the heap only at
+     VRAM250MiB +0x2040 (16 dwords), +0x3008 (2 dwords), +0x4008 (1 dword), exact
+     callback allowlist, readback required. MQD stays in live GFXR heap memory.
+     Requires G34's exact original base/VMID/privilege/RPTR16/WPTR16/fence and
+     scheduler HIQ clear, gfx MAPPED0; own latch before first stage-window write.
+     Fixed MAP_QUEUES + confirmed WRITE_DATA fence only, no user-controlled stream.
+     Further attempts after a stage write require full power-off. Recovery remains
+     guest/host SSH and host full power-off. Design: `GFX_MAP_DESIGN.md`. Not yet run.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -414,7 +428,7 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (2026-10-20 16:01): compute reuse fixed, graphics queue still blocked
+## Resume here (2026-10-20 16:12): G42 mapping implementation ready for CI/live test
 
 - User confirmed full power-off and requested continued work toward a **GPU-rendered
   macOS desktop, wallpaper and apps**. Framebuffer output is not the goal.
@@ -447,6 +461,10 @@ output survives a hang and Linux can inspect a stuck guest.
   All nine clients, repeat 200, N48N and RADV pass again; 21 flushes, zero misses.
   Gfx still state 6 with `kick MMIO`; actual hardware WPTR/RPTR both 0, ACTIVE 1,
   MAPPED 0. Correct engine17 range readback is 0xffffffff/0x1f.
+- 0.0.57 implements G42 under a separate opt-in gate; host and bootstrap checks
+  pass, CI/live run pending. User approved continuing mapping/activation ("please go").
+  Use `GFX_MAP=1 vm/cold-run.sh` with its fresh artifact only after CI passes.
+  This boot still has G34 original WPTR16; no G42 write yet.
 - Current guest is left running in tmux `n33-cold`, artifact 0.0.56. No Metal
   nub/accelerator installed or enabled. Next graphics investigation is upstream
   gfx11 queue mapping/activation (MES/KIQ-mapped GFX HQD), with a bounded design

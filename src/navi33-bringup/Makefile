@@ -421,7 +421,7 @@ $(BUILD)/test-metal-nub: tests/test_metal_nub.cpp src/Navi33MetalPure.h src/Navi
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 
-$(BUILD)/test-client-gpu: tests/test_client_gpu.cpp src/Navi33N48nFront.h src/Navi33N48nAbi.h src/Navi33ClientGpu.h src/Navi33Gmc11Vm.h src/Navi33VramHeap.h src/Navi33Gfx11VmGradient.h src/Navi33Gfx11Vmid.h src/Navi33Gfx11Gradient.h src/Navi33Gfx11MecQueue.h src/Navi33NativeABI.h tests/rx7600_ipd_fixture.h
+$(BUILD)/test-client-gpu: tests/test_client_gpu.cpp src/Navi33N48nFront.h src/Navi33N48nAbi.h src/Navi33ClientGpu.h src/Navi33Gfx11Map.h src/Navi33Gfx11GfxRing.h src/Navi33Gmc11Vm.h src/Navi33VramHeap.h src/Navi33Gfx11VmGradient.h src/Navi33Gfx11Vmid.h src/Navi33Gfx11Gradient.h src/Navi33Gfx11MecQueue.h src/Navi33NativeABI.h tests/rx7600_ipd_fixture.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 

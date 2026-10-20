@@ -27,6 +27,7 @@
 // confirmed (a TLB flush without ACK, a queue that will not dequeue, a hub fault in
 // the client's VMID) quarantines the client: its memory is never freed again.
 #pragma once
+#include "Navi33Gfx11Map.h"
 #include "Navi33Gfx11GfxRing.h"
 #include "Navi33Gfx11VmGradient.h"
 #include "Navi33Gmc11Vm.h"
@@ -119,7 +120,7 @@ enum class Code : uint8_t {
 struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
-    uint64_t dequeue=0, invReq=0, invAck=0, invRangeLo=0, invRangeHi=0, l2Status=0;
+    uint64_t dequeue=0, invReq=0, invAck=0, invRangeLo=0, invRangeHi=0, l2Status=0, scheduler=0, gfxMapped=0;
     gfx_ring::Regs gfx{};           // the kernel's gfx ring 0 (G40)
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
     uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0, pqStatus=0;
@@ -138,6 +139,9 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         const uint32_t dws[7]={ctxCntl(k),ctxBaseLo(k),ctxBaseLo(k)+1u,ctxStartLo(k),ctxStartLo(k)+1u,ctxEndLo(k),ctxEndLo(k)+1u};
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
+    const auto scheduler=resolveDword(d,Engine::GFX11,gfx_map::kSchedulerSeg,gfx_map::kSchedulerDw,bytes);
+    if(scheduler.code!=AddressCode::Pass || !one(gfx_map::kMappedDw,r.gfxMapped))return r;
+    r.scheduler=scheduler.bar5ByteOffset;
     r.gfx=gfx_ring::resolve(d,bytes);
     if(!r.gfx.valid || !one(kDequeueRequest,r.dequeue) || !one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) ||
        !one(kInvRangeLo17,r.invRangeLo) || !one(kInvRangeHi17,r.invRangeHi) || !one(kL2Status,r.l2Status) ||
@@ -160,6 +164,7 @@ inline bool allowed(const Regs &r,uint64_t off) {
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
 }
+inline bool mapAllowed(const Regs &r,uint64_t off) { return r.valid && off==r.scheduler; }
 struct Hw {
     void *ctx=nullptr;
     bool (*read)(void *,uint64_t,uint32_t *)=nullptr;
@@ -168,6 +173,8 @@ struct Hw {
     bool (*vramRead)(void *,uint64_t off,uint32_t *dst,uint32_t dwords)=nullptr;
     void (*delayUs)(void *,uint32_t)=nullptr;
     bool (*doorbell)(void *,uint32_t byteOff,uint64_t value)=nullptr;    // 64-bit write into BAR2
+    bool (*stageWrite)(void *,uint32_t off,const uint32_t *,uint32_t)=nullptr; // G42 exact G34 words only
+    bool (*stageRead)(void *,uint32_t off,uint32_t *,uint32_t)=nullptr;
 };
 struct Bo { vh::Handle h{}; uint64_t vram=0, bytes=0, va=0; uint64_t vaFlags=0; bool live=false, cpuMapped=false; };
 struct Mapping { uint64_t va=0, bytes=0; };
@@ -553,6 +560,8 @@ public:
         if(!b)return false;
         va=b->va;bytes=b->bytes;return true;
     }
+    const gfx_map::Report &gfxMapReport() const { return gfxMap_; }
+    void setGfxMap(bool on) { if(!r_)gfxMapGate_=on; }
     Stats stats() const {
         Stats s{};
         for(const Client &c:c_) {
@@ -571,7 +580,7 @@ private:
     struct TableIo { Device *dev=nullptr; };
     bool rd(uint64_t off,uint32_t &v) { return h_.read(h_.ctx,off,&v) && v!=0xffffffffu; }
     bool wr(uint64_t off,uint32_t v) {
-        if(!allowed(*r_,off) || !h_.write(h_.ctx,off,v))return false;
+        if((!allowed(*r_,off) && !(gfxMapGate_ && mapAllowed(*r_,off))) || !h_.write(h_.ctx,off,v))return false;
         ++writes_;if(off==r_->g.v.q.grbm)select_=v;
         return true;
     }
@@ -641,7 +650,7 @@ private:
            !wr(g.wptrPollLo,static_cast<uint32_t>(wptr)) || !wr(g.wptrPollHi,static_cast<uint32_t>(wptr>>32)))return;
         h_.delayUs(h_.ctx,1000u);
         if(!wr(g.rb0Cntl,gr::kRb0CntlValue) || !wr(g.rb0Base,static_cast<uint32_t>(base)) ||
-           !wr(g.rb0BaseHi,static_cast<uint32_t>(base>>32)) || !wr(g.rbActive,1u) || !rd(g.rbDoorbellCntl,dbc) ||
+           !wr(g.rb0BaseHi,static_cast<uint32_t>(base>>32)) || !wr(g.rbActive,gfxMapGate_ ? 0u : 1u) || !rd(g.rbDoorbellCntl,dbc) ||
            !wr(g.rbDoorbellCntl,(dbc&~gr::kDoorbellOffsetMask)|(gr::kDoorbellDword<<2)|gr::kDoorbellEn) ||
            !wr(g.rbDbLower,gr::kRbRangeLower) || !wr(g.rbDbUpper,gr::kRbRangeUpper))return;
         // The MEC range must end below the gfx doorbell (the card had MES's 0x110..0xffc).
@@ -659,8 +668,9 @@ private:
         k+=gr::buildFence(p+k,mc+gr::kFenceOff,gr::kFenceValue);
         while(k%8u)p[k++]=mq::kNop;
         const uint32_t wp[2]={k,0u};
-        if(!vramPut(gfxMemVram_+gr::kRingOff,p,k) || !vramPut(gfxMemVram_+gr::kWptrOff,wp,2u) ||
-           !h_.doorbell(h_.ctx,gr::kDoorbellByte,k))return;
+        if(!vramPut(gfxMemVram_+gr::kRingOff,p,k) || !vramPut(gfxMemVram_+gr::kWptrOff,wp,2u))return;
+        if(gfxMapGate_ && !gfxMapQueue(mc))return;
+        if(!h_.doorbell(h_.ctx,gr::kDoorbellByte,k))return;
         gfxWptr_=k;gfxSeq_=gfxRetired_=0;for(uint64_t &e:gfxEnd_)e=k;
         gfx_.wptr=k;gfx_.state=GfxState::Timeout;
         for(uint32_t us=0;us<gr::kFenceTimeoutUs;us+=100u) {
@@ -673,7 +683,7 @@ private:
         // ring through upstream's non-doorbell WPTR path. Never restart a ring
         // that made partial progress: its packet boundary is unknown here.
         uint32_t seenWptr=0;
-        if(gfx_.state==GfxState::Timeout && !gfx_.rptr && rd(g.rb0Wptr,seenWptr) && !seenWptr) {
+        if(!gfxMapGate_ && gfx_.state==GfxState::Timeout && !gfx_.rptr && rd(g.rb0Wptr,seenWptr) && !seenWptr) {
             uint32_t control=0;
             if(!rd(g.rbDoorbellCntl,control) || !wr(g.rbDoorbellCntl,control&~gr::kDoorbellEn))return;
             gfx_.mmioKick=true;
@@ -685,6 +695,52 @@ private:
             }
             rd(g.rb0Rptr,gfx_.rptr);
         }
+    }
+    // G42 consumes the known idle G34 ring exactly once. No client controls these packets.
+    bool stagePut(uint32_t off,const uint32_t *p,uint32_t n) {
+        uint32_t back[16]{};
+        if(n>16u || !h_.stageWrite(h_.ctx,off,p,n) || !h_.stageRead(h_.ctx,off,back,n))return false;
+        for(uint32_t i=0;i<n;++i)if(back[i]!=p[i])return false;
+        return true;
+    }
+    bool gfxMapQueue(uint64_t mc) {
+        namespace gm=gfx_map;
+        if(gfxMapAttempted_)return false;
+        gfxMap_.state=gm::State::Refused;
+        if(!h_.stageWrite || !h_.stageRead)return false;
+        gm::Snapshot &s=gfxMap_.before;
+        if(!rd(r_->scheduler,s.scheduler) || !rd(r_->gfxMapped,s.mapped) || !sel(mq::grbmSelect(1u,0u,0u)))return false;
+        const mq::Regs &q=r_->g.v.q;
+        const struct { uint32_t dw; uint32_t *out; } reads[]={
+            {kiq::kCpHqdActive,&s.active},{kiq::kCpHqdVmid,&s.vmid},
+            {kiq::kCpHqdPqBase,&s.pqLo},{kiq::kCpHqdPqBaseHi,&s.pqHi},
+            {kiq::kCpHqdPqControl,&s.pqControl},{kiq::kCpHqdPqRptr,&s.rptr}};
+        bool ok=true;for(const auto &x:reads)if(!rd(mq::hqd(q,x.dw),*x.out))ok=false;
+        if(!sel(0u))return false;
+        uint32_t wp[2]{};
+        if(!ok || !h_.stageRead(h_.ctx,mq::kWptrOff,wp,2u) ||
+           !h_.stageRead(h_.ctx,mq::kFenceOff,&s.fence,1u))return false;
+        s.wptrLo=wp[0];s.wptrHi=wp[1];
+        if(!gm::ready(s,fbBase_))return false;
+        uint32_t image[gm::kMqdDwords]{};gm::mqd(mc,image);
+        if(!vramPut(gfxMemVram_+gm::kMqdOff,image,gm::kMqdDwords))return false;
+        uint32_t packets[16]{};gm::packets(mc,fbBase_,packets);
+        const uint32_t zero=0, next[2]={gm::kEndWptr,0u};
+        gfxMapAttempted_=true;gfxMap_.state=gm::State::Attempted; // latch before the first stage write
+        if(!stagePut(gm::kMapFenceOff,&zero,1u) || !stagePut(gm::kAppendOff,packets,16u) ||
+           !stagePut(mq::kWptrOff,next,2u) || !wr(r_->scheduler,gm::schedulerWord(s.scheduler)))return false;
+        if(!sel(mq::grbmSelect(1u,0u,0u)) || !wr(q.poll1,1u) || !sel(0u))return false;
+        gfxMap_.state=gm::State::MapTimeout;
+        for(uint32_t us=0;us<gfx_ring::kFenceTimeoutUs;us+=100u) {
+            if(!h_.stageRead(h_.ctx,gm::kMapFenceOff,&gfxMap_.fence,1u))return false;
+            if(gfxMap_.fence==gm::kMapFence)break;
+            h_.delayUs(h_.ctx,100u);
+        }
+        if(!rd(r_->gfxMapped,gfxMap_.mapped) || !sel(mq::grbmSelect(1u,0u,0u)))return false;
+        const bool got=rd(mq::hqd(q,kiq::kCpHqdPqRptr),gfxMap_.kiqRptr);
+        if(!sel(0u) || !got)return false;
+        if(gfxMap_.fence!=gm::kMapFence || !(gfxMap_.mapped&1u))return false;
+        gfxMap_.state=gm::State::Mapped;return true;
     }
     bool gfxKick(uint64_t end) {
         if(!gfx_.mmioKick)return h_.doorbell(h_.ctx,gfx_ring::kDoorbellByte,end);
@@ -879,6 +935,7 @@ private:
     uint64_t retiredBytes_=0;
     DoorbellSetup db_{};
     FlushMiss miss_{}; HubL2 l2_{}; bool tlbUnsafe_=false;
+    bool gfxMapGate_=false,gfxMapAttempted_=false; gfx_map::Report gfxMap_{};
     GfxReport gfx_{}; vh::Handle gfxMem_{}; uint64_t gfxMemVram_=0;
     uint64_t gfxWptr_=0, gfxSeq_=0, gfxRetired_=0, gfxEnd_[64]{};
     uint64_t computeRetiredEver_=0, gfxRetiredEver_=0; uint32_t quarantinedEver_=0;

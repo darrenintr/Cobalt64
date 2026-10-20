@@ -16,6 +16,7 @@ struct Host {
     client_gpu::Device dev;
     const vram_heap::Heap *heap=nullptr;
     uint64_t fbBaseMc=0, bar0Phys=0, bar0Bytes=0;
+    bool gfxMapGate=false;
     int startCode=-1;              // client_gpu::Code of the one start attempt, -1 before it
 };
 // The first context of the boot starts the device: maps, BAR0 == VRAM proof (as every

@@ -7,10 +7,11 @@
 set -euo pipefail
 V=/home/darren/Cobalt64/src/navi33-bringup/vm
 N="/home/darren/macos tahoe/navi33"
-ART="${ARTIFACT:-$N/cache/artifact-0.0.56}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
+ART="${ARTIFACT:-$N/cache/artifact-0.0.57}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
 RADV="${RADV:-$N/cache/radv-0011}"; VKINC="${VKINC:-$N/cache/vulkan-include}"; T=/home/darren/Cobalt64/src/navi33-bringup/tools/vkfill
+MAP_ARGS=(); [ "${GFX_MAP:-0}" != 1 ] || MAP_ARGS=(--gfx-map)
 pgrep -f "^qemu-system-x86_64" >/dev/null && { echo "a VM is already running" >&2; exit 1; }
-"$V/make-opencore.sh" "$ART" --oc "$OC" --hostfb /var/lib/cobalt64-navi33/hostfb.txt --autostart --fb --client-gpu | grep -E "UUID|boot-args"
+"$V/make-opencore.sh" "$ART" --oc "$OC" --hostfb /var/lib/cobalt64-navi33/hostfb.txt --autostart --fb --client-gpu "${MAP_ARGS[@]}" | grep -E "UUID|boot-args"
 tmux kill-session -t n33-cold 2>/dev/null || true
 tmux new-session -d -s n33-cold "cd '$V' && ./run-vm.sh; sleep 300"
 sleep 3; R="$(readlink -f "$N/runs/latest")"
@@ -27,11 +28,11 @@ ssh macos-vm 'rm -rf ~/vk && mkdir -p ~/vk/include' && scp -q -r "$VKINC/vulkan"
   scp -q -r "$VKINC/vk_video" macos-vm:vk/include/ &&
   scp -q "$RADV/libvulkan_radeon.dylib" "$T/vkfill.c" "$T/vkfill_spv.h" macos-vm:vk/ &&
   ssh macos-vm 'cd ~/vk && clang -O2 -Iinclude -I. vkfill.c -o vkfill && codesign -s - -f libvulkan_radeon.dylib && sudo ./vkfill ./libvulkan_radeon.dylib 65536' > "$R/cold-vkfill.txt" 2>&1 || true
-ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|ClientGfx|ClientGpuStall|ClientGpuFault|N48nLast|Hqd)"; ioreg -l -w0 -c Navi33GOPFB | grep -E "Navi33FB,Stage|class Navi33GOPFB"; pgrep -lx WindowServer' > "$R/cold-after.txt" 2>&1 || true
+ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|ClientGfx|GfxMap|ClientGpuStall|ClientGpuFault|N48nLast|Hqd)"; ioreg -l -w0 -c Navi33GOPFB | grep -E "Navi33FB,Stage|class Navi33GOPFB"; pgrep -lx WindowServer' > "$R/cold-after.txt" 2>&1 || true
 printf 'pmemsave 0xa0000000 3145728 "%s/fb.raw"\n' "$R" | socat - UNIX-CONNECT:"$R/hmp.sock" >/dev/null 2>&1 || true
 sleep 3
 cat "$R/cold-before.txt"; grep -E "== client|context:|wrong pixels|WAIT|closed|N48N|HELLO|failed" "$R/cold-clients.txt"; cat "$R/cold-vkfill.txt"
-grep -E "Autostart|ClientGpu\"|ClientGfx|N48nLast|Stage" "$R/cold-after.txt"
+grep -E "Autostart|ClientGpu\"|ClientGfx|GfxMap|N48nLast|Stage" "$R/cold-after.txt"
 echo "run dir $R (VM left running in tmux session n33-cold)"
 # Do not mistake a surviving desktop or a completed fence for correct rendering.
 if grep -Eq 'FAILED|failed|WAIT state' "$R/cold-clients.txt" ||

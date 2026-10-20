@@ -1214,6 +1214,11 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
         c=cg::Code::BadArgs;
     } else {
         navi33::darwin_psp::Request req{};fillConsole(req);
+        uint32_t map=0,mapOff=0,mecOff=0;
+        gpuHost_.gfxMapGate=PE_parse_boot_argn("navi33-gfx-map",&map,sizeof(map)) && map==1u &&
+            !(PE_parse_boot_argn("navi33-gfx-map-off",&mapOff,sizeof(mapOff)) && mapOff!=0u) &&
+            !(PE_parse_boot_argn("navi33-mec-off",&mecOff,sizeof(mecOff)) && mecOff!=0u);
+        gpuHost_.dev.setGfxMap(gpuHost_.gfxMapGate);
         uint32_t tlbUnsafe=0;
         gpuHost_.dev.setTlbUnsafe(PE_parse_boot_argn("navi33-client-tlb-unsafe",&tlbUnsafe,sizeof(tlbUnsafe)) && tlbUnsafe==1u);
         c=navi33::darwin_client::start(gpuHost_,OSDynamicCast(IOPCIDevice,getProvider()),req,vramHeap_);
@@ -1236,6 +1241,13 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
                  static_cast<unsigned>(st.gfx.state),st.gfx.meBefore,st.gfx.me,st.gfx.stat,
                  static_cast<unsigned long long>(st.gfx.ringMc),st.gfx.wptr,st.gfx.rptr,st.gfx.fence,st.gfx.mmioKick ? "MMIO" : "doorbell");
         setProperty("Navi33,ClientGfx",gl);
+        const auto &m=gpuHost_.dev.gfxMapReport();
+        char ml[256];
+        snprintf(ml,sizeof(ml),"state %u scheduler %x G34 active %x vmid %u base %x:%x control %x rptr %x wptr %x:%x old fence %x mapped %x -> fence %x mapped %x rptr %x",
+                 static_cast<unsigned>(m.state),m.before.scheduler,m.before.active,m.before.vmid,
+                 m.before.pqHi,m.before.pqLo,m.before.pqControl,m.before.rptr,m.before.wptrHi,m.before.wptrLo,
+                 m.before.fence,m.before.mapped,m.fence,m.mapped,m.kiqRptr);
+        setProperty("Navi33,GfxMap",ml);
     }
     // Every client-capable HQD, at service start and now (diagnostics, reads only).
     {   char hq[16+cg::Device::kHqdDumpCount*9u];uint32_t w[cg::Device::kHqdDumpCount];char key[48];

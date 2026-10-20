@@ -22,7 +22,8 @@ bool read32(void *ctx,uint64_t off,uint32_t *out) {
 }
 bool write32(void *ctx,uint64_t off,uint32_t value) {
     Host *h=static_cast<Host *>(ctx);
-    if(!cg::allowed(h->r,off) || !h->regs || (off&3u) || off>h->regs->getLength() || h->regs->getLength()-off<4u)
+    if(!cg::allowed(h->r,off) && !(h->gfxMapGate && cg::mapAllowed(h->r,off)))return false;
+    if(!h->regs || (off&3u) || off>h->regs->getLength() || h->regs->getLength()-off<4u)
         return false;
     *reinterpret_cast<volatile uint32_t *>(static_cast<uintptr_t>(h->regs->getVirtualAddress())+off)=value;
     __asm__ __volatile__("mfence" ::: "memory");
@@ -59,11 +60,29 @@ bool doorbell(void *ctx,uint32_t off,uint64_t value) {
     __asm__ __volatile__("mfence" ::: "memory");
     return true;
 }
+// G42's only exception to heap CPU access: exact known G34 ring/WPTR/fence words.
+volatile uint32_t *stageWords(Host *h,uint32_t off,uint32_t n,bool write) {
+    const uint64_t at=gfx_map::kG34Vram+off,len=4ull*n;
+    if(!h->gfxMapGate || !gfx_map::stageRange(off,n,write) || !h->bar ||
+       at>h->bar->getLength() || len>h->bar->getLength()-at)return nullptr;
+    return reinterpret_cast<volatile uint32_t *>(static_cast<uintptr_t>(h->bar->getVirtualAddress())+at);
+}
+bool stageWrite(void *ctx,uint32_t off,const uint32_t *src,uint32_t n) {
+    auto *w=stageWords(static_cast<Host *>(ctx),off,n,true);if(!w || !src)return false;
+    for(uint32_t i=0;i<n;++i)w[i]=src[i];
+    __asm__ __volatile__("sfence; mfence" ::: "memory");
+    return true;
+}
+bool stageRead(void *ctx,uint32_t off,uint32_t *dst,uint32_t n) {
+    auto *w=stageWords(static_cast<Host *>(ctx),off,n,false);if(!w || !dst)return false;
+    for(uint32_t i=0;i<n;++i)dst[i]=w[i];
+    return true;
+}
 // Short waits spin (the TLB ACK); longer ones sleep so a waiting client does not burn a CPU.
 void delayUs(void *,uint32_t us) { if(us<50u)IODelay(us); else IOSleep((us+999u)/1000u); }
 } // namespace
 
-client_gpu::Hw hw(Host &h) { return {&h,read32,write32,vramWrite,vramRead,delayUs,doorbell}; }
+client_gpu::Hw hw(Host &h) { return {&h,read32,write32,vramWrite,vramRead,delayUs,doorbell,stageWrite,stageRead}; }
 
 client_gpu::Code start(Host &h,IOPCIDevice *pci,const darwin_psp::Request &req,vram_heap::Heap &heap) {
     if(h.startCode>=0)return static_cast<cg::Code>(h.startCode);
