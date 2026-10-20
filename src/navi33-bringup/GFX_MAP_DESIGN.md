@@ -164,11 +164,15 @@ from raw.githubusercontent.com; git.kernel.org returned 502):
   label does not change the register names used here. I did not verify which
   IP version maps to `nbio_v4_3` in discovery, and the `nbio_4_3_1` header path
   returned 404 on the mirror.
-- The call site of `remap_hdp_registers` was not found in the fetched
-  `amdgpu_device.c`, `gmc_v11_0.c`, `amdgpu_nbio.c`, or `hdp_v6_0.c`. Still
-  open. Until it is found, the source of `0x385c`/`0x3858` (power-on default,
-  VBIOS, or an earlier driver) is not established. Do not accept, overwrite, or
-  clear these values without a new bounded design and renewed approval.
+- The call site is `soc21_common_hw_init()` in `amdgpu/soc21.c` (the SoC
+  common IP block, which runs before GFX init), gated only on
+  `!sriov`. Upstream therefore writes the pair on every driver init. A power-on
+  value that no driver has written should be visible on a boot where amdgpu
+  and our kext have not touched the card. A read on the 2026-10-20 19:38 boot
+  (`d04f59d2-…`, card on vfio-pci, no VM) is the next check; the script is
+  `$HOME/cobalt-scratch/remap-peek.py` (read-only, BAR5 PROT_READ). Until its
+  result is recorded, the source of `0x385c`/`0x3858` stays open. Do not accept,
+  overwrite, or clear these values without a new bounded design and renewed approval.
 
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
