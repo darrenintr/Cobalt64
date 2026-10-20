@@ -174,6 +174,13 @@ if hostfb:
 nv["boot-args"]=" ".join(dict.fromkeys(args))
 if "boot-args" not in c["NVRAM"]["Delete"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]:
     sys.exit("config does not delete boot-args, so NVRAM would override them")
+# SIP: the VM's own 0x67, plus CSR_ALLOW_UNAPPROVED_KEXTS (0x200) on --fb disks, so the
+# Aux KC Navi33GOPFB loads without the System Settings "Allow" click a guest with no screen
+# cannot give. Deleted first so the value always follows the disk (our OVMF_VARS copy only).
+csr=int.from_bytes(nv.get("csr-active-config",b"\x67\0\0\0"),"little")
+nv["csr-active-config"]=((csr|0x200) if fbon else (csr&~0x200)).to_bytes(4,"little")
+dl=c["NVRAM"]["Delete"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]
+if "csr-active-config" not in dl: dl.append("csr-active-config")
 c["Misc"]["Boot"]["Timeout"]=5    # 45 s on the VM's own disk, and nobody is at the picker
 # OpenCore's own log to COM1 too: with a GOP its errors otherwise only reach the screen.
 c["Misc"]["Debug"]["Target"]|=0x08

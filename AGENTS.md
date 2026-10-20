@@ -2094,6 +2094,34 @@ parser got two of them wrong:
     `hqd_destroy` DRAIN_PIPE and our `hqd_load` (not verified). Next for compute: compare the
     whole HQD block of a stalled reload with a fresh one, and Linux KFD's load/destroy.
 
+- **2026-10-20 13:43-13:48: THE FIRST DISPLAY DRIVER ON THE RX 7600 (G37). macOS's login screen is
+  drawn by WindowServer through our framebuffer driver and scanned out by the card.** Same host
+  boot `347bf886-…`; runs `runs/20261020-134309` (first `--fb` boot) and `runs/20261020-134630`
+  (`fb-trial.txt`, `fb.raw`, `screen.png`). The agent did every step itself; the VM was left running
+  so the monitor keeps showing it.
+  - Approval without a screen: `make-opencore.sh --fb` now sets `csr-active-config` to the VM's
+    `0x67 | 0x200` (CSR_ALLOW_UNAPPROVED_KEXTS; other disks clear 0x200; in our OVMF_VARS copy
+    only). Even with `0x267` Tahoe's `kmutil load` kept answering "not approved" (also after a
+    `syspolicyd` restart and a reboot, with `kext_policy` showing `allowed 1`), but
+    **`kmutil load -z -p /Library/Extensions/Navi33GOPFB.kext`** ("skip approval checks") rebuilt
+    the Aux KC ("requires a reboot"); `kmutil inspect -A` then lists `com.cobalt64.navi33gopfb 0.0.2`
+    (with `com.apple.nke.rvi`). `install-gopfb.sh` now does exactly that. OpenCore cannot force
+    IOGraphicsFamily: Tahoe ships it only in the system KC (no binary in /S/L/E).
+  - After the reboot (`fb-trial.sh`, kext 0.0.44 + GOPFB 0.0.2, `navi33-fb=1`, host console boot-args):
+    `com.cobalt64.navi33gopfb (0.0.2)` loaded (UUID `71557213-9414-3F74-B7B1-05A66D6285E3`),
+    `Navi33GOPFB` active with `Stage` "host console scanout (VM)", 1024x768x32, row 4096, base =
+    BAR0 `0xa0000000`, `HardwareWrites` 0, `GpuCommandSubmission` 0; `display0`/`AppleDisplay`
+    attached under it; `system_profiler` lists "AMD Radeon RX 7600 (GOP fallback)"; WindowServer up.
+  - **Pixels:** the 3 MiB at guest BAR0 (`pmemsave` through QEMU's monitor) is the macOS login
+    window (wallpaper, clock 1:47, user "Darren", password field): `screen.png`.
+  - **Scanout:** read through the guest's BAR5 (`0x80000000`) with QEMU `xp`: HUBP0 surface
+    `0x80`/`0x00000000` = MC `0x80_0000_0000` (VRAM 0, the same buffer), pitch `0x3ff`, OTG0
+    frame count `0x482fc` -> `0x48339` in ~1 s (60 Hz). So the monitor shows that frame.
+  - Limits: no modeset (DCN is still the PC firmware's 1024x768 setup), no acceleration, no
+    hotplug/EDID, 3 MiB "VRAM"; the autostart refused with 0 writes (card already up) and the
+    client GPU service was off. `screencapture` over SSH fails ("could not create image"), as
+    expected with no GUI session.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.

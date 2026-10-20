@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # vm/install-gopfb.sh KEXT_DIR: put Navi33GOPFB.kext into the running guest's
-# /Library/Extensions and ask macOS to load it (G37). The first load is
-# refused as "not approved"; approve it once in System Settings > Privacy &
-# Security ("Allow"), which needs a screen: boot the guest with
-# `run-vm.sh --no-gpu` (QXL on VNC 127.0.0.1:5901) for that one step, then
-# restart. Later rebuilds keep the bundle ID, so they need no new click.
+# /Library/Extensions and build it into the Aux KC (G37). Boot the guest from an
+# --fb disk first (SIP 0x267: unapproved kexts allowed); Tahoe still answers a plain
+# `kmutil load` with "not approved" even then (2026-10-20), so the load skips the
+# approval check (-z) and the Aux KC is rebuilt; it takes effect at the next boot
+# (vm/fb-trial.sh). No System Settings click is needed.
 # Never kmutil install --update-all (it rebuilds the system collections too).
 #
 # The kext only starts with navi33-fb=1 (vm/make-opencore.sh --fb) and stops
@@ -20,7 +20,8 @@ sudo cp -R /tmp/Navi33GOPFB.kext /Library/Extensions/
 sudo chown -R root:wheel /Library/Extensions/Navi33GOPFB.kext
 sudo chmod -R 755 /Library/Extensions/Navi33GOPFB.kext
 sudo xattr -cr /Library/Extensions/Navi33GOPFB.kext
-echo "== load request (the first one is refused until you click Allow)"
-sudo kmutil load -p /Library/Extensions/Navi33GOPFB.kext 2>&1 | tail -4 || true
+echo "== Aux KC rebuild (expect: requires a reboot)"
+sudo kmutil load -z -p /Library/Extensions/Navi33GOPFB.kext 2>&1 | tail -4 || true
+kmutil inspect -A /Library/KernelCollections/AuxiliaryKernelExtensions.kc 2>&1 | grep -i navi33gopfb || true
 EOF
-echo "next: System Settings > Privacy & Security > Allow (over VNC), restart, then vm/fb-trial.sh"
+echo "next: vm/fb-trial.sh (reboots the guest into the new Aux KC)"
