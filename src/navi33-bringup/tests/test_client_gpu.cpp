@@ -142,7 +142,7 @@ struct Fake {
     void runGfx() {
         namespace gr=navi33::gfx_ring;
         const gr::Regs &g=r.gfx;
-        if(gfxBroken || (mem[g.meCntl]&(gr::kPfpHalt|gr::kMeHalt)) || !mem[g.rbActive] || gfxPcs<4u)return;
+        if(gfxBroken || (mem[g.meCntl]&(gr::kPfpHalt|gr::kMeHalt|gr::kPfpReset|gr::kMeReset)) || !mem[g.rbActive] || gfxPcs<4u)return;
         const uint64_t ring=((uint64_t(mem[g.rb0BaseHi])<<32)|mem[g.rb0Base])<<8;
         assert(ring>=kFb && mem[g.rb0Cntl]==gr::kRb0CntlValue);
         for(uint32_t i=mem[g.rb0Rptr];i<mem[g.rb0Wptr];) {
@@ -529,6 +529,9 @@ int main() {
         assert(f.gfxCsb==1u+1u+navi33::gfx11_clear_state::kExtentCount+1u+1u+1u && f.gfxPcs==4u);   // preamble, context control, extents, steering, preamble end, clear state
         assert(f.mem[r.gfx.maxContext]==7u && f.mem[r.gfx.deviceId]==1u && f.mem[r.gfx.rbActive]==1u && f.mem[r.g.v.q.grbm]==0u);
         assert(f.heap.usedBytes(cg::kTagGfxRing)==gr::kMemBytes);
+        // The card's power-on CP_ME_CNTL (0x153c0000: halted, all four pipe resets set): released and running.
+        Fake c(r);c.mem[r.gfx.meCntl]=0x153c0000u;assert(c.dev.start(r,c.hw(),c.heap,kFb)==cg::Code::Ok);
+        assert(c.dev.stats().gfx.state==cg::GfxState::Ok && !(c.mem[r.gfx.meCntl]&(gr::kPfpReset|gr::kMeReset|gr::kPfpHalt|gr::kMeHalt)));
         // A pipe that never runs leaves the state at Timeout and compute untouched.
         Fake h(r);h.gfxBroken=true;assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.dev.stats().gfx.state==cg::GfxState::Timeout);
         App a=setup(h,co,k,7,0x100000000ull);uint64_t s=0,ret=0;const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};

@@ -552,15 +552,18 @@ private:
         uint32_t me=gfx_.meBefore;
         if((me&(gr::kPfpHalt|gr::kMeHalt))!=(gr::kPfpHalt|gr::kMeHalt)) {
             me|=gr::kPfpHalt|gr::kMeHalt;
-            if(!wr(g.meCntl,me) || !waitCpIdle())return;
+            if(!wr(g.meCntl,me))return;
+            waitCpIdle();                 // gfx_v11_0_cp_gfx_enable(false) only logs a CP_STAT timeout
         }
         gfx_.state=GfxState::Config;
         for(uint32_t pipe=0;pipe<gr::kGfxPipes;++pipe)
             if(!sel(mq::grbmSelect(0u,pipe,0u)) || !wr(g.pfpStart,gr::kPcStart) || !wr(g.pfpStartHi,gr::kPcStartHi))return;
-        if(!sel(0u) || !wr(g.meCntl,me|gr::kPfpReset) || !wr(g.meCntl,me))return;
+        // REG_SET_FIELD(.., PIPEn_RESET, 1) then 0: the card came up with all four resets set
+        // (CP_ME_CNTL 0x153c0000, 2026-10-20), so the release clears them explicitly.
+        if(!sel(0u) || !wr(g.meCntl,me|gr::kPfpReset) || !wr(g.meCntl,me&=~gr::kPfpReset))return;
         for(uint32_t pipe=0;pipe<gr::kGfxPipes;++pipe)
             if(!sel(mq::grbmSelect(0u,pipe,0u)) || !wr(g.meStart,gr::kPcStart) || !wr(g.meStartHi,gr::kPcStartHi))return;
-        if(!sel(0u) || !wr(g.meCntl,me|gr::kMeReset) || !wr(g.meCntl,me))return;
+        if(!sel(0u) || !wr(g.meCntl,me|gr::kMeReset) || !wr(g.meCntl,me&=~gr::kMeReset))return;
         gfx_.state=GfxState::Resume;
         const uint64_t rptr=mc+gr::kRptrOff, wptr=mc+gr::kWptrOff, base=gfx_.ringMc>>8;
         uint32_t dbc=0;
