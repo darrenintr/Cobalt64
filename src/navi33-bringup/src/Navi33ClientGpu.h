@@ -753,14 +753,16 @@ private:
         const bool remapReset=!gfxMap_.hdp.remapMemBefore && !gfxMap_.hdp.remapRegBefore;
         const bool remapReady=gfxMap_.hdp.remapMemBefore==r_->hdp.remapBytes &&
                               gfxMap_.hdp.remapRegBefore==r_->hdp.remapBytes+4u;
-        if(!remapReset && !remapReady) {
+        const bool remapPowerOn=gfxMap_.hdp.remapMemBefore==gm::kPowerOnRemapMem &&
+                                gfxMap_.hdp.remapRegBefore==gm::kPowerOnRemapReg;
+        if(!remapReset && !remapReady && !remapPowerOn) {
             gfxMap_.hdp.state=gm::HdpState::UnexpectedRemap;return false;
         }
         uint32_t image[gm::kMqdDwords]{};gm::mqd(mc,image);
         uint32_t packets[16]{};gm::packets(mc,fbBase_,packets);
         const uint32_t zero=0, next[2]={gm::kEndWptr,0u};
         gfxMapAttempted_=true;gfxMap_.state=gm::State::Attempted; // latch before any new MMIO or VRAM write
-        if(remapReset) {
+        if(remapReset || remapPowerOn) {
             if(!wr(r_->hdp.remapMem,r_->hdp.remapBytes)) {
                 gfxMap_.hdp.state=gm::HdpState::RemapWriteFailed;gfxMap_.state=gm::State::HdpFailed;return false;
             }

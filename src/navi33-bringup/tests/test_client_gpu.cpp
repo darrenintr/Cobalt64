@@ -679,6 +679,15 @@ int main() {
         f=std::make_unique<Fake>(r);f->g34();f->mem[r.hdp.remapMem]=0x7f000u;f->mem[r.hdp.remapReg]=0x111u;f->dev.setGfxMap(true);
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
         assert(f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::UnexpectedRemap && f->hdpWrites==0u && f->stageWrites==0u);
+        // The exact power-on pair is overwritten like a reset pair; a near miss still refuses.
+        f=std::make_unique<Fake>(r);f->g34();f->mem[r.hdp.remapMem]=0x385cu;f->mem[r.hdp.remapReg]=0x3858u;f->dev.setGfxMap(true);
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->dev.gfxReady() && f->hdpWrites==3u);
+        assert(f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::Complete && f->dev.gfxMapReport().hdp.writes==3u &&
+               f->dev.gfxMapReport().hdp.remapMemBefore==0x385cu && f->dev.gfxMapReport().hdp.remapRegBefore==0x3858u &&
+               f->dev.gfxMapReport().hdp.remapMemAfter==0x7f000u && f->dev.gfxMapReport().hdp.remapRegAfter==0x7f004u);
+        f=std::make_unique<Fake>(r);f->g34();f->mem[r.hdp.remapMem]=0x385cu;f->mem[r.hdp.remapReg]=0x3854u;f->dev.setGfxMap(true);
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::UnexpectedRemap && f->hdpWrites==0u && f->stageWrites==0u);
         f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);f->corruptRemapReadback=true;
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
         assert(f->dev.gfxMapReport().state==gfx_map::State::HdpFailed &&

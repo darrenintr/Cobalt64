@@ -236,3 +236,14 @@ refusal of a consumed G34 ring before stage writes, HDP ordering and failure
 stops, timeout, and idempotent start. CI builds the real kext and matched tools.
 Judge actual mapping, graphics fetch and rendered output only from the live run,
 separately from host model results.
+
+## 0.0.61 candidate: accept the power-on remap pair (offline only)
+
+The fresh-boot read (`d04f59d2`) showed the remap pair `0x385c`/`0x3858` before
+any driver touched the card, and upstream overwrites it on every init. The gate
+now accepts exactly that pair as safe to overwrite, with the same write, readback
+and flush sequence as a reset pair. Every other non-reset value still refuses
+with `UnexpectedRemap`, and a near miss (`0x385c`/`0x3854`) is tested. Host
+tests pass, and removing the power-on branch fails `test_client_gpu`. This
+change has not run on the card. A physical run needs a full host power-off and
+renewed explicit approval.

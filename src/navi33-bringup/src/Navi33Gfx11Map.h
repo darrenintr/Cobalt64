@@ -19,6 +19,10 @@ constexpr uint32_t kMapFenceOff=mec_queue::kFenceOff+8u,kMapFence=0x0c0b1642u;
 // Linux nbio_v4_3_set_reg_remap() and KFD's MMIO hole. The RX 7600 guest is
 // x86_64 with the driver's 4 KiB GPU page contract; other page sizes refuse.
 constexpr uint32_t kHdpMemFlushReg=0x012du,kHdpRegFlushReg=0x012eu;
+// Power-on pair read on this RX 7600 before any driver touched it (boot d04f59d2,
+// 2026-10-20). Upstream overwrites it on every init, so G42 may overwrite this
+// exact pair only; any other non-reset value still refuses.
+constexpr uint32_t kPowerOnRemapMem=0x0000385cu,kPowerOnRemapReg=0x00003858u;
 constexpr uint32_t kNbioMemsizeReg=0x00c3u,kNbioBaseIndex=2u;
 constexpr uint32_t kRemapHoleBytes=0x80000u,kSupportedPageBytes=4096u;
 enum class HdpCode : uint8_t { Pass=0, UnsupportedPage, MissingNbif, UnsupportedNbif,
