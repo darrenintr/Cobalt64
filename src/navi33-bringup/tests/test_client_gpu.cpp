@@ -42,7 +42,7 @@ struct Fake {
         mem={{v.q.sos,42},{v.q.rlc,0xc000001fu},{v.q.grbm,0},{v.q.cntl,0x3c000000u},{v.q.scratch,0xdeadbeefu},
              {v.q.poll1,0},{v.l1,v1::kL1Default},{v.l2,v1::kL2Default},{v.l2c2,0},{v.l2c3,v1::kL2Cntl3Default},
              {v.l2c4,v1::kL2Cntl4Default},{v.l2c5,v1::kL2Cntl5Default},{v.faultStatus,0},{v.faultAddr,0},
-             {r.invReq,0},{r.invAck,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u}};
+             {r.invReq,0},{r.invAck,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u}};
         for(auto o:v.ident)mem[o]=0;
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
         assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
@@ -174,7 +174,8 @@ struct Fake {
     unsigned rings=0;
     static bool doorbell(void *c,uint32_t byteOff,uint64_t v) {
         auto &f=*static_cast<Fake *>(c);++f.rings;
-        if(!(f.mem[f.r.nbioAperEn]&1u) || byteOff<f.mem[f.r.mecDbLower] || byteOff>=f.mem[f.r.mecDbUpper])return true;
+        if(!(f.mem[f.r.nbioAperEn]&1u) || !(f.mem[f.r.pqStatus]&cg::kPqStatusDoorbellEnable) ||
+           byteOff<f.mem[f.r.mecDbLower] || byteOff>=f.mem[f.r.mecDbUpper])return true;
         for(uint32_t i=0;i<cg::kClients;++i) {
             const uint32_t k=cg::kFirstVmid+i, dc=f.bank[{qsOf(k),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqDoorbellControl)}];
             if((dc&cg::kDbEn) && (dc&cg::kDbOffsetMask)==4u*byteOff/4u) {
@@ -245,7 +246,7 @@ int main() {
     // 1. Two clients, each its own VMID, queue, buffers and image.
     {   Fake f(r);
         {uint32_t none=0;assert(f.dev.open(&f,none)==cg::Code::NotReady);}
-        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u);
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u);
         // Doorbells: MEC range 0..0x450 bytes, NBIO aperture bit 0 set, the rest of the word kept.
         assert(f.mem[r.mecDbLower]==0u && f.mem[r.mecDbUpper]==0x450u && f.mem[r.nbioAperEn]==0x101u);
         {   const cg::DoorbellSetup db=f.dev.stats().db;
@@ -422,6 +423,17 @@ int main() {
         uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==1u && f.dev.client(1)->vmid==3u);
         assert(f.dev.client(0)->state==cg::State::Quarantined && f.mem[r.g.v.q.grbm]==0u);
     }
+    // 5c. An earlier boot's stuck client queues are drained and dequeued at start; one that
+    //     will not go is retired. DOORBELL_ENABLE is set once a queue is loaded.
+    {   Fake f(r);
+        f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;f.bank[{qsOf(5),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.dev.stats().db.reclaimed==2u);
+        assert(f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && f.mem[r.g.v.q.grbm]==0u);
+        uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==0u && (f.mem[r.pqStatus]&2u));
+        Fake g(r);g.stuck=true;g.bank[{qsOf(3),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
+        assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::Ok && g.dev.stats().db.reclaimed==0u &&
+               g.dev.client(1)->state==cg::State::Quarantined);
+    }
     // 6. Arguments and a hub this code does not recognise.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
         uint32_t slot=0,x=0;uint64_t vx=0;assert(f.dev.open(&f,slot)==cg::Code::Ok);
@@ -440,8 +452,9 @@ int main() {
         Fake g(r);g.mem[r.g.v.q.cntl]=0x400f0000u;
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
-        h.mem[r.mecDbLower]=0u;h.mem[r.mecDbUpper]=0x450u;h.mem[r.nbioAperEn]=1u;   // and the doorbells are on
-        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.empty());
+        h.mem[r.mecDbLower]=0x110u;h.mem[r.mecDbUpper]=0xffcu;h.mem[r.nbioAperEn]=1u;   // MES's range covers ours
+        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==12u);
+        for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm);          // only the HQD ACTIVE checks
     }
     // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.
     {   namespace nf=n48n_front;
@@ -463,7 +476,7 @@ int main() {
         assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{gr::kImageBytes,0,N48N_GEM_DOMAIN_VRAM|N48N_GEM_DOMAIN_GTT,0},im)==nf::R::Ok);
         assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_GTT,0},ib)==nf::R::Ok);
         assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_GTT,0},fe)==nf::R::Ok);
-        uint64_t x[4];
+        uint64_t x[4]={999u,0,0,0};       // a handle nobody was given
         assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_VRAM,N48N_GEM_CP_MQD_GFX9},x)==nf::R::BadArgument);
         assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_CPU,0},x)==nf::R::BadArgument);
         assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,3,N48N_GEM_DOMAIN_VRAM,0},x)==nf::R::BadArgument);
@@ -476,7 +489,7 @@ int main() {
         assert(va(sh[0],0x800000000ull,RX,N48N_VA_OP_MAP,gr::kShaderMax)==nf::R::Ok);
         assert(va(ag[0],0x800100000ull,RW)==nf::R::Ok && va(im[0],0x800200000ull,RW)==nf::R::Ok);
         assert(va(ib[0],0x800300000ull,N48N_VM_PAGE_READABLE)==nf::R::Ok && va(fe[0],0x800400000ull,RW)==nf::R::Ok);
-        assert(va(x[0],0x800500000ull,RW)==nf::R::NotFound);
+        assert(va(999u,0x800500000ull,RW)==nf::R::NotFound);
         assert(va(ib[0],0x800600000ull,RW,N48N_VA_OP_MAP,0,4096)==nf::R::BadArgument);              // offset in BO
         assert(va(im[0],0x800600000ull,RW|N48N_VM_PAGE_PRT)==nf::R::Unsupported);
         assert(va(im[0],0x800600000ull,RW,3u)==nf::R::Unsupported);

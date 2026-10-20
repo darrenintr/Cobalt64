@@ -127,9 +127,12 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      client (type 'N48N', RADV's Darwin ABI, selectors 0..8, compute IBs only) on the same
      contexts and gate. Since kext 0.0.34 client queues are queue 0/1 of MEC pipes 1..3
      (queues 2+ are MES's). Since kext 0.0.36 queues are kicked by doorbell, as upstream gfx11:
-     the gate also allows `CP_MEC_DOORBELL_RANGE_LOWER/UPPER` (0 / 0x450), NBIO
-     `RCC_DEV0_EPF0_RCC_DOORBELL_APER_EN` bit 0 (read-modify-write, only if clear), and 64-bit
-     writes into BAR2 at the six client doorbells (byte 0x68 + 8 k); before-values in ioreg.
+     the gate also allows `CP_MEC_DOORBELL_RANGE_LOWER/UPPER` (0 / 0x450, only if the range
+     found does not cover ours; the card came up with 0x110..0xffc), NBIO
+     `RCC_DEV0_EPF0_RCC_DOORBELL_APER_EN` bit 0 and `CP_PQ_STATUS.DOORBELL_ENABLE` (bit 1)
+     (read-modify-write, only if clear), and 64-bit writes into BAR2 at the six client
+     doorbells (byte 0x200 + 8 k); before-values in ioreg. Since 0.0.37 device start also
+     drain-dequeues client HQDs an earlier boot left active (CP_HQD_DEQUEUE_REQUEST).
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing

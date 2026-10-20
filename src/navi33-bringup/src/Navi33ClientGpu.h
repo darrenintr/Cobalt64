@@ -68,15 +68,18 @@ constexpr uint32_t kGbAddrConfig=0x13deu;                       // regGB_ADDR_CO
 // CP_MEC_DOORBELL_RANGE_LOWER/UPPER (byte offsets, gfx_v11_0_kiq_init_register:
 // (kiq * 2) << 2 .. (userqueue_end * 2) << 2), nbio_4_3_0_offset.h
 // RCC_DEV0_EPF0_RCC_DOORBELL_APER_EN (BASE_IDX 2, bit 0, nbio_v4_3_enable_doorbell_aperture),
-// amdgpu_doorbell.h AMDGPU_NAVI10_DOORBELL_KIQ 0, USERQUEUE_START 0x0d, USERQUEUE_END 0x8a
-// (64-bit doorbells; a queue's DOORBELL_OFFSET is its dword index = index << 1).
-constexpr uint32_t kMecDbLower=0x1dfcu, kMecDbUpper=0x1dfdu, kNbioAperEn=0x00c0u;
-constexpr uint32_t kDbUserqueueStart=0x0du, kDbUserqueueEnd=0x8au;
+// amdgpu_doorbell.h AMDGPU_NAVI10_DOORBELL_KIQ 0, USERQUEUE_END 0x8a (64-bit doorbells; a
+// queue's DOORBELL_OFFSET is its dword index = index << 1), and CP_PQ_STATUS.DOORBELL_ENABLE
+// (bit 1), which gfx_v11_0_kiq_init_register sets after loading a doorbell queue.
+// The card came up with the MEC range at 0x110..0xffc (MES); the client doorbells sit
+// inside it (indices 0x40..0x45), so the range is only written when it does not cover them.
+constexpr uint32_t kMecDbLower=0x1dfcu, kMecDbUpper=0x1dfdu, kNbioAperEn=0x00c0u, kCpPqStatus=0x1e58u;
+constexpr uint32_t kDbFirst=0x40u, kDbUserqueueEnd=0x8au, kPqStatusDoorbellEnable=1u<<1;
 constexpr uint32_t kMecDbLowerValue=0u, kMecDbUpperValue=(kDbUserqueueEnd*2u)<<2;
-constexpr uint32_t doorbellDword(uint32_t slot) { return (kDbUserqueueStart+slot)<<1; }
+constexpr uint32_t doorbellDword(uint32_t slot) { return (kDbFirst+slot)<<1; }
 constexpr uint32_t doorbellByte(uint32_t slot) { return 4u*doorbellDword(slot); }
 constexpr uint32_t kDbOffsetMask=0x0ffffffcu, kDbEn=1u<<30;      // CP_HQD_PQ_DOORBELL_CONTROL
-static_assert(kMecDbUpperValue==0x450u && doorbellByte(5)<kMecDbUpperValue && doorbellByte(0)==0x68u,"doorbells");                               // enum hqd_dequeue_request_type
+static_assert(kMecDbUpperValue==0x450u && doorbellByte(5)+8u<=0x450u && doorbellByte(0)==0x200u,"doorbells");                               // enum hqd_dequeue_request_type
 // gfxhub_v3_0_get_invalidate_req(vmid, 0): PER_VMID bit, FLUSH_TYPE 0, L2 PTES/PDE0/1/2, L1 PTES.
 constexpr uint32_t invalidateReq(uint32_t vmid) { return (1u<<vmid)|(1u<<19)|(1u<<20)|(1u<<21)|(1u<<22)|(1u<<23); }
 static_assert(invalidateReq(2)==0x00f80004u,"GCVM_INVALIDATE_ENG0_REQ word");
@@ -95,7 +98,7 @@ struct Regs {
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
     uint64_t invReq=0, invAck=0, dequeue=0;
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
-    uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0;
+    uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0, pqStatus=0;
     bool valid=false;
 };
 inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
@@ -112,7 +115,8 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
     if(!one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) || !one(kDequeueRequest,r.dequeue) ||
-       !one(kGbAddrConfig,r.gbAddrConfig) || !one(kMecDbLower,r.mecDbLower) || !one(kMecDbUpper,r.mecDbUpper))return r;
+       !one(kGbAddrConfig,r.gbAddrConfig) || !one(kMecDbLower,r.mecDbLower) || !one(kMecDbUpper,r.mecDbUpper) ||
+       !one(kCpPqStatus,r.pqStatus))return r;
     IPEntry nbif{};
     if(!d.find(ipid::NBIF,0u,nbif) || nbif.major!=4u || nbif.minor!=3u || nbif.numBases<=2u || !nbif.bases[2] ||
        (nbif.bases[2]+kNbioAperEn)*4u+4u>bytes)return r;
@@ -126,7 +130,7 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
 inline bool allowed(const Regs &r,uint64_t off) {
     if(!r.valid || off==r.g.v.q.scratch || off==r.g.v.ctx || off==r.g.v.baseLo || off==r.g.v.baseHi ||
        off==r.g.v.startLo || off==r.g.v.startHi || off==r.g.v.endLo || off==r.g.v.endHi)return false;
-    if(off==r.invReq || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn)return true;
+    if(off==r.invReq || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
 }
@@ -162,7 +166,8 @@ struct Client {
 // The last TLB flush that got no ACK: the VMID, the request written, what REQ and ACK read back.
 struct FlushMiss { uint32_t vmid=0, req=0, reqBack=0, ack=0, misses=0; };
 // The doorbell setup found at start (before any write) and after it.
-struct DoorbellSetup { uint32_t aperBefore=0, lowerBefore=0, upperBefore=0, aper=0, lower=0, upper=0; };
+struct DoorbellSetup { uint32_t aperBefore=0, lowerBefore=0, upperBefore=0, aper=0, lower=0, upper=0;
+                       uint32_t pqBefore=0, pq=0, reclaimed=0; };
 struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
                FlushMiss miss{}; DoorbellSetup db{}; };
 
@@ -195,14 +200,24 @@ public:
         if(fault)faultSeen_=fault;
         // Doorbells: the MEC range as gfx_v11_0_kiq_init_register, the NBIO aperture as
         // nbio_v4_3_enable_doorbell_aperture; only what is not already so is written.
-        uint32_t aper=0,lower=0,upper=0;
-        if(!rd(r.nbioAperEn,aper) || !rd(r.mecDbLower,lower) || !rd(r.mecDbUpper,upper))return Code::HwFailed;
-        db_={aper,lower,upper,aper,lower,upper};
-        if(lower!=kMecDbLowerValue && !wr(r.mecDbLower,kMecDbLowerValue))return Code::HwFailed;
-        if(upper!=kMecDbUpperValue && !wr(r.mecDbUpper,kMecDbUpperValue))return Code::HwFailed;
+        uint32_t aper=0,lower=0,upper=0,pq=0;
+        if(!rd(r.nbioAperEn,aper) || !rd(r.mecDbLower,lower) || !rd(r.mecDbUpper,upper) || !rd(r.pqStatus,pq))
+            return Code::HwFailed;
+        db_={aper,lower,upper,aper,lower,upper,pq,pq,0u};
+        const bool covered=lower<=doorbellByte(0) && upper>=doorbellByte(kClients-1u)+8u;
+        if(!covered && (!wr(r.mecDbLower,kMecDbLowerValue) || !wr(r.mecDbUpper,kMecDbUpperValue)))return Code::HwFailed;
         if(!(aper&1u) && !wr(r.nbioAperEn,aper|1u))return Code::HwFailed;
         if(!rd(r.nbioAperEn,db_.aper) || !rd(r.mecDbLower,db_.lower) || !rd(r.mecDbUpper,db_.upper))return Code::HwFailed;
-        if(!(db_.aper&1u) || db_.lower!=kMecDbLowerValue || db_.upper!=kMecDbUpperValue)return Code::HwFailed;
+        if(!(db_.aper&1u) || db_.lower>doorbellByte(0) || db_.upper<doorbellByte(kClients-1u)+8u)return Code::HwFailed;
+        // Client queues an earlier boot of the kext left active (stuck work) are drained
+        // and dequeued now, as close() would have; one that will not go is retired.
+        for(uint32_t i=0;i<kClients;++i) {
+            uint32_t active=0;
+            if(!sel(qsel(i)) || !rd(mq::hqd(r.g.v.q,kiq::kCpHqdActive),active) || !sel(0u))return Code::HwFailed;
+            if(!(active&1u))continue;
+            Client &c=c_[i];c.vmid=kFirstVmid+i;
+            if(dequeue(c))++db_.reclaimed; else c.state=State::Quarantined;
+        }
         started_=true;return Code::Ok;
     }
     bool started() const { return started_; }
@@ -508,6 +523,10 @@ private:
            !wr(mq::hqd(q,mq::kEopRptr),img.dw[gfx11_mqd::kCpMqdBaseAddrLo+(mq::kEopRptr-mq::kHqdFirst)]|mq::kEopInitFetcher) ||
            !wr(mq::hqd(q,kiq::kCpHqdActive),img.dw[gfx11_mqd::kCpHqdActive]|1u) || !sel(0u))
             {sel(0u);return Code::HwFailed;}
+        uint32_t pq=0;
+        if(!rd(r_->pqStatus,pq) || (!(pq&kPqStatusDoorbellEnable) && !wr(r_->pqStatus,pq|kPqStatusDoorbellEnable)))
+            return Code::HwFailed;
+        rd(r_->pqStatus,db_.pq);
         return Code::Ok;
     }
     // hqd_destroy_v11 with DRAIN_PIPE.
