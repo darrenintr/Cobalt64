@@ -23,7 +23,9 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
 - `src/dcn321`, `src/dcn41`: display-engine helpers per generation.
 - Key Navi33 docs: `src/navi33-bringup/PHYSICAL_EXECUTION.md` (what is
   proven on hardware, what is still blocked), `ACCELERATION.md`,
-  `DMA_QUEUE_BRINGUP.md`.
+  `DMA_QUEUE_BRINGUP.md`, `GFX_MAP_DESIGN.md` (0.0.62 KIQ audit), and
+  `BARE_METAL_ACCELERATION_PLAN.md` (console proof through desktop and
+  development migration; planning only).
 - The PSP sOS load: protocol and plan in `src/Navi33Psp13Loader.h`
   (host-tested), the only GPU writer in `src/Navi33DarwinPspLoad.cpp`,
   the tool in `tools/n33psp.c`.
@@ -162,10 +164,12 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      write RLC_CP_SCHEDULERS (GC segment1 dword0x98a), preserving high24 bits and
      setting low byte0xa0. The 0.0.59 HDP prelude additionally allows at most
      three exact BAR5 writes: remap controls at NBIF BASE_IDX2 + dwords0x12d/0x12e
-     to `0x80000-PAGE_SIZE` and `+4` only when both read zero, and a zero write
+     to `0x80000-PAGE_SIZE` and `+4` when both read zero (since 0.0.61 also
+     when they read exactly the observed pre-driver pair `0x385c/0x3858`), and a zero write
      to that aperture after staging but before poll1. It requires runtime
      `PAGE_SIZE=4096`, NBIF4.3.1/HDP6.0.1, exact remap readback and two stable
-     plausible NBIO capacity reads. An exact pre-existing remap pair is reused;
+     plausible NBIO capacity reads (since 0.0.62, 16 MiB granularity accepts
+     this card's reported 8176 MiB). An exact pre-existing remap pair is reused;
      any other value refuses. Latch before first possible remap/MQD/stage write.
      Existing poll1 bit0 kicks G34. CPU writes outside the heap only at
      VRAM250MiB +0x2040 (16 dwords), +0x3008 (2 dwords), +0x4008 (1 dword), exact
@@ -183,6 +187,9 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      0.0.58 run's G34 RPTR readback ended at 0 (pre-run value 16), not the
      expected 32, so MAP_QUEUES completion was not confirmed. Further attempts after
      a stage write need full power-off and renewed explicit approval.
+     0.0.61 wrote the remaps/flush but refused the capacity readback; 0.0.62
+     passed HDP and timed out mapping again. No KIQ doorbell experiment has
+     been implemented or approved by the subsequent analysis-only task.
      No register write outside these exact lists, firmware load or command
      submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
@@ -444,7 +451,62 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (2026-10-20; updated after the 0.0.60 G42 attempt): G42 follow-up
+## Resume here (2026-10-20; offline audit after 0.0.62): KIQ completion unresolved
+
+- **Current task boundary:** analysis/planning and local documentation commit
+  only; no push. The user reports headless VFIO host and possibly running
+  0.0.62 VM in tmux `n33-g42-0.0.62`. This audit did not contact, shut down,
+  boot or modify the VM/card. Ask before changing that physical state.
+  Any further GPU write attempt requires explicit approval and full host
+  power-off. No VBIOS modifications under any circumstances.
+- **Latest evidence:** 0.0.61, `runs/20261020-200423`, loaded/cached UUID
+  `7CE1D94A-FD2C-39B0-9285-163AA3578AF5`: remap/flush written (3 HDP writes),
+  FlushReadbackFailed because `0x1ff0` (8176 MiB) failed the old 256 MiB
+  granularity check. G42 stopped before poll. VMID8 NOP, gradient, repeat200
+  and N48N exact. 0.0.62, `runs/20261020-202558`, loaded/cached UUID
+  `D94995B6-AFCC-3150-A504-5312E5A33F08`: HDP Complete, memsize8176,
+  GfxMap state3, map fence/MAPPED0, GFXHQD snapshot valid1/ACTIVE0.
+  G34 RPTR16 before, 0 after. No GFX ring kick. Details in the findings log.
+- **Do not overinterpret RPTR0:** completion is unproven; the final pointer
+  cannot distinguish no fetch from a stalled MAP, reset/reload or changed
+  HQD state. Snapshot `valid1` is software read success, not a hardware
+  queue-valid bit. Root cause remains unknown.
+- **Corrected doorbell lead:** upstream uses KIQ doorbell0, range0..0x450
+  and global PQ_STATUS doorbell enable. G42 uses a one-shot poll. However,
+  `ClientGpu`'s `110..ffc->110..ffc` is cached **before** `gfxStart()`;
+  G40 already writes the range to0..0x450 before G42, without refreshing
+  that report. No post-write range readback was saved. The cached string
+  does not prove exclusion of doorbell0 during G42. Initial MQD WPTR0 also
+  matches upstream; it is not independently a defect.
+- **Other source differences:** G34 copies ACTIVE=1 as the third HQD word,
+  before configuring the rest. Upstream KIQ activates last; the client
+  loader already masks ACTIVE during its bulk load, but G34 does not.
+  G34 MQD doorbell control0 disagrees with its enabled HQD; G34 omits
+  upstream periodic-poll disable and PQ_STATUS enable (the latter occurs
+  only when a client queue is loaded, after G42). Upstream pads KIQ commits
+  to256 dwords; G34/G42 use16/32. These are real differences,
+  with unproven causal relevance. G34's initial ring test did succeed.
+- **0.0.62 client regression:** VMID8 / ME1 pipe0 queue1 stalled with
+  hardware WPTR0xc, RPTR0 and fence0, sharing pipe0 with G34. VMID9 on pipe1
+  then produced exact gradient, repeat200 and N48N output. VMID8 remained
+  quarantined; this does not prove its reuse or Metal readiness. No RADV
+  vkfill run is saved in either of these two directories.
+- **Next:** review exact snapshots and a bounded coherent KIQ init/doorbell
+  candidate in `src/navi33-bringup/GFX_MAP_DESIGN.md`. An independent second
+  KIQ fence could separate transport failure from MAP processing but needs
+  its own fixed packet/span budget and approval. No code or write policy
+  was changed by this audit.
+- **Route to the user's goal:** `BARE_METAL_ACCELERATION_PLAN.md` covers
+  the bare-metal stale-console NO_CONSOLE blocker first, KIQ/GFX, rule6
+  Metal evidence and Navi48 stack reuse, actual desktop presentation, then
+  moving development to macOS. Per-step evidence, risks and approval
+  boundaries are explicit. Kext builds remain GitHub Actions only.
+
+## Earlier resume notes (state after the 0.0.60 G42 attempt)
+
+The entries below preserve historical observations. Their statements about
+the running VM and strongest next lead are superseded by the current resume
+section and the later findings log.
 
 - Prior 0.0.54 baseline: the user confirmed full power-off and requested continued work
   toward a **GPU-rendered macOS desktop, wallpaper and apps**. Framebuffer output is not
@@ -2494,6 +2556,68 @@ parser got two of them wrong:
   `runs/20261020-191448/results-20261020-191940-guest.txt`; post-client ioreg,
   n33peek and NOP output are beside it. The VM remains running on 0.0.60. A
   further attempt requires another full host power-off and renewed approval.
+
+- **2026-10-20 20:04–20:05 HKT, kext 0.0.61 G42 attempt**, saved run
+  `~/macos tahoe/navi33/runs/20261020-200423`. Loaded UUID
+  `7CE1D94A-FD2C-39B0-9285-163AA3578AF5` matches cached
+  `artifact-0.0.61-ci` LC_UUID (checked offline in this audit). Autostart
+  DONE8/8; scheduler `0x3038->0x30a0`; G34 preflight ACTIVE1, VMID0,
+  base `0:800fa020`, control `0xd0308909`, RPTR/memory WPTR16 and original
+  fence `0x0c0b1601`. G42 accepted the pre-driver remaps `0x385c/0x3858`,
+  wrote/read back `0x7f000/0x7f004`, staged its data and wrote the flush:
+  three HDP writes. It then stopped with GfxMap state5/HdpFailed,
+  HDP state9/FlushReadbackFailed, before the G42 poll. NBIO_MEMSIZE in the
+  saved full dump is `0x1ff0` (8176 MiB); the old capacity policy required
+  a 256 MiB multiple. The report's memsize0 and GFXHQD valid0/RPTR0 are
+  unpopulated after that early return, not live zero-capacity/queue evidence.
+  G40 remained state5; no GFX ring kick. VMID8 NOP, gradient, repeat200
+  (41.180 ms/submit) and N48N gradient passed, with closes0. L2 stayed0,
+  four flushes and zero misses. No Metal output established.
+  Evidence: `client-ioreg-after.txt`, `client-gpu.txt`,
+  `results-20261020-200539-guest.txt`. Host power removal is not independently
+  established by these guest files. Later 0.0.62 changes the capacity
+  granularity to16 MiB; the 16 MiB shortfall is observed, its specific
+  reservation cause is inferred.
+
+- **2026-10-20 20:25–20:27 HKT, kext 0.0.62 G42 attempt**, saved run
+  `~/macos tahoe/navi33/runs/20261020-202558`. Loaded UUID
+  `D94995B6-AFCC-3150-A504-5312E5A33F08` matches cached
+  `artifact-0.0.62-ci` LC_UUID (checked offline in this audit). Autostart
+  DONE8/8; same initial G34/scheduler values as 0.0.61. Remap readback
+  `0x7f000/0x7f004`, three HDP writes, HDP state10/Complete, capacity8176.
+  G42 reached the poll but timed out: state3, fence0, MAPPED0, final G34
+  RPTR0 from initial16. Graphics snapshot read-success flag1, ACTIVE0,
+  VMID0, base `0:80010000`, control `0x2000098b`, pointers0. G40 state5,
+  no graphics ring kick or render. The first client VMID8 NOP stalled:
+  ACTIVE1, PQ_WPTR0xc, PQ_RPTR0, IB_BASE/RPTR0, fence0, close timeout.
+  It remains quarantined (one client/four buffers retained). Subsequent
+  VMID9 gradient, repeat200 (41.391 ms/submit) and N48N gradient exact;
+  these do not show VMID8 recovery. L2 stayed0 and four TLB flushes had
+  zero misses. No RADV vkfill or Metal render is saved for this run.
+  Evidence: `client-ioreg-after.txt`, `client-gpu.txt`,
+  `results-20261020-202755-guest.txt`. The user reports the VM may remain
+  running; this documentation audit did not contact it. Further writes
+  require a full host power-off and renewed approval.
+
+- **2026-10-20, offline G42 source audit after 0.0.62:** upstream pinned at
+  `f47d223627f80cb7a1eb14c585fe6cb35de5e984`. Corrected the earlier claim
+  that the MEC range stayed `0x110..0xffc`: the ioreg fields are sampled
+  before G40, which writes `0..0x450` without refreshing them. Actual
+  post-write range is uncaptured. KIQ doorbell submission is absent, but
+  its exclusion by the range is not proved; initial zero MQD WPTR matches
+  upstream. G34's bulk loader sets ACTIVE before the rest of HQD setup
+  (unlike upstream and the fixed client loader), its MQD/HQD doorbell
+  settings disagree, and it omits upstream periodic-poll disable/global
+  doorbell-enable setup. Upstream's KIQ commit pads to256 dwords whereas
+  G34/G42 use16/32; changing that needs a revised exact span budget.
+  Those source differences are not proven causes.
+  RPTR16->0 and a missing fence do not prove that MAP was never fetched.
+  VMID8 shares pipe0 with G34; its stall after G42, while VMID9/pipe1 works,
+  also warrants investigating a pipe stall during MAP processing.
+  `GFX_MAP_DESIGN.md` contains the field comparison, evidence hashes and
+  bounded next-experiment requirements; `BARE_METAL_ACCELERATION_PLAN.md`
+  records the longer route. No GPU/VM access, implementation change, new
+  write authorization or Metal publication occurred in this audit.
 
 ## Adding a register read
 

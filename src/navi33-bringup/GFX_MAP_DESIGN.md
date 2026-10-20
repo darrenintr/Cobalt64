@@ -5,7 +5,9 @@ The user requested continuing graphics queue mapping/activation on 2026-10-20
 graphics queue mapped. After the user reported a complete reboot and approved
 one attempt, kext 0.0.60 ran in `runs/20261020-191448`. It refused at the HDP
 preflight because the remap registers contained unexpected values; no G42
-stage-window write or MAP_QUEUES followed. The VM remains running on 0.0.60.
+stage-window write or MAP_QUEUES followed. Subsequently 0.0.61 reached the
+flush readback and 0.0.62 passed HDP but timed out mapping (details below).
+At this handoff the VM may still be running on 0.0.62; it was not contacted.
 Any further GPU write attempt needs another full host power-off and renewed
 explicit approval. This work does not enable Metal publication.
 
@@ -237,7 +239,7 @@ stops, timeout, and idempotent start. CI builds the real kext and matched tools.
 Judge actual mapping, graphics fetch and rendered output only from the live run,
 separately from host model results.
 
-## 0.0.61 candidate: accept the power-on remap pair (offline only)
+## 0.0.61 candidate: accept the power-on remap pair (historical design)
 
 The fresh-boot read (`d04f59d2`) showed the remap pair `0x385c`/`0x3858` before
 any driver touched the card, and upstream overwrites it on every init. The gate
@@ -245,33 +247,38 @@ now accepts exactly that pair as safe to overwrite, with the same write, readbac
 and flush sequence as a reset pair. Every other non-reset value still refuses
 with `UnexpectedRemap`, and a near miss (`0x385c`/`0x3854`) is tested. Host
 tests pass, and removing the power-on branch fails `test_client_gpu`. This
-change has not run on the card. A physical run needs a full host power-off and
-renewed explicit approval.
+candidate subsequently ran as recorded below. Any further physical run needs
+a full host power-off and renewed explicit approval.
 
 ## 0.0.61 run: why the flush readback failed (offline fix)
 
 The 0.0.61 run (`runs/20261020-200423`) wrote the remap pair, then the flush
 readback stopped at `FlushReadbackFailed`. The NBIO memsize register read
 `0x1ff0` (8176 MiB, as in the guest's own dump), but `nbio4::inspect()` refused
-it: it required a multiple of 256 MiB, and 8176 is not one. The card really
-reports 8 GiB minus a 16 MiB reserve, so the granularity is now 16 MiB and
+it: it required a multiple of 256 MiB, and 8176 is not one. The reported
+capacity is 16 MiB below 8 GiB, so the granularity is now 16 MiB and
 `test_nbio43_capacity` checks that 8176 passes and 8200 still refuses. The
-host suite passes. Not run on the card; any new G42 attempt needs a full
-host power-off and renewed approval.
+host suite passed before the 0.0.62 run below. Any new G42 attempt needs a
+full host power-off and renewed approval. The register value establishes
+8176 MiB reported capacity; attributing the 16 MiB difference to a particular
+reservation remains an inference.
 
 ## 0.0.62 run: MAP_QUEUES still times out (offline analysis)
 
 Run `runs/20261020-202558`: the remap pair and flush now pass (HDP Complete,
 memsize 8176 MiB), but `GfxMap` is state 3 (MapTimeout): `mapped` stays 0, the
-gfx HQD shows `valid 1 active 0`, and the G34 KIQ RPTR reads 0 after the run,
-so the packets appended at offset 64 were not consumed. Checked against
+gfx HQD shows `valid 1 active 0`, and the G34 KIQ RPTR reads 0 after the run.
+Completion of the packets appended at offset 64 was not established. The
+earlier inference that they were never fetched is too strong: a final RPTR
+alone cannot exclude a stalled command, reset/reload, or changed queue state.
+Checked against
 upstream `gfx_v11_0.c` (`gfx11_kiq_map_queues`, `gfx_v11_0_ring_emit_fence_kiq`,
 fetched 2026-10-20): the 16-dword G42 packet matches on header 0xa2 with 5
 body dwords, engine 4, one queue, ME 0 (the gfx ring is `me = 0`), doorbell
 offset, MQD and WPTR addresses, and the WRITE_DATA fence (dst sel 5, confirm).
-No encoding bug was found. The open question is why the MEC does not fetch the
-packets from the G34 KIQ queue; the next check is the KIQ HQD and MQD fields
-against upstream. Not run on the card.
+No encoding bug was found. The open question is why this KIQ stream does not
+complete; the next check is the KIQ HQD and MQD fields
+against upstream. The analysis below performed no further card run.
 
 ## 0.0.62 analysis: the KIQ is never kicked by doorbell (offline)
 
@@ -279,13 +286,209 @@ Upstream `gfx_v11_0.c`: the compute/KIQ rings use doorbells (`use_doorbell =
 true`), the KIQ doorbell is index 0 (`AMDGPU_NAVI10_DOORBELL_KIQ = 0x000`,
 `amdgpu_doorbell.h`), and `gfx_v11_0_cp_set_doorbell_range()` sets
 `CP_MEC_DOORBELL_RANGE_LOWER = (kiq*2)<<2 = 0` and `UPPER = (userqueue_end*2)<<2`
-(0x450). On the RX 7600 this boot the MEC range stays at `0x110..0xffc`
-(`Navi33,ClientGpu`, 0.0.62 run), which MES set up and which does not include
-index 0. Our G34 KIQ is kicked only by the one-shot WPTR poll (`poll1`) and its
-MQD leaves the WPTR at 0 ("guessed WPTR = RPTR = 0" in `Navi33Gfx11MecQueue.h`).
-So a KIQ doorbell kick, as upstream does it, would be dropped on this card.
-This is a source-backed lead, not a proven cause: the one-shot poll may still
-be the working path for the G34 ring test. Fixing it would mean writing the
-MEC doorbell range (0..0x450) and a KIQ doorbell, which is new register writes:
-it needs a bounded design and its own approval before any card run. Not run
-on the card.
+(0x450). Our G34 KIQ is kicked only by the one-shot WPTR poll (`poll1`).
+However, the initial interpretation of the saved range string and zero MQD
+WPTR was incorrect. The audit below supersedes it: the range string is stale
+after G40, and zero is upstream's initial MQD WPTR too. Doorbell submission
+remains a candidate, not a demonstrated fix.
+
+## 0.0.62 source and saved-evidence audit (2026-10-20, no hardware access)
+
+The failure is localized to completion of G42's KIQ stream, before the GFX
+ring test. **The root cause is not proven.** HDP's software checks passed;
+the map fence did not land and MAPPED stayed zero. That does not establish
+whether MEC failed to fetch, fetched stale bytes, or stalled processing MAP.
+`GFXHQD valid 1` is the software snapshot-read success flag, not a hardware
+queue-valid bit. ACTIVE=0 is expected before successful mapping because G40
+deliberately writes RB_ACTIVE=0 in G42 mode.
+
+The audit used repository revision `67017fd` (driver unchanged from 0.0.62)
+and upstream Linux revision `f47d223627f80cb7a1eb14c585fe6cb35de5e984`,
+fetched on 2026-10-20. The fetched `gfx_v11_0.c` is byte-identical to the
+previous local upstream copy. Primary references:
+
+- [gfx_v11_0.c](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/amdgpu/gfx_v11_0.c):
+  `gfx_v11_0_compute_mqd_init`, `gfx_v11_0_kiq_init_register`,
+  `gfx_v11_0_kiq_init_queue`, `gfx_v11_0_cp_resume`,
+  `gfx_v11_0_ring_set_wptr_compute`, and the map/fence emitters.
+- [amdgpu_gfx.c](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/amdgpu/amdgpu_gfx.c),
+  [amdgpu_ring.c](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/amdgpu/amdgpu_ring.c):
+  KIQ allocation, MQD properties, KCQ/KGQ initialization.
+- [soc21.c](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/amdgpu/soc21.c),
+  [amdgpu_doorbell.h](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/amdgpu/amdgpu_doorbell.h),
+  [amdgpu_doorbell_mgr.c](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/amdgpu/amdgpu_doorbell_mgr.c):
+  index assignment and 64-bit doorbell write.
+- [amdgpu_amdkfd_gfx_v11.c](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/amdgpu/amdgpu_amdkfd_gfx_v11.c):
+  `hqd_load_v11`, the origin of G34's one-shot poll.
+- [v11_structs.h](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/include/v11_structs.h),
+  [gc_11_0_0_offset.h](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/include/asic_reg/gc/gc_11_0_0_offset.h),
+  [gc_11_0_0_default.h](https://github.com/torvalds/linux/blob/f47d223627f80cb7a1eb14c585fe6cb35de5e984/drivers/gpu/drm/amd/include/asic_reg/gc/gc_11_0_0_default.h):
+  descriptor layout, exact GC11 offsets and defaults. No new register
+  constants or runtime writes were introduced by this audit.
+
+### Doorbell lead: confirmed difference, incorrect range inference
+
+Upstream `amdgpu_gfx_kiq_init_ring()` sets `use_doorbell=true`.
+`soc21_init_doorbell_index()` selects NAVI10 KIQ index 0 and userqueue end
+0x8a. The logical 64-bit index becomes a dword index by multiplying by two;
+the range registers use byte offsets: `0*8=0` through `0x8a*8=0x450`.
+`gfx_v11_0_ring_set_wptr_compute()` updates the memory WPTR and writes
+`WDOORBELL64`; its non-doorbell path only warns. G34 uses no BAR2 kick,
+and G42 updates memory WPTR to 32 then writes POLL_CNTL1 bit 0. This is a
+real deviation from the upstream KIQ submission path.
+
+But `Navi33,ClientGpu`'s `range 110..ffc->110..ffc` **does not measure the
+range at G42**. In `Navi33ClientGpu.h`, `start()` fills `db_.lower/upper`
+before `gfxStart()`. G40 then reads MEC upper and, if above 0x450, writes
+lower=0 and upper=0x450 before reaching state Unhalt and `gfxMapQueue()`.
+It never refreshes those cached report fields afterward. Reaching G42
+proves that this branch did not report a callback failure, not that hardware
+retained the values: no immediate post-write range readback is recorded.
+The source therefore contradicts the claim that the cached string proves a
+doorbell-0 exclusion during G42. There was no doorbell-0 write to drop in
+any case. The attribution of the earlier range specifically to MES is also
+unverified by these snapshots.
+
+Another distinction: `CP_PQ_STATUS.DOORBELL_ENABLE` is initially zero in
+both runs. G34 does not set it. The client loader sets it after G42, when it
+loads the first client queue; the `pq 0->0` line after `gfxStart()` and later
+`pq 0->2` support that order. Upstream KIQ init sets it before submissions.
+A future doorbell experiment must establish this bit and NBIO aperture
+enable before the kick, as well as the queue's own DOORBELL_EN and range.
+Whether the global bit also affects this one-shot poll is a hypothesis.
+
+### G34 descriptor and HQD comparison
+
+Values below are the generated G34 image and code writes, except where
+explicitly marked live. The saved 0.0.62 run contains only a partial G34 HQD
+snapshot, not a full MQD/HQD dump. All addresses are GPU MC addresses.
+
+| Field | G34 | Upstream KIQ comparison |
+| --- | --- | --- |
+| MQD layout | 512 dwords; header `c0310800`, pipeline stats 1, SE masks all ones, misc 7 | Matches `v11_compute_mqd` and initializer; CU-mask override is inactive for ordinary KIQ properties |
+| MQD base / control | `0x800fa00000`, control `0x100`, VMID 0 | Matches raw aligned base, privileged default and MQD VMID 0 |
+| Ring base / size | `0x800fa02000`, 4096 bytes; encoded base `0:800fa020` live | Matches shift-by-8 encoding and upstream 1024-dword KIQ ring |
+| PQ control | `0xd0308909` live | Queue size 9, RPTR block size 9, UNORD_DISPATCH, PRIV_STATE, KMD_QUEUE; tunneling off, matching ordinary KIQ |
+| RPTR report / WPTR poll addresses | `0x800fa03000` / `0x800fa03008` | Same low/high encoding; local VRAM placement differs from Linux's writeback allocation but G34's first test succeeded |
+| RPTR / WPTR initialization | MQD RPTR=0, WPTR=0; memory WPTR=16 | Upstream also initializes descriptor pointers to zero. KFD's guessed WPTR is zero for this fresh empty queue. This alone is not a bug |
+| EOP | base `0x800fa01000`, 2048 bytes, size field 8 | Matches upstream `GFX11_MEC_HPD_SIZE`; local bulk loader additionally writes EOP state and INIT_FETCHER bit31 |
+| Persistent / IB / quantum / priority | `0x0be05501` / `0x00300000` / `0x111` / 0,0 | Matches defaults and ordinary KIQ properties |
+| Queue doorbell | MQD control 0; HQD tail sets `0x40000000` (index0 enabled) | Upstream uses `0x40000000` in the MQD as well; local memory and hardware descriptors disagree |
+| ACTIVE | MQD=1; G34 writes it as the third HQD-block word, then again at end | Upstream KIQ initializer activates only after configuring the queue |
+| Scheduler | `0x3038->0x30a0` live, low byte HIQ ME1/pipe0/queue0 | Matches upstream marking for this chosen queue; Linux chooses a free queue0 from its ownership bitmap, not a universal fixed pipe0 |
+
+The most concrete additional initialization defect is **early ACTIVE**:
+`Navi33Gfx11MecQueue.h::execute()` copies MQD dword130=1 at register 0x1fab
+before writing VMID, base, pointers, controls and EOP. The MQD was built with
+KIQ semantics but loaded using a KFD-style bulk loop. Upstream's KIQ ordered
+writer avoids this; this repository's client `loadQueue()` already forces
+ACTIVE=0 during its bulk copy (0.0.46 fix), then activates last. G34 lacks
+that fix. This creates a real initialization race; it is **not established
+as the G42 cause**, since G34 subsequently reached RPTR16 and its original
+fence on both runs.
+
+Other differences to retain in the investigation:
+
+- Upstream KIQ ring functions specify `align_mask=0xff`;
+  `amdgpu_ring_commit()` NOP-pads the producer to a **256-dword boundary**
+  before setting WPTR. G34 commits 16 dwords and G42 appends through32.
+  The NOP word itself matches upstream, but the commit alignment does not.
+  The initial 16-dword test succeeded, so misalignment is not a demonstrated
+  universal fetch blocker. A fetch/preload/cache boundary interaction on
+  the second append remains possible. Testing upstream alignment requires
+  an explicit revised ring/span budget, not extra writes outside today's
+  16-dword G42 append allowlist.
+- G34's initial test uses SET_UCONFIG_REG plus RELEASE_MEM. Upstream's KIQ
+  scratch test instead calls `gfx_v11_0_ring_emit_wreg()`; its KIQ memory
+  fence uses confirmed WRITE_DATA. Passing G34 establishes initial fetch
+  and a memory write, not successful privileged MAP processing or repeated
+  KIQ commits.
+- G34 does not disable periodic `CP_PQ_WPTR_POLL_CNTL.EN` as upstream KIQ
+  init does. The offline `buildKiqInit()` contains this step, but G34 only
+  copies its MQD fields, not its register plan. POLL_CNTL and POLL_CNTL1 are
+  different registers (GC segment0 dwords 0x1e23 and 0x1e24). Current EN,
+  one-shot behavior and hardware WPTR after the G42 kick were not captured.
+- The bulk loop writes additional zero MQD state (including EOP and dequeue
+  fields) that upstream's KIQ writer leaves alone. It skips the undefined
+  0x1fb9 hole correctly. Memory MQD WPTR remaining zero after submission is
+  normal unless something reloads that stale descriptor; no such reload is
+  proven. Do not "fix" it by resetting a live ring's pointers.
+- Upstream configures doorbell ranges before queue setup, establishes KIQ,
+  then initializes KCQ and KGQ. G34 is a directly loaded queue, alongside
+  started MES firmware, followed by hub/G40 initialization. KIQ ownership,
+  descriptor reload or a pipe-level stall remain candidates. MES firmware
+  start alone does not prove that Linux's MES queue/resource setup ran.
+- `SET_RESOURCES` precedes KGQ through the upstream KCQ path; it is absent
+  here. The direct KGQ helper does not itself emit it. This is a resource
+  initialization question, not proof that adding that packet fixes fetch.
+  The current Linux helpers also have MES mapping branches; the direct KIQ
+  comparison does not establish this machine's complete Linux runtime path.
+- HDP Complete proves exact remap readback, a flush write and two acceptable
+  capacity reads. It is not a GPU-side checksum of the appended stream/MQD.
+  HDP absence no longer explains the 0.0.62 failure by itself.
+
+The source explicitly selects ME1/pipe0/queue0 for both G42's initial and
+final RPTR reads; no obvious wrong-bank expression was found. However, a
+post-map tuple of selector readback, ACTIVE, base, VMID, hardware WPTR,
+RPTR and memory RPTR is missing. RPTR changed **16 to 0**, not simply
+"stayed at zero." This unexplained regression makes an assertion of
+"never fetched" particularly unsafe. The map/fence packet encoding matches
+upstream; packet correctness does not establish firmware execution.
+
+### VMID8 stall and what would distinguish the hypotheses
+
+In `20261020-202558/client-gpu.txt`, the first VMID8 NOP times out. The
+saved stall reports ACTIVE1, PQ_WPTR=0xc, PQ_RPTR=0, IB_BASE/RPTR=0, memory
+fence=0. Its producer pointer was accepted, but no consumption is observed.
+VMID8 uses ME1/pipe0/queue1, sharing **pipe0** with G34. Subsequent contexts
+use VMID9 / pipe1/queue0 because VMID8 remains quarantined. Their gradient,
+200 submissions, and N48N gradient are exact. This is not successful VMID8
+reuse, nor evidence that VMIDs10..13 were exercised in this run. No RADV
+vkfill result exists in these two run directories.
+
+0.0.61 stopped before the G42 poll and its VMID8 NOP/gradient/repeat/N48N
+all passed. 0.0.62 reached the poll and then pipe0's other queue stalled.
+That correlation supports investigating a pipe0 stall during MAP processing
+as well as a failed KIQ kick. Different boots and the capacity-check change
+prevent a causal conclusion. L2 stayed 0 and flush misses stayed zero;
+neither alone proves complete cache correctness.
+
+Before another experiment, design event-stamped ioreg snapshots at G34
+completion, after G40 setup, immediately before the G42 kick and on timeout.
+Record the exact selected HQD identity and pointers, memory pointers, scheduler,
+MEC control, range, NBIO aperture, PQ_STATUS, poll control and approved error
+status. Audit every read against upstream hazards; bank-select writes are
+still writes even if the diagnostic is called a "read." Do not acquire SEM,
+read FIFO/clear-on-read status, or scan arbitrary MMIO.
+
+The first bounded candidate should establish a coherent KIQ initialization
+and commit path, with ACTIVE last, matching descriptor/HQD doorbell settings,
+verified range and enables, HDP ordering, and one exact 64-bit BAR2 doorbell
+at byte0. Its review must decide whether to isolate these changes in separate
+cold experiments or evaluate the corrected initialization as one whole;
+a bundled success would not identify which difference caused the failure.
+An independent second KIQ fence before MAP would distinguish transport from
+MAP processing, but needs its own exact packet/span/write-budget design:
+the current 16-dword append window is not authorized for arbitrary probes.
+No implementation or new approval is implied by this plan.
+
+### Saved evidence identity
+
+Paths are relative to `~/macos tahoe/navi33/runs/`. Both loaded UUIDs were
+compared with the cached artifact's Mach-O LC_UUID during this offline audit:
+0.0.61 `7CE1D94A-FD2C-39B0-9285-163AA3578AF5`, 0.0.62
+`D94995B6-AFCC-3150-A504-5312E5A33F08`.
+
+| File | SHA-256 |
+| --- | --- |
+| `20261020-200423/client-ioreg-after.txt` | `4d3649cd6f3fba6440e33345a5b240dfa125530e9c302adc09ac2a4922abfa67` |
+| `20261020-200423/client-gpu.txt` | `31b20adfbd7f189980c12297df3c0e395391e1a89f4cce0f15a29585afa382fe` |
+| `20261020-202558/client-ioreg-after.txt` | `4fc34e224c925cb8941a669697c48ddead700b8792f0e97256b04af015978ed3` |
+| `20261020-202558/client-gpu.txt` | `3b973f1b2a82d64c447364fbef49d998091ec810daf92d5f4b6df939f598696a` |
+
+Full diagnostics: `20261020-200423/results-20261020-200539-guest.txt`
+and `20261020-202558/results-20261020-202755-guest.txt`. These are archived
+observations, not live reads made for this analysis. Guest boot times and
+successful autostart are not independent proof of full host power removal.
+The route from these blockers to bare-metal acceleration is in
+[BARE_METAL_ACCELERATION_PLAN.md](BARE_METAL_ACCELERATION_PLAN.md).
