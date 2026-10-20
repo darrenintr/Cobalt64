@@ -167,6 +167,7 @@ struct Client {
     uint64_t seqEnd[64]{};                  // ring position after seq (modulo 64)
     uint32_t vmid=0, faultStatus=0, faultAddr=0;
     QueueSnap snap{};
+    bool loaded=false;          // the HQD is loaded at the first submission (see submit)
 };
 // The last TLB flush that got no ACK: the VMID, the request written, what REQ and ACK read back.
 struct FlushMiss { uint32_t vmid=0, req=0, reqBack=0, ack=0, misses=0; };
@@ -271,9 +272,12 @@ public:
         for(const auto &x:ctx)if(!wr(x.off,x.val))return fail(c,Code::HwFailed);
         if(!sel(c.vmid<<4) || !wr(r_->g.shMem,gradient::kShMemDefault) || !wr(r_->g.shBases,vg::kShMemBasesValue) ||
            !sel(0u))return fail(c,Code::HwFailed);
-        // No flush: a VMID is only reused after close() flushed it, and new valid
-        // PTEs need none (amdgpu_vm_update_range flushes only on GC < 9 or invalidation).
-        return loadQueue(c)==Code::Ok ? Code::Ok : fail(c,Code::HwFailed);
+        // Every L1 TLB and the L2 cache invalidated, as gfxhub_v3_0_init_cache_regs and G36
+        // did before enabling a context: engine 17 never ACKed on the card, and VMIDs 2..7
+        // were never invalidated since power-on.
+        uint32_t c2=0;
+        if(!rd(r_->g.v.l2c2,c2) || !wr(r_->g.v.l2c2,v1::l2Cntl2Word(c2)))return fail(c,Code::HwFailed);
+        return Code::Ok;
     }
     // A zeroed, CPU-visible VRAM buffer. Returns handle 1..kMaxBos.
     Code boCreate(uint32_t slot,uint64_t bytes,uint32_t &handle,uint64_t &vram,uint64_t align=4096u) {
@@ -392,6 +396,12 @@ public:
         const uint32_t wp[2]={static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32)};
         if(!vramPut(c->queue.vram+mq::kWptrOff,wp,2u)){quarantine(*c);return Code::Quarantined;}
         c->wptr=end;c->emitted=s;c->seqEnd[s%64u]=end;
+        // The first submission loads the HQD with its WPTR already in memory: the fetch at
+        // activation is the one path proven for a VMID != 0 queue (G36). Later ones kick.
+        if(!c->loaded) {
+            if(loadQueue(*c)!=Code::Ok){quarantine(*c);sel(0u);return Code::Quarantined;}
+            c->loaded=true;seq=s;return Code::Ok;
+        }
         // Kick: the queue's doorbell, as gfx_v11_0_ring_set_wptr_compute, and the one-shot
         // WPTR poll that moved G35's queue. On the card (2026-10-20 09:37..10:01) neither
         // alone moved a client queue on pipes 1..3 or pipe 0 queue >= 2.
@@ -420,7 +430,7 @@ public:
         if(!c)return Code::NotFound;
         if(c->state==State::Quarantined){c->owner=nullptr;return Code::Quarantined;}
         if(c->state==State::Open && waitIdle(*c)!=Code::Ok){quarantine(*c);c->owner=nullptr;return Code::Quarantined;}
-        if(!dequeue(*c)){quarantine(*c);c->owner=nullptr;return Code::Quarantined;}
+        if(c->loaded && !dequeue(*c)){quarantine(*c);c->owner=nullptr;return Code::Quarantined;}
         uint32_t cntl=0;
         if(!rd(r_->ctx[slot][0],cntl) || !wr(r_->ctx[slot][0],cntl&~1u) || !flushTlb(c->vmid))
             {quarantine(*c);c->owner=nullptr;return Code::Quarantined;}
@@ -617,7 +627,7 @@ private:
         c.state=State::Free;c.owner=nullptr;c.queue=Bo{};c.mqd=Bo{};
         for(Bo &b:c.bo)b=Bo{};
         for(uint64_t &e:c.seqEnd)e=0u;
-        c.wptr=c.emitted=c.retired=0u;c.vmid=c.faultStatus=c.faultAddr=0u;
+        c.wptr=c.emitted=c.retired=0u;c.vmid=c.faultStatus=c.faultAddr=0u;c.loaded=false;
     }
     const Regs *r_=nullptr; Hw h_{}; vh::Heap *heap_=nullptr; uint64_t fbBase_=0;
     Client c_[kClients]{};

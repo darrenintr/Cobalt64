@@ -261,6 +261,7 @@ int main() {
         assert(f.dev.submit(c.slot,&ia,1,sc)==cg::Code::Ok && sc==1u);
         assert(f.dev.wait(a.slot,sa,1000,ret)==cg::Code::Ok && ret==1u && f.dev.wait(c.slot,sc,1000,ret)==cg::Code::Ok);
         assert(imageOk(f,a,7) && imageOk(f,c,99) && f.dispatches==2);
+        assert(f.dev.client(0)->loaded && (f.mem[r.pqStatus]&cg::kPqStatusDoorbellEnable) && f.rings==0u);   // loaded with work, no kick yet
         // VMID k's context: depth 3 at the client's root; SH_MEM for VMID k only.
         assert(f.mem[r.ctx[0][0]]==0x01fffe07u && (f.mem[r.ctx[0][1]]&~0xfffu)==f.dev.client(0)->space.rootVram());
         assert((f.bank[{2u<<4,r.g.shMem}]==gr::kShMemDefault) && (f.bank[{0u,r.g.shMem}]==0u));
@@ -400,10 +401,11 @@ int main() {
     // 5. A queue that will not dequeue, or a flush without ACK, quarantines: nothing is freed.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
         App a=setup(f,co,k,7,0x100000000ull);
+        uint64_t s=0,ret=0;const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
+        assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok && f.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok);   // loads the HQD
         const uint64_t used=f.heap.usedBytes(cg::kTagClient);
         f.stuck=true;
         assert(f.dev.close(a.slot)==cg::Code::Quarantined && f.heap.usedBytes(cg::kTagClient)==used);
-        uint64_t s=0;const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
         assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Quarantined);
         uint32_t slot=0;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==1u);   // the slot stays taken
     }
@@ -430,7 +432,7 @@ int main() {
         f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;f.bank[{qsOf(5),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
         assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.dev.stats().db.reclaimed==2u);
         assert((f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && f.mem[r.g.v.q.grbm]==0u));
-        uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==0u && (f.mem[r.pqStatus]&2u));
+        uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==0u && !f.dev.client(0)->loaded);
         Fake g(r);g.stuck=true;g.bank[{qsOf(3),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::Ok && g.dev.stats().db.reclaimed==0u &&
                g.dev.client(1)->state==cg::State::Quarantined);
