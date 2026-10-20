@@ -148,12 +148,27 @@ from raw.githubusercontent.com; git.kernel.org returned 502):
   names `0x12d`/`0x12e` differently (`HDP_XDP_HDP_MBX_MC_CFG` and
   `HDP_XDP_HDP_MC_CFG`) and is not the remap block, so those names are not
   the source of the value.
-- Not checked: the upstream `nbio_4_3_1` header (the repo table says NBIF
-  4.3.1; the 4.3.1 path returned 404 on the mirror), and the Linux
-  `nbio_v4_3_set_reg_remap()` read path. Until both are checked, the source
-  of `0x385c`/`0x3858` (power-on default, VBIOS, or an earlier driver) stays
-  open. Do not accept, overwrite, or clear these values without a new bounded
-  design and renewed approval.
+- Upstream writer, `nbio_v4_3_remap_hdp_registers()` in `amdgpu/nbio_v4_3.c`
+  (fetched 2026-10-20): it writes `rmmio_remap.reg_offset + KFD_MMIO_REMAP_*`
+  to the two registers, with `reg_offset = MMIO_REG_HOLE_OFFSET = 0x80000 -
+  PAGE_SIZE`. `KFD_MMIO_REMAP_HDP_MEM_FLUSH_CNTL = 0` and
+  `KFD_MMIO_REMAP_HDP_REG_FLUSH_CNTL = 4` (`include/uapi/linux/kfd_ioctl.h`).
+  So upstream's pair is `0x7f000`/`0x7f004`, which matches our constants.
+- Upstream's writer does not read the registers first. It writes the pair
+  unconditionally. Our G42 gate instead refuses any existing pair that is
+  neither the reset value nor ours. That is stricter than upstream: the live
+  `0x385c`/`0x3858` would be overwritten by the driver's normal init. Changing
+  that rule is a new write-policy decision, so it needs its own bounded design
+  and renewed approval; it is not made here.
+- `nbio_v4_3.c` includes the `nbio_4_3_0` headers, so the repo's NBIF 4.3.1
+  label does not change the register names used here. I did not verify which
+  IP version maps to `nbio_v4_3` in discovery, and the `nbio_4_3_1` header path
+  returned 404 on the mirror.
+- The call site of `remap_hdp_registers` was not found in the fetched
+  `amdgpu_device.c`, `gmc_v11_0.c`, `amdgpu_nbio.c`, or `hdp_v6_0.c`. Still
+  open. Until it is found, the source of `0x385c`/`0x3858` (power-on default,
+  VBIOS, or an earlier driver) is not established. Do not accept, overwrite, or
+  clear these values without a new bounded design and renewed approval.
 
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
