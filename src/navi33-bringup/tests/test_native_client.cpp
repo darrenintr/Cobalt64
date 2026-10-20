@@ -31,6 +31,10 @@ int main() {
     assert(validate(N33_SEL_BO_FREE,1,0,0,0,true,false,false,true)==Shape::BadArgument);    // no descriptors
     assert(validate(N33_SEL_VM_MAP,3,0,0,0,true,false,false,false)==Shape::BadArgument);
     assert(validate(N33_SEL_CTX_CREATE,1,0,0,0,true,false,false,false)==Shape::BadArgument);
+    // What IOKit really hands over (VM run 2026-10-20 09:22): a non-null struct-output buffer of size 0.
+    assert(validate(N33_SEL_CTX_CREATE,1,1,0,0,true,true,true,false)==Shape::Valid);
+    assert(validate(N33_SEL_SUBMIT,3,1,0,0,true,true,true,false)==Shape::Valid);
+    assert(validate(N33_SEL_BO_FREE,1,0,0,0,true,false,true,false)==Shape::Valid);
     assert(validate(N33_SEL_PSP_STATUS,0,0,0,sizeof(n33_psp_status),false,false,true,false)==Shape::Valid);
     assert(validate(N33_SEL_PSP_STATUS,0,0,0,63,false,false,true,false)==Shape::BadArgument);
     assert(validate(N33_SEL_SDMA_STATUS,0,0,0,sizeof(n33_sdma_status),false,false,true,false)==Shape::Valid);

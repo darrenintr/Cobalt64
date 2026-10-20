@@ -1222,7 +1222,8 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
              st.clients,st.bos,st.emitted,st.retired,st.writes,st.tlbFlushes,vramHeap_.freeBytes()>>20);
     setProperty("Navi33,ClientGpu",line);
     IOLockUnlock(pspLock_);
-    IOLog("Navi33Probe: client GPU context op %u -> %u (%s)\n",op,static_cast<unsigned>(c),line);
+    if(op==N33_CTX_OP_OPEN || st.clients || c!=cg::Code::Ok)
+        IOLog("Navi33Probe: client GPU context op %u -> %u (%s)\n",op,static_cast<unsigned>(c),line);
     return gpuReturn(c);
 }
 #define N33_GPU_SLOT(client) \

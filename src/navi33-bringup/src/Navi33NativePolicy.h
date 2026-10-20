@@ -43,7 +43,10 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         const bool inOk = selector == N33_SEL_SUBMIT
             ? (scalarIn >= 3u && scalarIn <= 1u + 2u * N33_SUBMIT_MAX_IBS && (scalarIn & 1u))
             : scalarIn == in;
-        return inOk && scalarOut == out && !structIn && !structOut && !haveStructOut &&
+        // IOKit passes a non-null inband struct-output buffer even to scalar-only calls
+        // (as it does scalar arrays, see 0.0.3), so only the sizes count.
+        (void)haveStructOut;
+        return inOk && scalarOut == out && !structIn && !structOut &&
                haveScalarsIn && haveScalarsOut == (out != 0u) ? Shape::Valid : Shape::BadArgument;
     }
     if (selector == N33_SEL_HELLO)
