@@ -248,6 +248,9 @@ int main() {
         while((code=f.dev.submit(c.slot,&ia,1,s))==cg::Code::Ok)++n;
         assert(code==cg::Code::Busy && n>0 && n<64);
         assert(f.dev.wait(c.slot,s,500,ret)==cg::Code::Timeout);
+        {   const cg::QueueSnap &sn=f.dev.client(c.slot)->snap;     // the timeout snapshot
+            assert(sn.taken && sn.reg[0]==1u && sn.wptrMem==uint32_t(f.dev.client(c.slot)->wptr) && sn.fence<s);
+            assert(f.mem[r.g.v.q.grbm]==0u);}
         f.paused.clear();f.runQueue(3);              // the queue catches up
         assert(f.dev.wait(c.slot,s,1000,ret)==cg::Code::Ok && ret==s);
         // Close: drain, dequeue, disable context, flush, give back every page.
@@ -386,6 +389,12 @@ int main() {
         assert(f.dev.boFree(slot,x)==cg::Code::Quarantined && f.heap.covers(vx,4096));   // unmap needs the ACK
         const cg::FlushMiss m=f.dev.stats().miss;
         assert(m.vmid==2u && m.req==cg::invalidateReq(2) && m.reqBack==cg::invalidateReq(2) && m.ack==0u && m.misses==1u);
+    }
+    // 5b. A queue left active by an earlier boot is skipped and never reused.
+    {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
+        uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==1u && f.dev.client(1)->vmid==3u);
+        assert(f.dev.client(0)->state==cg::State::Quarantined && f.mem[r.g.v.q.grbm]==0u);
     }
     // 6. Arguments and a hub this code does not recognise.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);

@@ -8,7 +8,7 @@
 # ARTIFACT=DIR overrides the cached kext artifact. The user runs it with `!`.
 set -euo pipefail
 VM="/home/darren/macos tahoe"; N="$VM/navi33"
-ART="${ARTIFACT:-$N/cache/artifact-0.0.32}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
+ART="${ARTIFACT:-$N/cache/artifact-0.0.33}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
 V=/home/darren/Cobalt64/src/navi33-bringup/vm
 GATES="--client-gpu"; [ "${NO_AUTOSTART:-0}" = 1 ] || GATES="--autostart --client-gpu"
 pgrep -f "^qemu-system-x86_64" >/dev/null && { echo "a VM is already running" >&2; exit 1; }
@@ -23,10 +23,10 @@ for i in $(seq 1 60); do
 done
 "$V/guest-run.sh" "$ART" > "$R/guest-run-before.txt" 2>&1 || true
 ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|VramHeap)"' > "$R/client-ioreg-before.txt" 2>&1 || true
-ssh macos-vm 'cd ~/navi33 && sudo ./n33gpu --fw gradient.co --frame 11 && sudo ./n33gpu --fw gradient.co --frame 200 --repeat 200 && sudo ./n33n48n --fw gradient.co' \
+ssh macos-vm 'cd ~/navi33 && sudo ./n33gpu --fw gradient.co --nop; sudo ./n33gpu --fw gradient.co --frame 11 && sudo ./n33gpu --fw gradient.co --frame 200 --repeat 200 && sudo ./n33n48n --fw gradient.co' \
   > "$R/client-gpu.txt" 2>&1 || true
 cat "$R/client-gpu.txt"
-ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|VramHeap)"; sudo dmesg | grep -E "Navi33Probe: client GPU" | tail -8' \
+ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|ClientGpuStall|VramHeap)"; sudo dmesg | grep -E "Navi33Probe: client GPU" | tail -8' \
   > "$R/client-ioreg-after.txt" 2>&1 || true
 cat "$R/client-ioreg-after.txt"
 "$V/guest-run.sh" "$ART" > "$R/guest-run-after.txt" 2>&1 || true

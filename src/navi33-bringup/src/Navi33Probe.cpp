@@ -1223,6 +1223,19 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
              st.clients,st.bos,st.emitted,st.retired,st.writes,st.tlbFlushes,vramHeap_.freeBytes()>>20,
              st.miss.misses,st.miss.vmid,st.miss.req,st.miss.reqBack,st.miss.ack);
     setProperty("Navi33,ClientGpu",line);
+    // The last client whose wait timed out: its queue as the CP saw it.
+    for(uint32_t i=0;i<navi33::client_gpu::kClients;++i) {
+        const navi33::client_gpu::Client *cl=gpuHost_.dev.client(i);
+        if(!cl || !cl->snap.taken)continue;
+        const navi33::client_gpu::QueueSnap &q=cl->snap;
+        char snap[256];
+        snprintf(snap,sizeof(snap),"vmid %u ACTIVE %x PQ_RPTR %x PQ_WPTR %x IB_BASE %x IB_RPTR %x IB_CONTROL %x "
+                 "HQ_STATUS0 %x ERROR %x EOP_RPTR %x EOP_WPTR %x mem rptr %x wptr %x fence %x",cl->vmid,
+                 q.reg[0],q.reg[1],q.reg[2],q.reg[3],q.reg[4],q.reg[5],q.reg[6],q.reg[7],q.reg[8],q.reg[9],
+                 q.rptrReport,q.wptrMem,q.fence);
+        setProperty("Navi33,ClientGpuStall",snap);
+        IOLog("Navi33Probe: client GPU stall %s\n",snap);
+    }
     IOLockUnlock(pspLock_);
     if(op==N33_CTX_OP_OPEN || st.clients || c!=cg::Code::Ok)
         IOLog("Navi33Probe: client GPU context op %u -> %u (%s)\n",op,static_cast<unsigned>(c),line);
@@ -1276,7 +1289,8 @@ IOReturn Navi33Probe::gpuWait(const void *client,uint64_t seq,uint32_t timeoutUs
     navi33::client_gpu::Code c=navi33::client_gpu::Code::Timeout;
     for(uint32_t spent=0;;) {
         c=gpuHost_.dev.wait(slot,seq,0u,*retired);
-        if(c!=navi33::client_gpu::Code::Timeout || spent>=timeoutUs)break;
+        if(c!=navi33::client_gpu::Code::Timeout)break;
+        if(spent>=timeoutUs){if(timeoutUs)gpuHost_.dev.noteStall(slot);break;}
         IOLockUnlock(pspLock_);IOSleep(1);spent+=1000u;IOLockLock(pspLock_);
         if(!gpuHost_.dev.slotOf(client,slot)){IOLockUnlock(pspLock_);return kIOReturnNotReady;}
     }
@@ -1394,7 +1408,8 @@ IOReturn Navi33Probe::n48nCall(const void *client,navi33::n48n_front::Session &s
         // Short slices with the lock dropped, so other clients keep going.
         for(uint64_t spent=0;;spent+=1000000u) {
             r=nf::waitOnce(d,s,seq,a->scalarOutput);
-            if(r!=nf::R::Ok || !a->scalarOutput[0] || spent>=timeoutNs)break;
+            if(r!=nf::R::Ok || !a->scalarOutput[0])break;
+            if(spent>=timeoutNs){if(timeoutNs)d.noteStall(s.slot);break;}
             IOLockUnlock(pspLock_);IOSleep(1);IOLockLock(pspLock_);
             if(!gpuHost_.dev.slotOf(client,slot) || slot!=s.slot){IOLockUnlock(pspLock_);return kIOReturnNotReady;}
         }

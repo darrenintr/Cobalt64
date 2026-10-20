@@ -44,15 +44,17 @@ static Buffer buffer(uint64_t bytes,uint64_t va,uint32_t flags) {
     return b;
 }
 int main(int argc,char **argv) {
-    const char *fw=nullptr;uint32_t frame=11u,repeat=1u;
+    const char *fw=nullptr;uint32_t frame=11u,repeat=1u;bool nop=false;
     for(int a=1;a<argc;++a) {
         if(!strcmp(argv[a],"--fw") && a+1<argc)fw=argv[++a];
         else if(!strcmp(argv[a],"--frame") && a+1<argc)frame=static_cast<uint32_t>(strtoul(argv[++a],nullptr,0))&0xffu;
         else if(!strcmp(argv[a],"--repeat") && a+1<argc)repeat=static_cast<uint32_t>(strtoul(argv[++a],nullptr,0));
+        else if(!strcmp(argv[a],"--nop"))nop=true;
         else {fw=nullptr;break;}
     }
     if(!fw || !repeat || repeat>100000u) {
-        fputs("Usage: sudo n33gpu --fw gradient.co [--frame N] [--repeat N]\n"
+        fputs("Usage: sudo n33gpu --fw gradient.co [--frame N] [--repeat N] [--nop]\n"
+              "--nop submits an IB of NOPs only (queue fetch + fence, no dispatch).\n"
               "Opens a GPU context (navi33-client-gpu=1), runs the gradient from user space\n"
               "and checks every pixel. Writes only its own buffers and its own queue.\n",stderr);
         return 1;
@@ -102,6 +104,7 @@ int main(int argc,char **argv) {
     std::vector<uint32_t> pm4={gd::packet3(gd::kSetShReg,2u),gd::shOffset(gr::kThreadSe0),~0u,~0u,
                                gd::packet3(gd::kSetShReg,2u),gd::shOffset(gr::kThreadSe2),~0u,~0u};
     for(size_t i=0;i+8<s.count;++i)pm4.push_back(s.dwords[i]);       // without the encoder's RELEASE_MEM
+    if(nop)pm4.assign(8,gd::packet3(0x10u,0x3fffu));                    // NOPs: fetch and fence only
     for(size_t i=0;i<pm4.size();++i)ib.cpu[i]=pm4[i];
     // Read back once so the posted BAR writes reach VRAM before the GPU fetches them.
     if(ib.cpu[pm4.size()-1]!=pm4.back() || shader.cpu[0]==0u)die("CPU write readback",0);
@@ -120,7 +123,7 @@ int main(int argc,char **argv) {
                     static_cast<unsigned long long>(seq));
             die("the submission",0);
         }
-        for(uint32_t y=0;y<gr::kTestSize;++y)for(uint32_t x=0;x<gr::kTestSize;++x)
+        for(uint32_t y=0;y<gr::kTestSize && !nop;++y)for(uint32_t x=0;x<gr::kTestSize;++x)
             if(image.cpu[y*gr::kTestSize+x]!=gfx11_shader::gradientPixel(x,y,gr::kTestSize,gr::kTestSize,frame))++bad;
         if(bad)break;
     }
@@ -131,6 +134,7 @@ int main(int argc,char **argv) {
     kr=call(N33_SEL_CTX_CREATE,{N33_CTX_OP_CLOSE},1,&v);
     printf("context closed: 0x%x\n",kr);
     IOServiceClose(conn);
+    if(nop){puts("CLIENT GPU NOP OK: the queue fetched the IB and wrote the fence");return 0;}
     puts(bad ? "CLIENT GPU: FAILED (pixels differ)" :
                "CLIENT GPU OK: a user program ran the gradient on its own context and every pixel matched");
     return bad ? 9 : 0;

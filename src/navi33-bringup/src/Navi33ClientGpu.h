@@ -114,6 +114,11 @@ struct Hw {
 struct Bo { vh::Handle h{}; uint64_t vram=0, bytes=0, va=0; uint64_t vaFlags=0; bool live=false, cpuMapped=false; };
 struct Mapping { uint64_t va=0, bytes=0; };
 enum class State : uint8_t { Free=0, Open, Faulted, Quarantined };
+// What the queue looked like when a wait first timed out (gc_11_0_0_offset.h HQD block,
+// read under GRBM select; then the RPTR report, WPTR and fence words in the queue buffer).
+constexpr uint32_t kSnapRegs[]={0x1fab,0x1fb3,0x1fdf,0x1fbb,0x1fbd,0x1fbe,0x1fc9,0x1fdc,0x1fd1,0x1fd2};
+constexpr uint32_t kSnapCount=sizeof(kSnapRegs)/4u;
+struct QueueSnap { bool taken=false; uint32_t reg[kSnapCount]{}; uint32_t rptrReport=0, wptrMem=0, fence=0; };
 struct Client {
     State state=State::Free;
     const void *owner=nullptr;
@@ -124,6 +129,7 @@ struct Client {
     uint64_t emitted=0, retired=0;          // sequence numbers (the fence holds the low 32 bits)
     uint64_t seqEnd[64]{};                  // ring position after seq (modulo 64)
     uint32_t vmid=0, faultStatus=0, faultAddr=0;
+    QueueSnap snap{};
 };
 // The last TLB flush that got no ACK: the VMID, the request written, what REQ and ACK read back.
 struct FlushMiss { uint32_t vmid=0, req=0, reqBack=0, ack=0, misses=0; };
@@ -165,7 +171,15 @@ public:
         if(!started_)return Code::NotReady;
         if(!owner)return Code::BadArgs;
         slot=kClients;
-        for(uint32_t i=0;i<kClients;++i)if(c_[i].state==State::Free){slot=i;break;}
+        for(uint32_t i=0;i<kClients && slot==kClients;++i) {
+            if(c_[i].state!=State::Free)continue;
+            // A queue an earlier boot of the kext left active (stuck work) is never reused.
+            uint32_t active=0;
+            if(!sel(mq::grbmSelect(mq::kMeMec,0u,kFirstVmid+i)) || !rd(mq::hqd(r_->g.v.q,kiq::kCpHqdActive),active) || !sel(0u))
+                return Code::HwFailed;
+            if(active&1u){c_[i].state=State::Quarantined;c_[i].vmid=kFirstVmid+i;continue;}
+            slot=i;
+        }
         if(slot==kClients)return Code::NoSlot;
         Client &c=c_[slot];
         resetClient(c);
@@ -335,7 +349,7 @@ public:
             retired=c->retired;
             if(c->retired>=seq)return Code::Ok;
             if(c->state!=State::Open)return stateCode(*c);
-            if(us>=timeoutUs)return Code::Timeout;
+            if(us>=timeoutUs){if(timeoutUs && !c->snap.taken)snapshot(*c);return Code::Timeout;}
             h_.delayUs(h_.ctx,100u);
         }
     }
@@ -471,6 +485,22 @@ private:
             }
         }
         return sel(0u);
+    }
+public:
+    // Record the queue state of a slot whose wait timed out (once per client).
+    void noteStall(uint32_t slot) { Client *c=live(slot); if(c && !c->snap.taken)snapshot(*c); }
+private:
+    // Diagnostics only: GRBM select writes and reads, nothing else.
+    void snapshot(Client &c) {
+        QueueSnap s{};s.taken=true;
+        if(sel(mq::grbmSelect(mq::kMeMec,0u,c.vmid))) {
+            for(uint32_t i=0;i<kSnapCount;++i)h_.read(h_.ctx,mq::hqd(r_->g.v.q,kSnapRegs[i]),&s.reg[i]);
+            sel(0u);
+        }
+        h_.vramRead(h_.ctx,c.queue.vram+mq::kRptrOff,&s.rptrReport,1u);
+        h_.vramRead(h_.ctx,c.queue.vram+mq::kWptrOff,&s.wptrMem,1u);
+        h_.vramRead(h_.ctx,c.queue.vram+mq::kFenceOff,&s.fence,1u);
+        c.snap=s;
     }
     uint64_t retiredWptr(const Client &c) const { return c.retired ? c.seqEnd[c.retired%64u] : 0u; }
     // Read the fence and the hub's fault status; a fault in this VMID ends the client.
