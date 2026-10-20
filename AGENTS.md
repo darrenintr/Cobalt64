@@ -474,6 +474,14 @@ output survives a hang and Linux can inspect a stuck guest.
   ring stage succeeded** (state 28, 6 writes, TMR 19,922,944 B; findings log). A restart
   resets the PSP, so later stages must redo sOS + ring in the same boot. Kill switch
   restored on the stick. Later bare-metal stages need their own approval.
+- **Kext 0.0.65 staged on the stick 2026-10-20** (CI `39436374207`, UUID
+  `708E0DED-0AC0-3658-A9D1-B091DB60295E`, cache `artifact-0.0.65-ci`; 0.0.64 files in
+  `navi33/backup-0.0.64-pre-0.0.65/`), plus the nine pinned firmware files in `navi33/fw/`
+  (decompressed from `/lib/firmware/amdgpu`, each SHA-256 checked against
+  `tests/fixtures/rx7600-fw-plan.tsv`). The user approved the SMU image and IP firmware
+  stages on bare metal; `instruction.txt` runs sOS, ring 3, `--ip-fw 26 27`, `--ip-fw 0 26`
+  and `run.sh` in one boot. AUTOLOAD_RLC and SCPM are not included and keep their own
+  approval. Boot-args still have `navi33-psp-off=1` until the user's step 1.
   CI `39429401671` green; artifact `cache/artifact-0.0.64-ci`, UUID
   `994B713D-5C15-3C05-88A7-2E4FD73E9D44`. **Staged on the stick 2026-10-20** (kext
   and tools identical to the artifact, boot-args unchanged, all write kill
