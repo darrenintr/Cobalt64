@@ -121,7 +121,7 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      asked to go on with B4):** `navi33-client-gpu=1` (kill `navi33-client-gpu-off` or
      `navi33-psp-off`) lets N33N user clients (root) open a context: VMID/queue k = 2..7,
      GFXHUB words (G38's, or recognised), contexts 2..7, SH_MEM under VMID k, the queue-k HQD,
-     invalidation engine 17, CP_HQD_DEQUEUE_REQUEST, the poll trigger, and CPU writes only
+     invalidation engine 17 (until 0.0.42), CP_HQD_DEQUEUE_REQUEST, the poll trigger, and CPU writes only
      inside the kernel heap's live blocks. Not a one-shot stage: a service, usable with
      `--autostart`. Not acceleration (rule 6 unchanged). Kext 0.0.30 adds the N48N user
      client (type 'N48N', RADV's Darwin ABI, selectors 0..8, compute IBs only) on the same
@@ -134,9 +134,11 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      (read-modify-write, only if clear), and 64-bit writes into BAR2 at the six client
      doorbells (byte 0x200 + 8 k); before-values in ioreg. Since 0.0.37 device start also
      drain-dequeues client HQDs an earlier boot left active (CP_HQD_DEQUEUE_REQUEST).
-     Since 0.0.42 device start also sets invalidation engine 17's address range
-     (`GCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32/HI32` = `0xffffffff`/`0x1f`, as upstream
-     `gfxhub_v3_0_program_invalidation`) if it differs; before-values in ioreg.
+     Since 0.0.43 the CPU no longer writes any invalidation REQ: TLB flushes are a
+     WAIT_REG_MEM write-then-wait packet the kext puts on the client's own queue
+     (`gmc_v11_0_emit_flush_gpu_tlb`), on engine 7 + slot; device start sets those six
+     engines' `ADDR_RANGE_LO32/HI32` (`0xffffffff`/`0x1f`, `gfxhub_v3_0_program_invalidation`)
+     if they differ, with before-values in ioreg. (0.0.42 set engine 17's range instead.)
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing

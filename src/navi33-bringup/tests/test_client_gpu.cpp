@@ -37,13 +37,15 @@ struct Fake {
     std::vector<std::pair<uint64_t,uint32_t>> writes;
     std::set<uint32_t> paused;                                      // queues that do not run
     unsigned dispatches=0,flushes=0; bool noAck=false,stuck=false,noFlushModel=false;
+    std::set<uint32_t> hung;                                        // queues stopped in a WAIT_REG_MEM
     explicit Fake(cg::Regs regs):r(regs) {
         const v1::Regs &v=r.g.v;
         mem={{v.q.sos,42},{v.q.rlc,0xc000001fu},{v.q.grbm,0},{v.q.cntl,0x3c000000u},{v.q.scratch,0xdeadbeefu},
              {v.q.poll1,0},{v.l1,v1::kL1Default},{v.l2,v1::kL2Default},{v.l2c2,0},{v.l2c3,v1::kL2Cntl3Default},
              {v.l2c4,v1::kL2Cntl4Default},{v.l2c5,v1::kL2Cntl5Default},{v.faultStatus,0},{v.faultAddr,0},
-             {r.invReq,0},{r.invAck,0},{r.invRangeLo,0},{r.invRangeHi,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u}};
+             {r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u}};
         for(auto o:v.ident)mem[o]=0;
+        for(uint32_t i=0;i<cg::kClients;++i){mem[r.invReq[i]]=0;mem[r.invAck[i]]=0;mem[r.invRange[i][0]]=0;mem[r.invRange[i][1]]=0;}
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
         assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
                heap.reserve(240ull<<20,16ull<<20,0x53544753u)==vh::Code::Ok);
@@ -80,6 +82,19 @@ struct Fake {
     uint32_t rd(uint32_t k,uint64_t va){uint64_t p=0;return translate(k,va,p) ? get(p) : 0xdeadu;}
     void wr(uint32_t k,uint64_t va,uint32_t v){uint64_t p=0;if(translate(k,va,p,true))vram[p]=v;}
     // Run PM4 [from, to) in VMID k (ring or IB); returns false on a fault.
+    // WAIT_REG_MEM write-then-wait from queue k: only its own engine; the engine flushes the
+    // VMIDs in the request and ACKs them only once its range is set (as the card's engine 17
+    // never did without it, and never did from MMIO at all).
+    bool waitRegMem(uint32_t k,const std::vector<uint32_t> &b) {
+        const uint32_t slot=k-cg::kFirstVmid;
+        assert(b.size()==6u && b[0]==cg::kWaitRegMemWriteWait && b[5]==cg::kWaitRegMemPoll);
+        assert(4ull*b[1]==r.invReq[slot] && 4ull*b[2]==r.invAck[slot] && b[3]==cg::invalidateReq(k) && b[4]==(1u<<k));
+        mem[r.invReq[slot]]=b[3];++flushes;
+        if(!noFlushModel)for(auto i=tlb.begin();i!=tlb.end();)i=i->first.first==k ? tlb.erase(i) : std::next(i);
+        const bool range=mem[r.invRange[slot][0]]==cg::kInvRangeLoValue && mem[r.invRange[slot][1]]==cg::kInvRangeHiValue;
+        mem[r.invAck[slot]]=noAck || !range ? 0u : (b[3]&0xffffu);
+        return (mem[r.invAck[slot]]&b[4])==(b[3]&b[4]);
+    }
     void exec(uint32_t k,uint64_t base,uint64_t from,uint64_t to,bool ring,uint64_t &pgm,uint64_t &karg,uint32_t &masks) {
         for(uint64_t i=from;i<to;) {
             auto at=[&](uint64_t d){return base+4u*(ring ? d%cg::kRingDwords : d);};
@@ -111,6 +126,9 @@ struct Fake {
                         if(x<w && y<hh)wr(k,px+4ull*(y*pitch+x),gfx11_shader::gradientPixel(x,y,w,hh,fr));
                 }
                 masks=0;
+            } else if(op==cg::kWaitRegMem) {
+                assert(ring);
+                if(!waitRegMem(k,b)){hung.insert(k);return;}
             } else if(op==gd::kReleaseMem) {
                 const uint64_t to=b[2]|(uint64_t(b[3])<<32);wr(k,to,b[4]);
                 if((b[1]>>29)==2u)wr(k,to+4u,b[5]);
@@ -121,7 +139,7 @@ struct Fake {
     }
     void runQueue(uint32_t k) {
         const uint32_t qs=qsOf(k);
-        if(stuck || paused.count(k) || !(bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]&1u))return;
+        if(stuck || paused.count(k) || hung.count(k) || !(bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]&1u))return;
         assert((bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdVmid)}]==k));
         const uint64_t mqd=bank[{qs,mq::hqd(r.g.v.q,0x1fa9u)}]|(uint64_t(bank[{qs,mq::hqd(r.g.v.q,0x1faau)}])<<32);
         assert(mqd>=kFb && heap.covers(mqd-kFb,4096));
@@ -132,6 +150,7 @@ struct Fake {
         const uint64_t wptr=rd(k,poll)|(uint64_t(rd(k,poll+4))<<32);
         uint64_t pgm=0,karg=0;uint32_t masks=0;faultNow=false;
         exec(k,ring,rptr[k],wptr,true,pgm,karg,masks);
+        if(hung.count(k))return;
         rptr[k]=wptr;bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqRptr)}]=uint32_t(wptr%cg::kRingDwords);
     }
     static bool read(void *c,uint64_t off,uint32_t *v) {
@@ -144,17 +163,10 @@ struct Fake {
         assert(cg::allowed(f.r,off));
         f.writes.emplace_back(off,v);
         if(f.banked(off))f.bank[{f.sel(),off}]=v; else f.mem[off]=v;
-        if(off==f.r.invReq) {
-            uint32_t ack=0;
-            for(uint32_t k=0;k<16;++k)if(v&(1u<<k)){
-                if(!f.noFlushModel)for(auto i=f.tlb.begin();i!=f.tlb.end();)i=i->first.first==k ? f.tlb.erase(i) : std::next(i);
-                ack|=1u<<k;
-            }
-            // The card's engine 17 held the request and never ACKed while its range was 0.
-            const bool range=f.mem[f.r.invRangeLo]==cg::kInvRangeLoValue && f.mem[f.r.invRangeHi]==cg::kInvRangeHiValue;
-            f.mem[f.r.invAck]=f.noAck || !range ? 0u : ack;++f.flushes;
+        if(off==f.r.dequeue && v==cg::kDrainPipe && !f.stuck) {
+            f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdActive)}]=0u;
+            for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.rptr[k]=0;   // a reload starts the ring at 0
         }
-        if(off==f.r.dequeue && v==cg::kDrainPipe && !f.stuck)f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdActive)}]=0u;
         // GRBM select: 0, a VMID (SH_MEM), or a client HQD: never MES's queues 2+, never pipe 0 queue 0 (G34's).
         if(off==f.r.g.v.q.grbm && v && !(v&0xf0u))assert(((v>>2)&3u)==1u && ((v>>8)&7u)<=1u && ((v&3u) || ((v>>8)&7u)==1u));
         if(off==f.r.g.v.q.poll1)for(uint32_t i=0;i<cg::kClients;++i)if(v&cg::pollBit(i))f.runQueue(cg::kFirstVmid+i);
@@ -241,21 +253,24 @@ int main() {
     const gfx11_shader::Kernel k=gr::kernelOf(co.data(),co.size());assert(k.code==gfx11_shader::Code::Ok);
     auto b=rx7600_fixture::blob();IPDiscovery d;assert(d.parse(b.data(),b.size()));
     const auto r=cg::resolve(d,rx7600_fixture::kBar5);
-    assert(r.valid && r.invReq==(0x1260u+0x16bcu)*4u && r.invAck==(0x1260u+0x16ceu)*4u && r.dequeue==(0x1260u+0x1fc1u)*4u);
-    assert(r.invRangeLo==(0x1260u+0x16f1u)*4u && r.invRangeHi==(0x1260u+0x16f2u)*4u && cg::allowed(r,r.invRangeLo) && cg::allowed(r,r.invRangeHi));
+    assert(r.valid && r.invReq[0]==(0x1260u+0x16b2u)*4u && r.invAck[5]==(0x1260u+0x16c9u)*4u && r.dequeue==(0x1260u+0x1fc1u)*4u);
+    assert(r.gcDw==0x1260u && r.invRange[0][0]==(0x1260u+0x16ddu)*4u && r.invRange[5][1]==(0x1260u+0x16e8u)*4u);
+    for(uint32_t i=0;i<cg::kClients;++i)assert(cg::allowed(r,r.invRange[i][0]) && cg::allowed(r,r.invRange[i][1]) &&
+                                               !cg::allowed(r,r.invReq[i]) && !cg::allowed(r,r.invAck[i]));
+    assert(!cg::allowed(r,(0x1260u+0x16bcu)*4u) && !cg::allowed(r,(0x1260u+0x16f1u)*4u));   // engine 17 no more
     assert(r.ctx[0][0]==(0x1260u+0x168au)*4u && r.ctx[5][6]==(0x1260u+0x1742u)*4u && r.gbAddrConfig==0x263eu*4u);
     assert(!cg::allowed(r,r.gbAddrConfig));
     // Never context 0/1, SCRATCH, the MEC controls or the fault registers.
-    for(uint64_t o:{r.g.v.ctx,r.g.v.baseLo,r.g.v.endHi,r.g.v.q.scratch,r.g.v.q.cntl,r.g.v.q.pc,r.g.v.faultStatus,r.invAck})
+    for(uint64_t o:{r.g.v.ctx,r.g.v.baseLo,r.g.v.endHi,r.g.v.q.scratch,r.g.v.q.cntl,r.g.v.q.pc,r.g.v.faultStatus})
         assert(!cg::allowed(r,o));
     // 1. Two clients, each its own VMID, queue, buffers and image.
     {   Fake f(r);
         {uint32_t none=0;assert(f.dev.open(&f,none)==cg::Code::NotReady);}
-        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u+2u);
-        // Engine 17's range as gfxhub_v3_0_program_invalidation, before-values kept.
-        assert(f.mem[r.invRangeLo]==0xffffffffu && f.mem[r.invRangeHi]==0x1fu);
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u+12u);
+        // The clients' engine ranges as gfxhub_v3_0_program_invalidation, before-values kept.
+        assert(f.mem[r.invRange[3][0]]==0xffffffffu && f.mem[r.invRange[3][1]]==0x1fu);
         {   const cg::InvRange iv=f.dev.stats().inv;
-            assert(iv.loBefore==0u && iv.hiBefore==0u && iv.lo==0xffffffffu && iv.hi==0x1fu);}
+            assert(iv.loBefore==0u && iv.hiBefore==0u && iv.lo==0xffffffffu && iv.hi==0x1fu && iv.written==12u);}
         // Doorbells: MEC range 0..0x450 bytes, NBIO aperture bit 0 set, the rest of the word kept.
         assert(f.mem[r.mecDbLower]==0u && f.mem[r.mecDbUpper]==0x450u && f.mem[r.nbioAperEn]==0x101u);
         {   const cg::DoorbellSetup db=f.dev.stats().db;
@@ -421,23 +436,35 @@ int main() {
         assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Quarantined);
         uint32_t slot=0;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==1u);   // the slot stays taken
     }
+    // A flush that never ACKs leaves the queue in its WAIT_REG_MEM: the unmap quarantines.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
-        uint32_t slot=0,x=0;uint64_t vx=0;
-        assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.boCreate(slot,4096,x,vx)==cg::Code::Ok);
+        App a=setup(f,co,k,7,0x100000000ull);uint32_t x=0;uint64_t vx=0,s=0,ret=0;
+        const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
+        assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok && f.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok);
+        assert(f.dev.boCreate(a.slot,4096,x,vx)==cg::Code::Ok);
         f.noAck=true;
-        const size_t before=f.writes.size();
-        assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Ok);            // new PTEs: no flush
-        for(size_t i=before;i<f.writes.size();++i)assert(f.writes[i].first!=r.invReq);
-        assert(f.dev.boFree(slot,x)==cg::Code::Quarantined && f.heap.covers(vx,4096));   // unmap needs the ACK
+        const unsigned before=f.flushes;
+        assert(f.dev.vaMap(a.slot,x,0x500000,true,false)==cg::Code::Ok && f.flushes==before);   // new PTEs: no flush
+        assert(f.dev.boFree(a.slot,x)==cg::Code::Quarantined && f.heap.covers(vx,4096));      // unmap needs the ACK
         const cg::FlushMiss m=f.dev.stats().miss;
-        assert(m.vmid==2u && m.req==cg::invalidateReq(2) && m.reqBack==cg::invalidateReq(2) && m.ack==0u && m.misses==1u);
+        assert(m.vmid==2u && m.eng==7u && m.req==cg::invalidateReq(2) && m.reqBack==cg::invalidateReq(2) && m.ack==0u && m.misses==1u);
+        assert(f.dev.stats().tlbFlushes==0u);
     }
-    // 5a. An engine 17 range already set is not rewritten, and a flush then ACKs.
-    {   Fake f(r);f.mem[r.invRangeLo]=0xffffffffu;f.mem[r.invRangeHi]=0x1fu;
-        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
-        for(const auto &w:f.writes)assert(w.first!=r.invRangeLo && w.first!=r.invRangeHi);
+    // 5a. Ranges already set are not rewritten; a client that never submitted closes with no
+    //     flush (nothing ran in its VMID), one that did flushes once on its own queue and the
+    //     slot is reused, the new client's work landing in its own buffers.
+    {   Fake f(r);
+        for(const auto &e:r.invRange){f.mem[e[0]]=0xffffffffu;f.mem[e[1]]=0x1fu;}
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.dev.stats().inv.written==0u);
+        for(const auto &w:f.writes)for(const auto &e:r.invRange)assert(w.first!=e[0] && w.first!=e[1]);
         uint32_t slot=0;assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.close(slot)==cg::Code::Ok);
-        assert(f.dev.stats().tlbFlushes==1u && f.dev.stats().miss.misses==0u);
+        assert(f.dev.stats().tlbFlushes==0u && f.flushes==0u);
+        App a=setup(f,co,k,7,0x100000000ull);uint64_t s=0,ret=0;
+        const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
+        assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok && f.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok && imageOk(f,a,7));
+        assert(f.dev.close(a.slot)==cg::Code::Ok && f.dev.stats().tlbFlushes==1u && f.flushes==1u && f.dev.stats().miss.misses==0u);
+        App b=setup(f,co,k,9,0x100000000ull);assert(b.slot==a.slot);
+        assert(f.dev.submit(b.slot,&ia,1,s)==cg::Code::Ok && f.dev.wait(b.slot,s,1000,ret)==cg::Code::Ok && imageOk(f,b,9));
     }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
@@ -477,9 +504,9 @@ int main() {
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
         h.mem[r.mecDbLower]=0x110u;h.mem[r.mecDbUpper]=0xffcu;h.mem[r.nbioAperEn]=1u;   // MES's range covers ours
-        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==2u+12u);
-        assert(h.writes[0].first==r.invRangeLo && h.writes[1].first==r.invRangeHi);   // G36-G39 never set it
-        for(size_t i=2;i<h.writes.size();++i)assert(h.writes[i].first==r.g.v.q.grbm);  // only the HQD ACTIVE checks
+        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==12u+12u);
+        for(size_t i=0;i<12u;++i)assert(h.writes[i].first==r.invRange[i/2u][i%2u]);   // G36-G39 never set them
+        for(size_t i=12;i<h.writes.size();++i)assert(h.writes[i].first==r.g.v.q.grbm);  // only the HQD ACTIVE checks
     }
     // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.
     {   namespace nf=n48n_front;

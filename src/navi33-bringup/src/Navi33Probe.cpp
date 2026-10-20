@@ -1219,12 +1219,12 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
     const cg::Stats st=gpuHost_.dev.stats();
     char line[400];
     snprintf(line,sizeof(line),"clients %u buffers %u emitted %llu retired %llu writes %u flushes %u heap free %llu MiB "
-             "flush misses %u (vmid %u req %x reads %x ack %x) doorbells aper %x->%x range %x..%x->%x..%x pq %x->%x reclaimed %u "
-             "eng17 range %x/%x->%x/%x",
+             "flush misses %u (vmid %u eng %u req %x reads %x ack %x) doorbells aper %x->%x range %x..%x->%x..%x pq %x->%x "
+             "reclaimed %u inv range %x/%x->%x/%x written %u",
              st.clients,st.bos,st.emitted,st.retired,st.writes,st.tlbFlushes,vramHeap_.freeBytes()>>20,
-             st.miss.misses,st.miss.vmid,st.miss.req,st.miss.reqBack,st.miss.ack,st.db.aperBefore,st.db.aper,
+             st.miss.misses,st.miss.vmid,st.miss.eng,st.miss.req,st.miss.reqBack,st.miss.ack,st.db.aperBefore,st.db.aper,
              st.db.lowerBefore,st.db.upperBefore,st.db.lower,st.db.upper,st.db.pqBefore,st.db.pq,st.db.reclaimed,
-             st.inv.loBefore,st.inv.hiBefore,st.inv.lo,st.inv.hi);
+             st.inv.loBefore,st.inv.hiBefore,st.inv.lo,st.inv.hi,st.inv.written);
     setProperty("Navi33,ClientGpu",line);
     // The last client whose wait timed out: its queue as the CP saw it.
     for(uint32_t i=0;i<navi33::client_gpu::kClients;++i) {

@@ -25,3 +25,4 @@ runs/
 
 # Python bytecode
 __pycache__/
+.claude/settings.local.json
