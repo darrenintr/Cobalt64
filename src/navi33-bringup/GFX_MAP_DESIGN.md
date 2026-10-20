@@ -96,6 +96,19 @@ evidence: no 0.0.59 kext has run on the card. Any physical attempt still needs
 a full host power-off and renewed explicit approval; the current 0.0.58 VM must
 remain untouched until then.
 
+## 0.0.60 read-only post-map capture
+
+The follow-up captures the GFX ME0/pipe0/queue0 HQD after the MAP_QUEUES
+poll: ACTIVE, VMID, BASE/BASE_HI, RPTR, CNTL and WPTR/WPTR_HI. These BAR5
+offsets come from upstream Linux `gc_11_0_0_offset.h`. `Navi33,GfxMap` reports
+the raw values and a validity bit. A failed read marks the snapshot invalid but
+does not change the G42 result or cause another write. None of these registers
+was added to either write allowlist. Host tests check the resolved offsets,
+reject them as write targets, and show that a failed diagnostic read leaves a
+MAP timeout intact. The values are raw evidence; zero is not interpreted as
+idle if GC is not answering. This change has host-test evidence only and has
+not run on the card.
+
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
 setup question only, not a confirmed missing step in the GFX map path. The host

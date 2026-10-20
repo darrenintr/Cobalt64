@@ -548,8 +548,9 @@ output survives a hang and Linux can inspect a stuck guest.
   expand packet or stage-window allowlists without a new bounded design and
   renewed approval. Sources: upstream Linux
   `amdgpu_gfx.c`, `gfx_v11_0.c`, `amdgpu_hdp.c`, and `amdgpu_device.c`.
-- The 0.0.58 G42 latch and stage-window attempt are consumed. A 0.0.59 GPU
-  write attempt requires a full host power-off and renewed explicit approval.
+- The 0.0.58 G42 latch and stage-window attempt are consumed. Any further G42
+  GPU write attempt (including kext 0.0.60) requires a full host power-off and
+  renewed explicit approval.
   Keep the current VM running on 0.0.58 until then; do not reboot, shut it down,
   or touch the GPU. No Metal nub/accelerator is installed or enabled.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
@@ -568,6 +569,13 @@ output survives a hang and Linux can inspect a stuck guest.
   and Mach-O `LC_UUID` is `21868249-AAFB-3ACA-A72F-9E20F0557E70`. The current
   VM remains on 0.0.58; no GPU read/write, reboot or power-off was made during
   this offline work. This candidate has not run on the card.
+- **0.0.60 read-only GFX HQD capture:** after the G42 poll, the kext records
+  raw ACTIVE, VMID, BASE/BASE_HI, RPTR, CNTL and WPTR/WPTR_HI values from the
+  upstream GC 11.0 register offsets. A failed diagnostic read only clears the
+  snapshot-valid bit; it does not change the map result or add a write. Host
+  tests pass, including exact RX 7600 offset resolution, write-allowlist
+  exclusion, and read-failure behavior. CI and the macos-26-intel artifact are
+  pending. No GPU read/write or reboot was performed for this change.
 - Guest auxiliary build staging remains `/Users/darren/auxbuild`; preserve it. Previous
   handoff found no built accelerator kext, only Navi33GOPFB installed.
 

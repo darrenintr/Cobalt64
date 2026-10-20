@@ -8,6 +8,10 @@
 namespace navi33 { namespace gfx_map {
 constexpr uint32_t kSchedulerSeg=1u,kSchedulerDw=0x098au; // RLC_CP_SCHEDULERS, gc_11_0_0_offset.h
 constexpr uint32_t kMappedDw=0x1e94u;                    // CP_GFX_HQD_MAPPED (read only)
+// Raw post-MAP_QUEUES snapshot, gc_11_0_0_offset.h. These are diagnostics only.
+constexpr uint32_t kGfxActiveDw=0x1e80u,kGfxVmidDw=0x1e81u,kGfxBaseDw=0x1e86u,
+                   kGfxBaseHiDw=0x1e87u,kGfxRptrDw=0x1e88u,kGfxCntlDw=0x1e8fu,
+                   kGfxWptrDw=0x1e91u,kGfxWptrHiDw=0x1e92u;
 constexpr uint64_t kG34Vram=250ull<<20;
 constexpr uint32_t kMqdOff=0x4200u,kMqdDwords=512u;       // struct v11_gfx_mqd
 constexpr uint32_t kAppendOff=mec_queue::kRingOff+64u,kEndWptr=32u;
@@ -110,5 +114,13 @@ struct HdpReport {
     uint32_t remapBytes=0,remapMemBefore=0,remapRegBefore=0,
              remapMemAfter=0,remapRegAfter=0,memsize=0,writes=0;
 };
-struct Report { State state=State::Off; Snapshot before{}; HdpReport hdp{}; uint32_t fence=0,mapped=0,kiqRptr=0; };
+struct GfxQueueSnapshot {
+    bool valid=false;
+    uint32_t active=0,vmid=0,baseLo=0,baseHi=0,rptr=0,cntl=0,wptrLo=0,wptrHi=0;
+};
+struct Report {
+    State state=State::Off; Snapshot before{}; HdpReport hdp{};
+    GfxQueueSnapshot gfxAfter{};
+    uint32_t fence=0,mapped=0,kiqRptr=0;
+};
 } }

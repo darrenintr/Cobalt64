@@ -121,6 +121,8 @@ struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
     uint64_t dequeue=0, invReq=0, invAck=0, invRangeLo=0, invRangeHi=0, l2Status=0, scheduler=0, gfxMapped=0;
+    uint64_t gfxHqdActive=0,gfxHqdVmid=0,gfxHqdBase=0,gfxHqdBaseHi=0,gfxHqdRptr=0,
+             gfxHqdCntl=0,gfxHqdWptr=0,gfxHqdWptrHi=0; // raw G42 post-map diagnostics
     gfx_map::HdpPlan hdp{};            // only consumed by the opt-in G42 mapping stage
     gfx_ring::Regs gfx{};           // the kernel's gfx ring 0 (G40)
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
@@ -143,6 +145,12 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes,uint32_t pageBytes=stati
     const auto scheduler=resolveDword(d,Engine::GFX11,gfx_map::kSchedulerSeg,gfx_map::kSchedulerDw,bytes);
     if(scheduler.code!=AddressCode::Pass || !one(gfx_map::kMappedDw,r.gfxMapped))return r;
     r.scheduler=scheduler.bar5ByteOffset;
+    const struct { uint32_t dw; uint64_t *out; } gfxQueueReads[]={
+        {gfx_map::kGfxActiveDw,&r.gfxHqdActive},{gfx_map::kGfxVmidDw,&r.gfxHqdVmid},
+        {gfx_map::kGfxBaseDw,&r.gfxHqdBase},{gfx_map::kGfxBaseHiDw,&r.gfxHqdBaseHi},
+        {gfx_map::kGfxRptrDw,&r.gfxHqdRptr},{gfx_map::kGfxCntlDw,&r.gfxHqdCntl},
+        {gfx_map::kGfxWptrDw,&r.gfxHqdWptr},{gfx_map::kGfxWptrHiDw,&r.gfxHqdWptrHi}};
+    for(const auto &x:gfxQueueReads)if(!one(x.dw,*x.out))return r;
     r.hdp=gfx_map::resolveHdp(d,bytes,pageBytes);
     r.gfx=gfx_ring::resolve(d,bytes);
     if(!r.gfx.valid || !one(kDequeueRequest,r.dequeue) || !one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) ||
@@ -792,7 +800,21 @@ private:
             if(gfxMap_.fence==gm::kMapFence)break;
             h_.delayUs(h_.ctx,100u);
         }
-        if(!rd(r_->gfxMapped,gfxMap_.mapped) || !sel(mq::grbmSelect(1u,0u,0u)))return false;
+        if(!rd(r_->gfxMapped,gfxMap_.mapped))return false;
+        // Capture the GFX ME0/pipe0/queue0 HQD after MAP_QUEUES, while GRBM is
+        // back at its default selection. A failed diagnostic read must not
+        // change the map result or add any hardware writes.
+        auto &g=gfxMap_.gfxAfter;bool gfxReads=true;
+        gfxReads=rd(r_->gfxHqdActive,g.active) && gfxReads;
+        gfxReads=rd(r_->gfxHqdVmid,g.vmid) && gfxReads;
+        gfxReads=rd(r_->gfxHqdBase,g.baseLo) && gfxReads;
+        gfxReads=rd(r_->gfxHqdBaseHi,g.baseHi) && gfxReads;
+        gfxReads=rd(r_->gfxHqdRptr,g.rptr) && gfxReads;
+        gfxReads=rd(r_->gfxHqdCntl,g.cntl) && gfxReads;
+        gfxReads=rd(r_->gfxHqdWptr,g.wptrLo) && gfxReads;
+        gfxReads=rd(r_->gfxHqdWptrHi,g.wptrHi) && gfxReads;
+        g.valid=gfxReads;
+        if(!sel(mq::grbmSelect(1u,0u,0u)))return false;
         const bool got=rd(mq::hqd(q,kiq::kCpHqdPqRptr),gfxMap_.kiqRptr);
         if(!sel(0u) || !got)return false;
         if(gfxMap_.fence!=gm::kMapFence || !(gfxMap_.mapped&1u))return false;

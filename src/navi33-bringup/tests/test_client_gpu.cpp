@@ -35,7 +35,7 @@ constexpr uint32_t qsOf(uint32_t k){return mq::grbmSelect(1,cg::pipeOf(k-cg::kFi
 // INDIRECT_BUFFER in the queue's VMID, the gradient dispatch, RELEASE_MEM.
 struct Fake {
     bool g42=false,mapStuck=false;unsigned stageWrites=0,hdpWrites=0,mapTriggers=0;
-    bool hdpFlushSeen=false,hdpMemsizeReadAfterFlush=false,corruptRemapReadback=false;
+    bool hdpFlushSeen=false,hdpMemsizeReadAfterFlush=false,corruptRemapReadback=false,failGfxSnapshotRead=false;
     bool failHdpRegWrite=false,failHdpFlushWrite=false;
     std::vector<unsigned> hdpEvents;
     cg::Regs r; vh::Heap heap; cg::Device dev;
@@ -62,6 +62,8 @@ struct Fake {
         for(uint64_t o:{g.pfpStart,g.pfpStartHi,g.meStart,g.meStartHi,g.cpStat,g.maxContext,g.deviceId,g.wptrDelay,g.rbVmid,
                         g.rb0Cntl,g.rb0Wptr,g.rb0WptrHi,g.rb0Rptr,g.rb0RptrAddr,g.rb0RptrAddrHi,g.wptrPollLo,g.wptrPollHi,
                         g.rb0Base,g.rb0BaseHi,g.rbActive,g.rbDoorbellCntl,g.rbDbLower,g.rbDbUpper})mem[o]=0;
+        for(uint64_t o:{r.gfxHqdActive,r.gfxHqdVmid,r.gfxHqdBase,r.gfxHqdBaseHi,r.gfxHqdRptr,
+                        r.gfxHqdCntl,r.gfxHqdWptr,r.gfxHqdWptrHi})mem[o]=0;
         mem[g.meCntl]=navi33::gfx_ring::kMeCntlDefault;
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
         assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
@@ -193,6 +195,7 @@ struct Fake {
     }
     static bool read(void *c,uint64_t off,uint32_t *v) {
         auto &f=*static_cast<Fake *>(c);
+        if(f.failGfxSnapshotRead && off==f.r.gfxHqdActive)return false;
         if(f.banked(off)){*v=f.bank[{f.sel(),off}];return true;}
         assert(f.mem.count(off));
         if(off==f.r.hdp.remapMem && f.corruptRemapReadback && f.hdpWrites>=2u)*v=0u;
@@ -258,6 +261,10 @@ struct Fake {
             const uint64_t mqd=f.q(p+12)-kFb;
             assert(f.get(mqd+162u*4u)==0x100u && f.get(mqd+130u*4u)==1u);
             const uint64_t base=f.q(mqd+136u*4u);
+            f.mem[f.r.gfxHqdActive]=f.get(mqd+130u*4u);f.mem[f.r.gfxHqdVmid]=f.get(mqd+131u*4u);
+            f.mem[f.r.gfxHqdBase]=f.get(mqd+136u*4u);f.mem[f.r.gfxHqdBaseHi]=f.get(mqd+137u*4u);
+            f.mem[f.r.gfxHqdRptr]=f.get(mqd+138u*4u);f.mem[f.r.gfxHqdCntl]=f.get(mqd+145u*4u);
+            f.mem[f.r.gfxHqdWptr]=f.get(mqd+149u*4u);f.mem[f.r.gfxHqdWptrHi]=f.get(mqd+150u*4u);
             f.mem[f.r.gfx.rb0Base]=uint32_t(base);f.mem[f.r.gfx.rb0BaseHi]=uint32_t(base>>32);
             f.mem[f.r.gfx.rb0Cntl]=f.get(mqd+145u*4u);f.mem[f.r.gfx.rbActive]=1u;f.mem[f.r.gfxMapped]=1u;
             f.gfxWptr=f.q(f.q(p+20)-kFb);f.runGfx();
@@ -378,6 +385,17 @@ int main() {
     auto b=rx7600_fixture::blob();IPDiscovery d;assert(d.parse(b.data(),b.size()));
     const auto r=cg::resolve(d,rx7600_fixture::kBar5);
     assert(r.valid && r.dequeue==(0x1260u+0x1fc1u)*4u && cg::allowed(r,r.g.v.l2c2));
+    assert(r.gfxHqdActive==(0x1260u+gfx_map::kGfxActiveDw)*4u &&
+           r.gfxHqdVmid==(0x1260u+gfx_map::kGfxVmidDw)*4u &&
+           r.gfxHqdBase==(0x1260u+gfx_map::kGfxBaseDw)*4u &&
+           r.gfxHqdBaseHi==(0x1260u+gfx_map::kGfxBaseHiDw)*4u &&
+           r.gfxHqdRptr==(0x1260u+gfx_map::kGfxRptrDw)*4u &&
+           r.gfxHqdCntl==(0x1260u+gfx_map::kGfxCntlDw)*4u &&
+           r.gfxHqdWptr==(0x1260u+gfx_map::kGfxWptrDw)*4u &&
+           r.gfxHqdWptrHi==(0x1260u+gfx_map::kGfxWptrHiDw)*4u);
+    for(uint64_t o:{r.gfxHqdActive,r.gfxHqdVmid,r.gfxHqdBase,r.gfxHqdBaseHi,r.gfxHqdRptr,
+                    r.gfxHqdCntl,r.gfxHqdWptr,r.gfxHqdWptrHi})
+        assert(!cg::allowed(r,o) && !cg::mapAllowed(r,o));
     assert(r.hdp.valid() && r.hdp.remapMem==0x3934u && r.hdp.remapReg==0x3938u &&
            r.hdp.flush==0x7f000u && r.hdp.memsize==0x378cu && r.hdp.remapBytes==0x7f000u);
     assert(!cg::allowed(r,r.hdp.remapMem) && cg::mapAllowed(r,r.hdp.remapMem) &&
@@ -650,6 +668,8 @@ int main() {
         assert(f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::Complete && f->dev.gfxMapReport().hdp.writes==3u &&
                f->dev.gfxMapReport().hdp.remapMemAfter==0x7f000u && f->dev.gfxMapReport().hdp.remapRegAfter==0x7f004u &&
                f->dev.gfxMapReport().hdp.memsize==8192u);
+        assert(f->dev.gfxMapReport().gfxAfter.valid && f->dev.gfxMapReport().gfxAfter.active==1u &&
+               f->dev.gfxMapReport().gfxAfter.vmid==0u && f->dev.gfxMapReport().gfxAfter.cntl==0x20a0090bu);
         assert((f->hdpEvents==std::vector<unsigned>{1u,2u,3u,3u,3u,4u,5u,5u,6u}));
         const auto count=f->writes.size();assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->writes.size()==count);
         f=std::make_unique<Fake>(r);f->g34();f->mem[r.hdp.remapMem]=0x7f000u;f->mem[r.hdp.remapReg]=0x7f004u;f->dev.setGfxMap(true);
@@ -683,6 +703,11 @@ int main() {
         f=std::make_unique<Fake>(r);f->g34();f->mapStuck=true;f->dev.setGfxMap(true);
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
         assert(f->dev.gfxMapReport().state==gfx_map::State::MapTimeout && f->stageWrites==3u);
+        const size_t mapStuckWrites=f->writes.size();
+        f=std::make_unique<Fake>(r);f->g34();f->mapStuck=true;f->failGfxSnapshotRead=true;f->dev.setGfxMap(true);
+        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
+        assert(f->dev.gfxMapReport().state==gfx_map::State::MapTimeout && !f->dev.gfxMapReport().gfxAfter.valid &&
+               f->writes.size()==mapStuckWrites);
     }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);

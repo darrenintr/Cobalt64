@@ -1263,12 +1263,15 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
                  static_cast<unsigned long long>(st.gfx.ringMc),st.gfx.wptr,st.gfx.rptr,st.gfx.fence,st.gfx.mmioKick ? "MMIO" : "doorbell");
         setProperty("Navi33,ClientGfx",gl);
         const auto &m=gpuHost_.dev.gfxMapReport();
-        char ml[512];
+        char ml[768];
         snprintf(ml,sizeof(ml),"state %u scheduler %x G34 active %x vmid %u base %x:%x control %x rptr %x wptr %x:%x old fence %x mapped %x -> fence %x mapped %x rptr %x "
+                 "GFXHQD valid %u active %x vmid %u base %x:%x control %x rptr %x wptr %x:%x "
                  "HDP state %u plan %u aperture %x writes %u remap %x:%x->%x:%x memsize %u MiB",
                  static_cast<unsigned>(m.state),m.before.scheduler,m.before.active,m.before.vmid,
                  m.before.pqHi,m.before.pqLo,m.before.pqControl,m.before.rptr,m.before.wptrHi,m.before.wptrLo,
                  m.before.fence,m.before.mapped,m.fence,m.mapped,m.kiqRptr,
+                 static_cast<unsigned>(m.gfxAfter.valid),m.gfxAfter.active,m.gfxAfter.vmid,
+                 m.gfxAfter.baseHi,m.gfxAfter.baseLo,m.gfxAfter.cntl,m.gfxAfter.rptr,m.gfxAfter.wptrHi,m.gfxAfter.wptrLo,
                  static_cast<unsigned>(m.hdp.state),static_cast<unsigned>(m.hdp.plan),m.hdp.remapBytes,m.hdp.writes,
                  m.hdp.remapMemBefore,m.hdp.remapRegBefore,m.hdp.remapMemAfter,m.hdp.remapRegAfter,m.hdp.memsize);
         setProperty("Navi33,GfxMap",ml);
