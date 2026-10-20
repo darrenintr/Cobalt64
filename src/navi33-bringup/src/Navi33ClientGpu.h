@@ -583,7 +583,7 @@ private:
         gfx_.state=GfxState::Unhalt;
         if(!wr(g.maxContext,gr::kMaxHwContexts-1u) || !wr(g.deviceId,1u) ||
            !wr(g.meCntl,me&~(gr::kPfpHalt|gr::kMeHalt)))return;
-        if(!waitCpIdle()){gfx_.state=GfxState::Timeout;return;}
+        waitCpIdle();                     // as gfx_v11_0_cp_gfx_enable: a busy CP_STAT is only noted (MES keeps the CP busy)
         rd(g.meCntl,gfx_.me);
         // The clear-state preamble and the ring test, then WPTR by register.
         static uint32_t p[gfx11_clear_state::kCsbDwords+16u];
