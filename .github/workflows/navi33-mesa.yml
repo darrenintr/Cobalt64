@@ -39,12 +39,15 @@ jobs:
           meson setup build --buildtype=release \
             -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms= \
             -Dllvm=disabled -Dopengl=false -Dglx=disabled -Degl=disabled -Dgles1=disabled -Dgles2=disabled \
-            -Dzstd=disabled -Dexpat=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dbuild-tests=false
+            -Dzstd=disabled -Dexpat=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dbuild-tests=false -Dspirv-tools=disabled
       - name: Build libvulkan_radeon
         working-directory: mesa
         run: |
           ninja -C build src/amd/vulkan/libvulkan_radeon.dylib
           file build/src/amd/vulkan/libvulkan_radeon.dylib
+          # Only system libraries may remain: the guest has no Homebrew.
+          otool -L build/src/amd/vulkan/libvulkan_radeon.dylib | tee /dev/stderr | tail -n +2 | \
+            awk '{print $1}' | grep -vE '^(/usr/lib/|/System/Library/|@rpath/libvulkan_radeon)' && { echo "non-system dependency" >&2; exit 1; } || true
           nm -gU build/src/amd/vulkan/libvulkan_radeon.dylib | grep -E 'vk_icdGetInstanceProcAddr|radv_darwin_' | head
       - name: Package
         run: |
