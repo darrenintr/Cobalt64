@@ -1,0 +1,75 @@
+From cdd877b7b73243de49da6189186559314627cef0 Mon Sep 17 00:00:00 2001
+From: Cobalt64 contributors <noreply@example.invalid>
+Date: Tue, 20 Oct 2026 14:35:47 +0800
+Subject: [PATCH] radv/darwin: serve a kernel without a high VA range from the
+ low range alone
+
+The Navi33 kext's page tables cover the low 2^47 (QueryInfo reports no high
+range). Instead of refusing the canned table's high range, the device info is
+a copy without it, so libdrm's VA manager clears AMDGPU_VA_RANGE_HIGH as on a
+GPU without one.
+---
+ src/amd/common/darwin/ac_darwin_drm.c | 22 ++++++++++++++++++----
+ 1 file changed, 18 insertions(+), 4 deletions(-)
+
+diff --git a/src/amd/common/darwin/ac_darwin_drm.c b/src/amd/common/darwin/ac_darwin_drm.c
+index d59f2ad..c2904da 100644
+--- a/src/amd/common/darwin/ac_darwin_drm.c
++++ b/src/amd/common/darwin/ac_darwin_drm.c
+@@ -63,6 +63,7 @@ struct acd_core {
+    bool shared; /* the process-wide core (false: the private HOST_BO stand-in core) */
+    struct acd_kext *kext; /* NULL in the HOST_BO stand-in */
+    const struct amdgpu_device *canned; /* the table for the GPU the kext reported (QueryInfo gc_version) */
++   struct amdgpu_device live; /* the canned table as this kernel serves it (no high VA range if it has none) */
+    struct amdgpu_va_manager *va_mgr;
+    struct util_sync_provider *sync; /* master; every device holds a clone */
+    pthread_mutex_t bo_lock;
+@@ -147,7 +148,8 @@ env_is_1(const char *name)
+ 
+ /* Hello, live checks and the info snapshot; every failure is one clear stderr line. */
+ static int
+-acd_native_handshake(struct acd_kext *kext, const struct amdgpu_device **canned_out, uint32_t *minor_out)
++acd_native_handshake(struct acd_kext *kext, const struct amdgpu_device **canned_out, uint32_t *minor_out,
++                     bool *no_high_va)
+ {
+    struct acd_hello h;
+    int r = acd_kext_hello(kext, &h);
+@@ -200,10 +202,13 @@ acd_native_handshake(struct acd_kext *kext, const struct amdgpu_device **canned_
+       return -ENODEV;
+    }
+ 
+-   /* The canned VA ranges must lie inside the kernel's. */
++   /* The canned VA ranges must lie inside the kernel's. A kernel without a high range (the Navi33 kext: its page
++    * tables cover the low 2^47 only) is served from the low range alone: libdrm's VA manager then clears
++    * AMDGPU_VA_RANGE_HIGH, as it does on Linux for a GPU without one. */
+    const struct drm_amdgpu_info_device *di = &canned->dev;
++   *no_high_va = !info.va_high_first && !info.va_high_last;
+    if (di->virtual_address_offset < info.va_low_first || di->virtual_address_max - 1 > info.va_low_last ||
+-       (di->high_va_offset &&
++       (di->high_va_offset && !*no_high_va &&
+         (di->high_va_offset < info.va_high_first || di->high_va_max - 1 > info.va_high_last))) {
+       fprintf(stderr, "radv-darwin: canned VA ranges [0x%llx,0x%llx) [0x%llx,0x%llx) are not inside the kernel's "
+                       "[0x%llx,0x%llx] [0x%llx,0x%llx]\n",
+@@ -245,9 +250,18 @@ acd_core_create(const struct amdgpu_device *canned, bool host_bo, struct acd_cor
+    c->refcount = 1;
+ 
+    if (!host_bo) {
++      bool no_high_va = false;
+       int r = acd_kext_open(&c->kext);
+       if (r == 0)
+-         r = acd_native_handshake(c->kext, &canned, &c->minor);
++         r = acd_native_handshake(c->kext, &canned, &c->minor, &no_high_va);
++      if (r == 0) {
++         c->live = *canned;
++         if (no_high_va) {
++            c->live.dev.high_va_offset = 0;
++            c->live.dev.high_va_max = 0;
++         }
++         canned = &c->live;
++      }
+       if (r) {
+          acd_kext_destroy(c->kext);
+          pthread_mutex_destroy(&c->bo_lock);
+-- 
+2.55.0
+
