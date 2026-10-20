@@ -22,6 +22,8 @@ namespace mq=mec_queue;
 namespace gd=gfx11_dispatch;
 namespace kiq=gfx11_kiq;
 constexpr uint64_t kFb=0x8000000000ull;
+// The HQD of the client with VMID k (queue 0/1 of MEC pipe 1..3).
+constexpr uint32_t qsOf(uint32_t k){return mq::grbmSelect(1,cg::pipeOf(k-cg::kFirstVmid),cg::queueOf(k-cg::kFirstVmid));}
 // A fake GC after the autostart: banked HQDs (GRBM select), contexts 2..7 that walk
 // four levels from their own roots, a TLB per VMID that keeps translations until
 // invalidation engine 17 flushes that VMID, and a CP that runs each queue's ring:
@@ -117,7 +119,7 @@ struct Fake {
         }
     }
     void runQueue(uint32_t k) {
-        const uint32_t qs=mq::grbmSelect(1,0,k);
+        const uint32_t qs=qsOf(k);
         if(stuck || paused.count(k) || !(bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]&1u))return;
         assert((bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdVmid)}]==k));
         const uint64_t mqd=bank[{qs,mq::hqd(r.g.v.q,0x1fa9u)}]|(uint64_t(bank[{qs,mq::hqd(r.g.v.q,0x1faau)}])<<32);
@@ -150,7 +152,9 @@ struct Fake {
             f.mem[f.r.invAck]=f.noAck ? 0u : ack;++f.flushes;
         }
         if(off==f.r.dequeue && v==cg::kDrainPipe && !f.stuck)f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdActive)}]=0u;
-        if(off==f.r.g.v.q.poll1)for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(v&(1u<<k))f.runQueue(k);
+        // GRBM select: 0, a VMID (SH_MEM), or a client HQD: never MES's queues 2+ or pipe 0.
+        if(off==f.r.g.v.q.grbm && v && !(v&0xf0u))assert(((v>>2)&3u)==1u && (v&3u)>=1u && ((v>>8)&7u)<=1u);
+        if(off==f.r.g.v.q.poll1)for(uint32_t i=0;i<cg::kClients;++i)if(v&cg::pollBit(i))f.runQueue(cg::kFirstVmid+i);
         return true;
     }
     static bool vw(void *c,uint64_t off,const uint32_t *src,uint32_t n) {
@@ -255,7 +259,7 @@ int main() {
         assert(f.dev.wait(c.slot,s,1000,ret)==cg::Code::Ok && ret==s);
         // Close: drain, dequeue, disable context, flush, give back every page.
         assert(f.dev.close(c.slot)==cg::Code::Ok && f.dev.close(a.slot)==cg::Code::Ok);
-        assert((f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && !(f.mem[r.ctx[0][0]]&1u)));
+        assert((f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==0u && !(f.mem[r.ctx[0][0]]&1u)));
         assert(f.heap.usedBytes(cg::kTagClient)==0u && f.heap.usedBytes(gv::kTagTables)==0u && f.heap.consistent());
     }
     // 2. Teardown returns every page; reopening reuses the slot.
@@ -334,7 +338,7 @@ int main() {
         assert(f.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok);
         const uint64_t used=f.heap.usedBytes(cg::kTagClient);
         assert(f.dev.close(a.slot)==cg::Code::Quarantined && f.heap.usedBytes(cg::kTagClient)==used);
-        assert((f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==1u));   // never dequeued under work
+        assert((f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==1u));   // never dequeued under work
     }
     // 3f. The user fence (cs_chunk_fence): the 64-bit sequence lands in the user's buffer;
     //     a fence outside a writeable mapping is refused; a GPU null pointer faults.
@@ -392,7 +396,7 @@ int main() {
     }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
-        f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
+        f.bank[{qsOf(2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
         uint32_t slot=9;assert(f.dev.open(&f,slot)==cg::Code::Ok && slot==1u && f.dev.client(1)->vmid==3u);
         assert(f.dev.client(0)->state==cg::State::Quarantined && f.mem[r.g.v.q.grbm]==0u);
     }

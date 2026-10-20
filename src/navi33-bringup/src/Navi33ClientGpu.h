@@ -4,11 +4,11 @@
 // amdgpu's DRM interface (and of the Navi48 N48N ABI that RADV's Darwin backend
 // speaks). No hardware I/O except callbacks; the caller serializes.
 //
-// Each client owns VMID k and compute queue me 1 pipe 0 queue k (k = 2..7; VMID/queue
-// 1 stay with the G36-G39 proofs), its own four-level address space (Navi33Gmc11Vm.h)
+// Each client owns VMID k (k = 2..7; VMID 1 stays with the G36-G39 proofs), a compute
+// queue (queue 0/1 of MEC pipe 1..3, see pipeOf), its own four-level address space (Navi33Gmc11Vm.h)
 // and its buffers, all from the kernel's VRAM heap. The queue is loaded as
 // hqd_load_v11 does (KFD without a scheduler), its ring and fence live in kernel
-// buffers mapped at the top of the client's VA space (ring read-only for the GPU),
+// buffer mapped below the client's first user page,
 // and a submission is amdgpu's compute IB emission: INDIRECT_BUFFER per IB with the
 // VMID in its control word, then a RELEASE_MEM fence with the sequence number
 // (gfx_v11_0_ring_emit_ib_compute / _emit_fence). The WPTR is 64-bit and monotonic
@@ -35,7 +35,15 @@ namespace mq=mec_queue;
 namespace kiq=gfx11_kiq;
 namespace gd=gfx11_dispatch;
 namespace v1=vmid1;
-constexpr uint32_t kFirstVmid=2u, kClients=6u;                 // VMIDs / queues 2..7
+constexpr uint32_t kFirstVmid=2u, kClients=6u;                 // VMIDs 2..7
+// Each client's HQD: queue 0 or 1 of MEC pipe 1..3. Queues 2 and up of every pipe belong
+// to MES (amdgpu_mes: compute_hqd_mask 0xc, and MES runs since the autostart): on the
+// card (2026-10-20 09:37) queue 3 never took its WPTR, queue 4 was active before use and
+// queue 5 went inactive on its own. Queues 0/1 of pipe 0 carry G34-G39.
+constexpr uint32_t pipeOf(uint32_t slot) { return 1u+slot/2u; }
+constexpr uint32_t queueOf(uint32_t slot) { return slot%2u; }
+constexpr uint32_t pollBit(uint32_t slot) { return 1u<<(8u*pipeOf(slot)+queueOf(slot)); }   // CP_PQ_WPTR_POLL_CNTL1 mask
+static_assert(pipeOf(5)==3u && queueOf(5)==1u && pollBit(0)==0x100u,"client HQDs");
 constexpr uint32_t kMaxBos=512u, kMaxIbs=16u;
 // The client's queue lives below the first user page (Mesa's amdgpu VA manager starts at
 // 0x10000 and runs to the GMC hole), page 0 left unmapped so a null GPU pointer faults.
@@ -175,7 +183,7 @@ public:
             if(c_[i].state!=State::Free)continue;
             // A queue an earlier boot of the kext left active (stuck work) is never reused.
             uint32_t active=0;
-            if(!sel(mq::grbmSelect(mq::kMeMec,0u,kFirstVmid+i)) || !rd(mq::hqd(r_->g.v.q,kiq::kCpHqdActive),active) || !sel(0u))
+            if(!sel(qsel(i)) || !rd(mq::hqd(r_->g.v.q,kiq::kCpHqdActive),active) || !sel(0u))
                 return Code::HwFailed;
             if(active&1u){c_[i].state=State::Quarantined;c_[i].vmid=kFirstVmid+i;continue;}
             slot=i;
@@ -194,11 +202,8 @@ public:
         tio_.dev=this;
         const gv::Io io{&tio_,zeroPage,putEntry};
         if(!zero(c.queue) || !zero(c.mqd) || c.space.init(*heap_,io)!=gv::Code::Ok ||
-           c.space.map(kKernelVa+mq::kEopOff,q.offset+mq::kEopOff,0x1000u,
-                       gv::kPteValid|gv::kPteRead|gv::kPteWrite)!=gv::Code::Ok ||
-           c.space.map(kKernelVa+mq::kRingOff,q.offset+mq::kRingOff,0x1000u,gv::kPteValid|gv::kPteRead)!=gv::Code::Ok ||
-           c.space.map(kKernelVa+mq::kRptrOff,q.offset+mq::kRptrOff,0x2000u,
-                       gv::kPteValid|gv::kPteRead|gv::kPteWrite)!=gv::Code::Ok) {
+           // EOP, ring, RPTR/WPTR, fence as G36 mapped its queue (VRAM, RWX); page 0 unmapped.
+           c.space.map(kKernelVa+mq::kEopOff,q.offset+mq::kEopOff,0x4000u,gv::kPteVram)!=gv::Code::Ok) {
             quarantineIfMapped(c);        // nothing is live on the GPU yet: free what we can
             return Code::NoMemory;
         }
@@ -334,7 +339,7 @@ public:
         const uint32_t wp[2]={static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32)};
         if(!vramPut(c->queue.vram+mq::kWptrOff,wp,2u)){quarantine(*c);return Code::Quarantined;}
         c->wptr=end;c->emitted=s;c->seqEnd[s%64u]=end;
-        if(!sel(mq::grbmSelect(mq::kMeMec,0u,c->vmid)) || !wr(r_->g.v.q.poll1,1u<<c->vmid) || !sel(0u)) {
+        if(!sel(qsel(slot)) || !wr(r_->g.v.q.poll1,pollBit(slot)) || !sel(0u)) {
             quarantine(*c);return Code::Quarantined;
         }
         seq=s;return Code::Ok;
@@ -399,6 +404,8 @@ public:
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
+    static constexpr uint32_t qsel(uint32_t slot) { return mq::grbmSelect(mq::kMeMec,pipeOf(slot),queueOf(slot)); }
+    uint32_t index(const Client &c) const { return static_cast<uint32_t>(&c-c_); }
     struct TableIo { Device *dev=nullptr; };
     bool rd(uint64_t off,uint32_t &v) { return h_.read(h_.ctx,off,&v) && v!=0xffffffffu; }
     bool wr(uint64_t off,uint32_t v) {
@@ -450,7 +457,7 @@ private:
         img.dw[gfx11_mqd::kCpHqdVmid]=c.vmid;
         if(!vramPut(c.mqd.vram,img.dw,gfx11_mqd::kDwords))return Code::HwFailed;
         const mq::Regs &q=r_->g.v.q;
-        if(!sel(mq::grbmSelect(mq::kMeMec,0u,c.vmid)))return Code::HwFailed;
+        if(!sel(qsel(index(c))))return Code::HwFailed;
         uint32_t active=0;
         if(!rd(mq::hqd(q,kiq::kCpHqdActive),active) || (active&1u)){sel(0u);return Code::HwFailed;}
         for(uint32_t dw=mq::kHqdFirst;dw<=mq::kHqdLast;++dw)
@@ -463,7 +470,7 @@ private:
             {kiq::kCpHqdPqWptrPollAddr,static_cast<uint32_t>(poll)},
             {kiq::kCpHqdPqWptrPollAddrHi,static_cast<uint32_t>(poll>>32)}};
         for(const auto &x:tail)if(!wr(mq::hqd(q,x.dw),x.val)){sel(0u);return Code::HwFailed;}
-        if(!wr(q.poll1,1u<<c.vmid) ||
+        if(!wr(q.poll1,pollBit(index(c))) ||
            !wr(mq::hqd(q,mq::kEopRptr),img.dw[gfx11_mqd::kCpMqdBaseAddrLo+(mq::kEopRptr-mq::kHqdFirst)]|mq::kEopInitFetcher) ||
            !wr(mq::hqd(q,kiq::kCpHqdActive),img.dw[gfx11_mqd::kCpHqdActive]|1u) || !sel(0u))
             {sel(0u);return Code::HwFailed;}
@@ -472,7 +479,7 @@ private:
     // hqd_destroy_v11 with DRAIN_PIPE.
     bool dequeue(Client &c) {
         const mq::Regs &q=r_->g.v.q;
-        if(!sel(mq::grbmSelect(mq::kMeMec,0u,c.vmid)))return false;
+        if(!sel(qsel(index(c))))return false;
         uint32_t active=0;
         if(!rd(mq::hqd(q,kiq::kCpHqdActive),active)){sel(0u);return false;}
         if(active&1u) {
@@ -493,7 +500,7 @@ private:
     // Diagnostics only: GRBM select writes and reads, nothing else.
     void snapshot(Client &c) {
         QueueSnap s{};s.taken=true;
-        if(sel(mq::grbmSelect(mq::kMeMec,0u,c.vmid))) {
+        if(sel(qsel(index(c)))) {
             for(uint32_t i=0;i<kSnapCount;++i)h_.read(h_.ctx,mq::hqd(r_->g.v.q,kSnapRegs[i]),&s.reg[i]);
             sel(0u);
         }
