@@ -1217,12 +1217,14 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
         if(c==cg::Code::Ok && vmid)*vmid=gpuHost_.dev.client(slot)->vmid;
     }
     const cg::Stats st=gpuHost_.dev.stats();
-    char line[400];
-    snprintf(line,sizeof(line),"clients %u buffers %u emitted %llu retired %llu writes %u invalidations %u heap free %llu MiB "
-             "doorbells aper %x->%x range %x..%x->%x..%x pq %x->%x reclaimed %u",
+    char line[512];
+    snprintf(line,sizeof(line),"clients %u buffers %u emitted %llu retired %llu writes %u flushes %u heap free %llu MiB "
+             "doorbells aper %x->%x range %x..%x->%x..%x pq %x->%x reclaimed %u "
+             "flush misses %u (vmid %u req %x reads %x ack %x) L2_CNTL2 %x->%x L2_STATUS %x->%x",
              st.clients,st.bos,st.emitted,st.retired,st.writes,st.tlbFlushes,vramHeap_.freeBytes()>>20,
              st.db.aperBefore,st.db.aper,st.db.lowerBefore,st.db.upperBefore,st.db.lower,st.db.upper,
-             st.db.pqBefore,st.db.pq,st.db.reclaimed);
+             st.db.pqBefore,st.db.pq,st.db.reclaimed,st.miss.misses,st.miss.vmid,st.miss.req,st.miss.reqBack,st.miss.ack,
+             st.l2.cntl2Before,st.l2.cntl2,st.l2.statusBefore,st.l2.status);
     setProperty("Navi33,ClientGpu",line);
     // Every client-capable HQD, at service start and now (diagnostics, reads only).
     {   char hq[16+cg::Device::kHqdDumpCount*9u];uint32_t w[cg::Device::kHqdDumpCount];char key[48];

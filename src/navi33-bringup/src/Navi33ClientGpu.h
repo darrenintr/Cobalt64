@@ -69,15 +69,19 @@ constexpr uint32_t ctxEndLo(uint32_t k) { return 0x1733u+2u*k; }
 static_assert(ctxCntl(1)==0x1689u && ctxBaseLo(2)==0x16f7u && ctxStartLo(2)==0x1717u && ctxEndLo(7)+1u==0x1742u,
               "context register strides (gfxhub_v3_0 ctx_distance 1, ctx_addr_distance 2)");
 constexpr uint32_t kDequeueRequest=0x1fc1u;
-// No GFXHUB invalidation engine ACKs on this card: engine 17 from MMIO (2026-10-20 10:26,
-// 13:05, with and without its address range) and engine 12 from the CP (WAIT_REG_MEM, 13:21)
-// latched the request and never answered, and a VMID left with such a request never ran
-// again in that power cycle. So none is ever used. TLBs are cleared the way open() and
-// G36 do it, GCVM_L2_CNTL2 INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE (no handshake):
-// - close: nothing runs in VMID k once its queue is dequeued and context k disabled, and
-//   the next open() of the slot invalidates before it enables the context again;
-// - unmap: the queue is idle and the PTEs are cleared before the invalidation, and the
-//   pages are freed only after it.
+// TLB invalidation: gmc_v11_0_flush_gpu_tlb's MMIO path, engine 17, per VMID, wait for the
+// ACK. On the card no engine ever ACKed (2026-10-20 10:26..13:21) while GCVM_L2_STATUS read
+// L2_BUSY 1 and GCVM_L2_CNTL2 kept INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE set (13:58):
+// our hub setup wrote those bits with GC running, where gfxhub_v3_0_init_cache_regs writes them
+// at GMC init, before the RLC brings GC out of reset; the hub then never left that
+// invalidation. So they are never set here, and cleared at start if found set.
+// A client's VMID is flushed before its context is used (open) and after an unmap; a miss
+// quarantines (fail closed).
+constexpr uint32_t kInvReq17=0x16bcu, kInvAck17=0x16ceu, kL2Status=0x15bfu, kL2Busy=1u;
+constexpr uint32_t kL2Cntl2Invalidate=3u;            // INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE
+// gfxhub_v3_0_get_invalidate_req(vmid, 0): PER_VMID bit, FLUSH_TYPE 0, L2 PTES/PDE0/1/2, L1 PTES.
+constexpr uint32_t invalidateReq(uint32_t vmid) { return (1u<<vmid)|(1u<<19)|(1u<<20)|(1u<<21)|(1u<<22)|(1u<<23); }
+static_assert(invalidateReq(2)==0x00f80004u,"GCVM_INVALIDATE_ENG0_REQ word");
 constexpr uint32_t kDrainPipe=1u;
 constexpr uint32_t kGbAddrConfig=0x13deu;                       // regGB_ADDR_CONFIG, read only
 // Doorbells (the only way upstream gfx11 kicks a compute queue): gc_11_0_0_offset.h
@@ -109,7 +113,7 @@ enum class Code : uint8_t {
 struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
-    uint64_t dequeue=0;
+    uint64_t dequeue=0, invReq=0, invAck=0, l2Status=0;
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
     uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0, pqStatus=0;
     bool valid=false;
@@ -127,7 +131,8 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         const uint32_t dws[7]={ctxCntl(k),ctxBaseLo(k),ctxBaseLo(k)+1u,ctxStartLo(k),ctxStartLo(k)+1u,ctxEndLo(k),ctxEndLo(k)+1u};
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
-    if(!one(kDequeueRequest,r.dequeue) ||
+    if(!one(kDequeueRequest,r.dequeue) || !one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) ||
+       !one(kL2Status,r.l2Status) ||
        !one(kGbAddrConfig,r.gbAddrConfig) || !one(kMecDbLower,r.mecDbLower) || !one(kMecDbUpper,r.mecDbUpper) ||
        !one(kCpPqStatus,r.pqStatus))return r;
     IPEntry nbif{};
@@ -136,13 +141,13 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
     r.nbioAperEn=(nbif.bases[2]+kNbioAperEn)*4u;
     r.valid=true;return r;
 }
-// Writable registers: the GFXHUB words (GCVM_L2_CNTL2 for invalidation), contexts 8..13, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
+// Writable registers: the GFXHUB words, invalidation engine 17's request, contexts 8..13, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
 // (CP_HQD_DEQUEUE_REQUEST lies inside it). Never the MEC program counters/control,
 // SCRATCH_REG0, context 0/1, the fault registers or anything outside GC.
 inline bool allowed(const Regs &r,uint64_t off) {
     if(!r.valid || off==r.g.v.q.scratch || off==r.g.v.ctx || off==r.g.v.baseLo || off==r.g.v.baseHi ||
        off==r.g.v.startLo || off==r.g.v.startHi || off==r.g.v.endLo || off==r.g.v.endHi)return false;
-    if(off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
+    if(off==r.invReq || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
 }
@@ -179,7 +184,12 @@ struct Client {
 // The doorbell setup found at start (before any write) and after it.
 struct DoorbellSetup { uint32_t aperBefore=0, lowerBefore=0, upperBefore=0, aper=0, lower=0, upper=0;
                        uint32_t pqBefore=0, pq=0, reclaimed=0; };
+// The last TLB flush that got no ACK: the VMID, the request written, what REQ and ACK read back.
+struct FlushMiss { uint32_t vmid=0, req=0, reqBack=0, ack=0, misses=0; };
+// GCVM_L2_CNTL2 and GCVM_L2_STATUS at start, and after the invalidate bits were cleared.
+struct HubL2 { uint32_t cntl2Before=0, statusBefore=0, cntl2=0, status=0; };
 struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
+               FlushMiss miss{}; HubL2 l2{};
                DoorbellSetup db{}; };
 
 class Device {
@@ -200,7 +210,7 @@ public:
             uint32_t c2=0;
             if(!rd(v.l2c2,c2))return Code::HwFailed;
             const struct { uint64_t off; uint32_t val; } hub[]={
-                {v.l1,v1::l1Word(l1)},{v.l2,v1::l2Word(l2)},{v.l2c2,v1::l2Cntl2Word(c2)},
+                {v.l1,v1::l1Word(l1)},{v.l2,v1::l2Word(l2)},{v.l2c2,c2&~kL2Cntl2Invalidate},
                 {v.l2c3,v1::kL2Cntl3Value},{v.l2c4,v1::kL2Cntl4Value},{v.l2c5,v1::kL2Cntl5Value},
                 {v.ident[0],v1::kIdentity[0]},{v.ident[1],v1::kIdentity[1]},{v.ident[2],v1::kIdentity[2]},
                 {v.ident[3],v1::kIdentity[3]},{v.ident[4],v1::kIdentity[4]},{v.ident[5],v1::kIdentity[5]}};
@@ -209,6 +219,14 @@ public:
             return Code::Hub;                // a hub we do not recognise: touch nothing
         }
         if(fault)faultSeen_=fault;
+        // The hub L2: leave no invalidation latched (see kInvReq17's note), give it 10 ms to go idle.
+        if(!rd(v.l2c2,l2_.cntl2Before) || !rd(r.l2Status,l2_.statusBefore))return Code::HwFailed;
+        if((l2_.cntl2Before&kL2Cntl2Invalidate) && !wr(v.l2c2,l2_.cntl2Before&~kL2Cntl2Invalidate))return Code::HwFailed;
+        for(uint32_t us=0;;us+=100u) {
+            if(!rd(v.l2c2,l2_.cntl2) || !rd(r.l2Status,l2_.status))return Code::HwFailed;
+            if(!(l2_.status&kL2Busy) || us>=10000u)break;
+            h.delayUs(h.ctx,100u);
+        }
         // Doorbells: the MEC range as gfx_v11_0_kiq_init_register, the NBIO aperture as
         // nbio_v4_3_enable_doorbell_aperture; only what is not already so is written.
         uint32_t aper=0,lower=0,upper=0,pq=0;
@@ -292,9 +310,8 @@ public:
         for(const auto &x:ctx)if(!wr(x.off,x.val))return fail(c,Code::HwFailed);
         if(!sel(c.vmid<<4) || !wr(r_->g.shMem,gradient::kShMemDefault) || !wr(r_->g.shBases,vg::kShMemBasesValue) ||
            !sel(0u))return fail(c,Code::HwFailed);
-        // Every L1 TLB and the L2 cache invalidated before the context is used (see kFirstVmid's
-        // note): a previous client of this slot may have left translations behind.
-        if(!invalidate())return fail(c,Code::HwFailed);
+        // A previous client of this VMID may have left translations behind.
+        if(!flushTlb(c.vmid))return fail(c,Code::HwFailed);
         return Code::Ok;
     }
     // A zeroed, CPU-visible VRAM buffer. Returns handle 1..kMaxBos.
@@ -338,7 +355,7 @@ public:
         if(!b->va)return Code::BadArgs;
         const Code idle=waitIdle(*c);
         if(idle!=Code::Ok)return idle;
-        if(c->space.unmap(b->va,b->bytes)!=gv::Code::Ok || !invalidate()){quarantine(*c);return Code::Quarantined;}
+        if(c->space.unmap(b->va,b->bytes)!=gv::Code::Ok || !flushTlb(c->vmid)){quarantine(*c);return Code::Quarantined;}
         b->va=0;b->vaFlags=0;return Code::Ok;
     }
     Code boFree(uint32_t slot,uint32_t handle) {
@@ -464,7 +481,7 @@ public:
             ++s.clients;s.emitted+=c.emitted;s.retired+=c.retired;
             for(const Bo &b:c.bo)if(b.live)++s.bos;
         }
-        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.db=db_;return s;
+        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.db=db_;s.miss=miss_;s.l2=l2_;return s;
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
@@ -519,13 +536,19 @@ private:
         const uint32_t slot=index(c);
         return h_.doorbell(h_.ctx,doorbellByte(slot),end) && sel(qsel(slot)) && wr(r_->g.v.q.poll1,pollBit(slot)) && sel(0u);
     }
-    // GCVM_L2_CNTL2 INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE. The bits read back set after
-    // G36 wrote them (2026-10-20, 0x00000003), so they are cleared first: each invalidation
-    // is a 0 -> 1 write, whether the hub acts on the write or on the edge.
-    bool invalidate() {
-        uint32_t c2=0;
-        if(!rd(r_->g.v.l2c2,c2) || !wr(r_->g.v.l2c2,c2&~3u) || !wr(r_->g.v.l2c2,v1::l2Cntl2Word(c2&~3u)))return false;
-        ++flushes_;return true;
+    // gmc_v11_0_flush_gpu_tlb, MMIO path: engine 17, request, wait for the VMID's ACK bit.
+    bool flushTlb(uint32_t vmid) {
+        if(!wr(r_->invReq,invalidateReq(vmid)))return false;
+        uint32_t ack=0;
+        for(uint32_t us=0;us<kTlbTimeoutUs;us+=10u) {
+            if(!h_.read(h_.ctx,r_->invAck,&ack))break;
+            if(ack!=0xffffffffu && (ack&(1u<<vmid))){++flushes_;return true;}
+            h_.delayUs(h_.ctx,10u);
+        }
+        uint32_t back=0;
+        h_.read(h_.ctx,r_->invReq,&back);
+        miss_={vmid,invalidateReq(vmid),back,ack,miss_.misses+1u};
+        return false;
     }
     // hqd_load_v11 for queue k in VMID k (as G38, with the poll bit of queue k).
     Code loadQueue(Client &c) {
@@ -655,6 +678,7 @@ private:
     uint32_t select_=0, writes_=0, flushes_=0, faultSeen_=0;
     uint64_t retiredBytes_=0;
     DoorbellSetup db_{};
+    FlushMiss miss_{}; HubL2 l2_{};
     uint32_t hqdStart_[kHqdDumpQueues][kHqdDumpCount]{}; bool hqdStartOk_[kHqdDumpQueues]{};
     bool started_=false;
 };

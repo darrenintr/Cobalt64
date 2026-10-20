@@ -134,11 +134,11 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      (read-modify-write, only if clear), and 64-bit writes into BAR2 at the six client
      doorbells (byte 0x200 + 8 k); before-values in ioreg. Since 0.0.37 device start also
      drain-dequeues client HQDs an earlier boot left active (CP_HQD_DEQUEUE_REQUEST).
-     Since 0.0.44 clients use **VMIDs 8..13** (contexts 8..13, SH_MEM under VMID k) and no
-     invalidation engine is touched at all (none ACKs on this card, findings 13:21): TLBs are
-     cleared with `GCVM_L2_CNTL2` INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE (written 0 then
-     1) at every open and unmap; close frees after dequeue and context disable. (0.0.42 set
-     engine 17's range, 0.0.43 flushed from the queue on engines 7..12: both never ACKed.)
+     Since 0.0.44 clients use **VMIDs 8..13** (contexts 8..13, SH_MEM under VMID k). Since 0.0.47
+     the client hub setup never sets `GCVM_L2_CNTL2` INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE
+     and clears them at start if found set (they kept the hub L2 busy, findings 13:58); TLBs are
+     flushed per VMID with engine 17 (MMIO REQ, wait for ACK, fail closed) at open and unmap.
+     (0.0.42..0.0.46 tried engine ranges, CP flushes on engines 7..12, and L2_CNTL2 alone.)
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -2121,6 +2121,30 @@ parser got two of them wrong:
     hotplug/EDID, 3 MiB "VRAM"; the autostart refused with 0 writes (card already up) and the
     client GPU service was off. `screencapture` over SSH fails ("could not create image"), as
     expected with no GUI session.
+
+- **2026-10-20 13:55-14:10, kext 0.0.45/0.0.46/0.0.47, same host boot `347bf886-…`: the client
+  queue reload bug found and fixed; the missing invalidation ACK traced to a busy hub L2.**
+  - 0.0.45 (CI 39377313649) dumped every client-capable HQD block (`Navi33,Hqd pXqY start/now`,
+    `runs/` 13:5x). A stalled reused HQD had `EOP_WPTR_MEM` 8 (its RELEASE_MEM queued) and
+    `EOP_RPTR` 0x40000000 (never consumed); the one fresh success had `EOP_RPTR` 0x40000008.
+    `gc_11_0_0_sh_mask.h`: **`CP_HQD_EOP_RPTR.INIT_FETCHER` is bit 31; bit 30 is
+    `RPTR_EQ_CSMD_WPTR`**. Since G34 we wrote bit 30, so the EOP fetcher was never restarted:
+    harmless on a fresh HQD, fatal on a reload. Also our load wrote the MQD's `CP_HQD_ACTIVE` = 1
+    in its third write (KFD's MQD has 0 there), making a reused HQD live with the previous
+    client's block. **That, not the VMIDs or the flushes, was every stall of 13:19-13:40.**
+  - 0.0.46 (CI 39377964224): INIT_FETCHER bit 31 (also in G34-G39's shared constant), ACTIVE last.
+    Run 14:0x (`client-gpu.sh`, 9 clients + `--repeat 200` + `n33n48n`): **every fence landed,
+    every close returned 0, the same HQD/VMID 8 reused 11 times**. Client 1's gradient exact;
+    clients 2..9 retired with 4096 wrong pixels (all zero) while `n33n48n` (other VAs) was
+    exact: stale translations, so `GCVM_L2_CNTL2` invalidation does not reach the shader's TLBs.
+  - Read through QEMU's monitor (no SEM read): all 18 `GCVM_INVALIDATE_ENG*_REQ` at their reset
+    value `0x02f80000` except ours (eng 12 `f80080`, eng 17 `f80020`), **every ACK 0**, ranges 0
+    except ours; **`GCVM_L2_STATUS` = 1 (L2_BUSY)**, `GCVM_L2_CNTL2` = 3 (both invalidate bits
+    still set), `GCVM_INVALIDATE_CNTL` `0x10f` (default). Hypothesis: the all-L1 invalidation we
+    wrote with GC running (Linux writes it at GMC init, GC still in reset) never completes,
+    probably because some L1 client (halted SDMA, unstarted gfx pipe) never answers; a busy L2
+    serves no invalidation engine. 0.0.47 never sets the bits, clears them at start, records
+    `L2_CNTL2`/`L2_STATUS` before/after in `Navi33,ClientGpu`, and flushes per VMID on engine 17.
 
 ## Adding a register read
 

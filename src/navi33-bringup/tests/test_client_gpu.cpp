@@ -46,7 +46,7 @@ struct Fake {
         mem={{v.q.sos,42},{v.q.rlc,0xc000001fu},{v.q.grbm,0},{v.q.cntl,0x3c000000u},{v.q.scratch,0xdeadbeefu},
              {v.q.poll1,0},{v.l1,v1::kL1Default},{v.l2,v1::kL2Default},{v.l2c2,0},{v.l2c3,v1::kL2Cntl3Default},
              {v.l2c4,v1::kL2Cntl4Default},{v.l2c5,v1::kL2Cntl5Default},{v.faultStatus,0},{v.faultAddr,0},
-             {r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u}};
+             {r.invReq,0x02f80000u},{r.invAck,0},{r.l2Status,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u}};
         for(auto o:v.ident)mem[o]=0;
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
         assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
@@ -152,8 +152,17 @@ struct Fake {
         assert(cg::allowed(f.r,off));
         f.writes.emplace_back(off,v);
         if(f.banked(off))f.bank[{f.sel(),off}]=v; else f.mem[off]=v;
-        // GCVM_L2_CNTL2 with both invalidate bits: every TLB entry of every VMID goes.
-        if(off==f.r.g.v.l2c2 && (v&3u)==3u){++f.flushes;if(!f.noFlushModel)f.tlb.clear();}
+        // GCVM_L2_CNTL2 with the invalidate bits latched keeps the hub L2 busy (the card,
+        // 2026-10-20 13:58), and a busy L2 serves no invalidation engine.
+        if(off==f.r.g.v.l2c2)f.mem[f.r.l2Status]=(v&3u) ? 1u : 0u;
+        if(off==f.r.invReq) {
+            uint32_t ack=0;
+            for(uint32_t k=0;k<16;++k)if(v&(1u<<k)){
+                if(!f.noFlushModel)for(auto i=f.tlb.begin();i!=f.tlb.end();)i=i->first.first==k ? f.tlb.erase(i) : std::next(i);
+                ack|=1u<<k;
+            }
+            f.mem[f.r.invAck]=f.noAck || f.mem[f.r.l2Status] ? 0u : ack;++f.flushes;
+        }
         if(off==f.r.dequeue && v==cg::kDrainPipe && !f.stuck) {
             f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdActive)}]=0u;
             for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel()) {
@@ -253,8 +262,9 @@ int main() {
     auto b=rx7600_fixture::blob();IPDiscovery d;assert(d.parse(b.data(),b.size()));
     const auto r=cg::resolve(d,rx7600_fixture::kBar5);
     assert(r.valid && r.dequeue==(0x1260u+0x1fc1u)*4u && cg::allowed(r,r.g.v.l2c2));
-    // No invalidation engine register (REQ 0x16ab.., ACK 0x16bd.., ranges 0x16cf..0x16f2) is ever written.
-    for(uint32_t dw=0x16abu;dw<=0x16f2u;++dw)assert(!cg::allowed(r,(0x1260u+dw)*4u));
+    // Of the invalidation engines only engine 17's REQ is written (never a SEM, ACK or range).
+    assert(r.invReq==(0x1260u+0x16bcu)*4u && r.invAck==(0x1260u+0x16ceu)*4u && r.l2Status==(0x1260u+0x15bfu)*4u);
+    for(uint32_t dw=0x1699u;dw<=0x16f2u;++dw)assert(cg::allowed(r,(0x1260u+dw)*4u)==(dw==0x16bcu));
     assert(r.ctx[0][0]==(0x1260u+0x1690u)*4u && r.ctx[5][6]==(0x1260u+0x174eu)*4u && r.gbAddrConfig==0x263eu*4u);
     assert(!cg::allowed(r,r.gbAddrConfig));
     // Never context 0/1, SCRATCH, the MEC controls or the fault registers.
@@ -453,6 +463,18 @@ int main() {
         assert(f.dev.hqdDump(1,w) && w[0x1fd2u-0x1fa9u]==0x1f70000u && f.dev.hqdAtStart(1) && f.dev.hqdAtStart(1)[0x1fd2u-0x1fa9u]==0u);
         for(size_t i=before;i<f.writes.size();++i)assert(f.writes[i].first==r.g.v.q.grbm);
         assert(f.mem[r.g.v.q.grbm]==0u);
+    }
+    // 5d. A hub left with GCVM_L2_CNTL2's invalidate bits latched (L2 busy, no ACK) is released at
+    //     start; a client then opens with a VMID flush that ACKs.
+    {   Fake f(r);f.mem[r.g.v.l1]=0x1859u;f.mem[r.g.v.l2]=0x00080e01u;f.mem[r.g.v.l2c2]=3u;f.mem[r.l2Status]=1u;
+        f.mem[r.mecDbLower]=0x110u;f.mem[r.mecDbUpper]=0xffcu;f.mem[r.nbioAperEn]=1u;
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        const cg::HubL2 l2=f.dev.stats().l2;
+        assert(l2.cntl2Before==3u && l2.statusBefore==1u && l2.cntl2==0u && l2.status==0u && f.mem[r.g.v.l2c2]==0u);
+        uint32_t slot=0;assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.stats().tlbFlushes==1u && f.dev.stats().miss.misses==0u);
+        // With the bits still latched every flush misses and the open fails closed.
+        Fake g(r);assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::Ok);g.mem[r.g.v.l2c2]=3u;g.mem[r.l2Status]=1u;
+        assert(g.dev.open(&g,slot)!=cg::Code::Ok && g.dev.stats().miss.misses==1u && g.dev.stats().miss.vmid==8u);
     }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
