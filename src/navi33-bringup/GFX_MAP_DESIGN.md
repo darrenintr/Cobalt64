@@ -1,13 +1,13 @@
 # G42: map one gfx11 graphics queue through G34
 
 The user requested continuing graphics queue mapping/activation on 2026-10-20
-("please go"). G42 ran once with kext 0.0.57 and once with 0.0.58 after the
-user explicitly requested a warm host restart for the latter. Both attempts
-timed out before the graphics queue mapped. The 0.0.58 one-shot latch is
-consumed; the VM remains running on that artifact in
-`runs/20261020-172609`. This was not a verified full power-off. Any further
-GPU write attempt needs a full power-off and renewed explicit approval. This
-work does not enable Metal publication.
+("please go"). G42 ran with kext 0.0.57 and 0.0.58; both timed out before the
+graphics queue mapped. After the user reported a complete reboot and approved
+one attempt, kext 0.0.60 ran in `runs/20261020-191448`. It refused at the HDP
+preflight because the remap registers contained unexpected values; no G42
+stage-window write or MAP_QUEUES followed. The VM remains running on 0.0.60.
+Any further GPU write attempt needs another full host power-off and renewed
+explicit approval. This work does not enable Metal publication.
 
 The 0.0.56 run `20261020-155810` has live PFP/ME firmware, a programmed RB0,
 and GFX_HQD_ACTIVE=1, but MAPPED=0 and no WPTR/RPTR movement through either
@@ -91,10 +91,8 @@ failure cases stop before the poll trigger. CI run `39406581881` passed all
 jobs, including both macOS Intel kext builds and GCC/Clang/ASan/UBSan tests.
 The macos-26-intel artifact is cached at
 `~/macos tahoe/navi33/cache/artifact-0.0.59-ci` (Mach-O UUID
-`21868249-AAFB-3ACA-A72F-9E20F0557E70`). This is still only build and host
-evidence: no 0.0.59 kext has run on the card. Any physical attempt still needs
-a full host power-off and renewed explicit approval; the current 0.0.58 VM must
-remain untouched until then.
+`21868249-AAFB-3ACA-A72F-9E20F0557E70`). At the time of that artifact handoff,
+this was only build and host evidence; no 0.0.59 kext had run on the card.
 
 ## 0.0.60 read-only post-map capture
 
@@ -109,9 +107,34 @@ MAP timeout intact. The values are raw evidence; zero is not interpreted as
 idle if GC is not answering. CI run `39408266841` passed GCC, Clang,
 ASan/UBSan and both macOS Intel kext builds. Its macos-26-intel artifact is
 cached at `~/macos tahoe/navi33/cache/artifact-0.0.60-ci`, plist version
-0.0.60, Mach-O UUID `13B8975F-2F6C-399A-8C9C-27CC7E938E53`. It has not run on
-the card; the VM remains on 0.0.58. A physical G42 attempt still needs a full
-host power-off and renewed explicit approval.
+0.0.60, Mach-O UUID `13B8975F-2F6C-399A-8C9C-27CC7E938E53`.
+
+## 0.0.60 physical preflight result
+
+The user reported a full reboot, confirmed by Linux boot ID changing from
+`10ce1af7-f9c2-444e-9388-ca13750bb4c4` to
+`b0d22cb8-c1f8-470e-b27c-285ebbaee125`, with the RX 7600 bound to `vfio-pci`.
+The loaded kext UUID matches the CI artifact above. Autostart reached 8/8. The
+first VMID 8 client open started G40 and reached G42 preflight. `Navi33,GfxMap`
+reports Refused / `UnexpectedRemap`, aperture `0x7f000`, remap values
+`0x385c`/`0x3858`, and zero HDP writes. These values matched neither the reset
+pair nor the configured pair, so G42 stopped before its stage-window write and
+MAP_QUEUES. The reads were at BAR5 offsets `0x3934` and `0x3938`, resolved as
+NBIF BASE_IDX 2 (`0xd20`) plus dword offsets `0x12d` and `0x12e`. The HDP
+flush and capacity readback were not reached; reported memsize 0 is therefore
+unpopulated. G40 pipe setup had already run; `Navi33,ClientGfx` ended in state
+5 with RB0 WPTR/RPTR/fence zero, and the GFX ring test did not run. A VMID 8
+compute NOP retired its fence. No gradient, GFX map, rendered output, or Metal
+output was attempted. Captures are in
+`~/macos tahoe/navi33/runs/20261020-191448/`: `results-20261020-191940-guest.txt`,
+`g42-after-client.txt`, `g42-client-trigger.txt`, and `n33peek-post-g42.txt`.
+The VM remains running on 0.0.60; any further GPU write attempt needs another
+full host power-off and renewed explicit approval.
+
+This result does not establish what owns or programs the unexpected remap
+values. Investigate their read path and the live NBIF state offline before
+proposing any new write policy. Do not accept, overwrite, or clear these values
+without a new bounded design and renewed approval.
 
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ

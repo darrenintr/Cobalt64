@@ -444,7 +444,7 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (2026-10-20 18:17 HKT; updated 2026-10-20): G42 follow-up
+## Resume here (2026-10-20; updated after the 0.0.60 G42 attempt): G42 follow-up
 
 - Prior 0.0.54 baseline: the user confirmed full power-off and requested continued work
   toward a **GPU-rendered macOS desktop, wallpaper and apps**. Framebuffer output is not
@@ -548,11 +548,27 @@ output survives a hang and Linux can inspect a stuck guest.
   expand packet or stage-window allowlists without a new bounded design and
   renewed approval. Sources: upstream Linux
   `amdgpu_gfx.c`, `gfx_v11_0.c`, `amdgpu_hdp.c`, and `amdgpu_device.c`.
-- The 0.0.58 G42 latch and stage-window attempt are consumed. Any further G42
-  GPU write attempt (including kext 0.0.60) requires a full host power-off and
-  renewed explicit approval.
-  Keep the current VM running on 0.0.58 until then; do not reboot, shut it down,
-  or touch the GPU. No Metal nub/accelerator is installed or enabled.
+- The user reported a full reboot before the approved 0.0.60 attempt. Linux
+  boot ID `b0d22cb8-c1f8-470e-b27c-285ebbaee125` differed from the prior
+  `10ce1af7-f9c2-444e-9388-ca13750bb4c4`; the RX 7600 was on `vfio-pci`, with
+  no VM running. The prepared candidate disk
+  `~/macos tahoe/navi33/OpenCore-navi33-0.0.60-g42.qcow2` recorded that boot ID;
+  the previous default 0.0.58 disk remains preserved.
+- **2026-10-20 19:14 HKT, kext 0.0.60 G42 attempt**, run
+  `~/macos tahoe/navi33/runs/20261020-191448`, loaded UUID
+  `13B8975F-2F6C-399A-8C9C-27CC7E938E53` matching CI artifact
+  `39408266841`. Autostart reached 8/8. The first N33N client open triggered
+  GFX startup and G42 preflight. `Navi33,GfxMap` reports state 1 (Refused), HDP
+  state 3 (UnexpectedRemap), aperture `0x7f000`, and zero HDP writes; the
+  remap reads were `0x385c` and `0x3858`, not the accepted zero or configured
+  pairs. G42 did not write its stage window or issue MAP_QUEUES. G40 pipe setup
+  had already run: `Navi33,ClientGfx` is state 5 (Unhalt), RB0 WPTR/RPTR/fence
+  remain zero, and the GFX ring test did not run. `n33gpu --nop` on VMID 8
+  retired one compute NOP fence (`CLIENT GPU NOP OK`); this is not rendered
+  output. Post-run ioreg and read-only n33peek results are saved in the run
+  directory. The VM remains running on 0.0.60 in tmux session
+  `n33-g42-0.0.60`. A further GPU attempt needs another full host power-off and
+  renewed explicit approval. No GPU-rendered desktop or Metal output is proven.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
   (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
   as a clean cold run. Preserve that memory until dequeue/recovery is verified.
@@ -566,9 +582,9 @@ output survives a hang and Linux can inspect a stuck guest.
   GCC/Clang/ASan/UBSan host tests and both macOS Intel kext builds. The
   macos-26-intel artifact is cached at
   `~/macos tahoe/navi33/cache/artifact-0.0.59-ci`; its plist version is 0.0.59
-  and Mach-O `LC_UUID` is `21868249-AAFB-3ACA-A72F-9E20F0557E70`. The current
-  VM remains on 0.0.58; no GPU read/write, reboot or power-off was made during
-  this offline work. This candidate has not run on the card.
+  and Mach-O `LC_UUID` is `21868249-AAFB-3ACA-A72F-9E20F0557E70`. At that
+  artifact handoff, it had not run on the card; later physical status is in the
+  current G42 findings below.
 - **0.0.60 read-only GFX HQD capture:** after the G42 poll, the kext records
   raw ACTIVE, VMID, BASE/BASE_HI, RPTR, CNTL and WPTR/WPTR_HI values from the
   upstream GC 11.0 register offsets. A failed diagnostic read only clears the
@@ -578,10 +594,9 @@ output survives a hang and Linux can inspect a stuck guest.
   including GCC/Clang/ASan/UBSan host tests and both macOS Intel kext builds.
   The macos-26-intel artifact is cached at
   `~/macos tahoe/navi33/cache/artifact-0.0.60-ci`; its plist version is 0.0.60
-  and Mach-O `LC_UUID` is `13B8975F-2F6C-399A-8C9C-27CC7E938E53`. It has not
-  run on the card. The VM remains running on 0.0.58; no GPU read/write, reboot
-  or power-off was made for this change. A physical G42 attempt still needs a
-  full host power-off and renewed explicit approval.
+  and Mach-O `LC_UUID` is `13B8975F-2F6C-399A-8C9C-27CC7E938E53`. At the
+  artifact handoff it had not yet run on the card. The later approved physical
+  attempt and its refusal are recorded in the current G42 findings below.
 - Guest auxiliary build staging remains `/Users/darren/auxbuild`; preserve it. Previous
   handoff found no built accelerator kext, only Navi33GOPFB installed.
 
@@ -2462,8 +2477,23 @@ parser got two of them wrong:
   runtime XNU page size. It permits at most two remap writes plus one zero
   flush write, verifies remap readback and stable plausible NBIO capacity, and
   stops before MAP_QUEUES on any failure. Host tests and static manifest checks
-  pass. No 0.0.59 artifact or physical run yet; further GPU writes still need a
-  full host power-off and renewed explicit approval.
+  pass. The 0.0.59 macos-26-intel artifact is cached at
+  `~/macos tahoe/navi33/cache/artifact-0.0.59-ci`; it has not had a physical
+  run. Further GPU writes require a full host power-off and renewed approval.
+- **2026-10-20 19:14 HKT, kext 0.0.60 G42 attempt**,
+  `runs/20261020-191448`, on host boot ID
+  `b0d22cb8-c1f8-470e-b27c-285ebbaee125`. The loaded UUID
+  `13B8975F-2F6C-399A-8C9C-27CC7E938E53` matches CI artifact `39408266841`.
+  Autostart reached 8/8. The first N33N client open ran GFX startup, then G42
+  refused at HDP preflight: `Navi33,GfxMap` state 1, HDP state 3
+  (UnexpectedRemap), remap contents `0x385c`/`0x3858`, zero HDP writes. No G42
+  staging-window write or MAP_QUEUES followed. G40 setup had already written
+  its pipe state; `Navi33,ClientGfx` stayed state 5, with RB0 WPTR/RPTR/fence
+  zero and no GFX ring test. One VMID 8 compute NOP retired its fence; no
+  gradient or rendered output was attempted. Guest results are
+  `runs/20261020-191448/results-20261020-191940-guest.txt`; post-client ioreg,
+  n33peek and NOP output are beside it. The VM remains running on 0.0.60. A
+  further attempt requires another full host power-off and renewed approval.
 
 ## Adding a register read
 
