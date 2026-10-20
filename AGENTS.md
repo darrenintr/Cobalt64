@@ -113,6 +113,10 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      SH_MEM_CONFIG/SH_MEM_BASES under VMID 1) and a 1 MiB VRAM window (251 / 252 MiB).
      Never MMHUB. Both need the autostart state with an untouched hub, so only one of
      them per power cycle; `navi33-vm-off` or `navi33-psp-off` kills both; own latches.
+     G39 (kext 0.0.28, ABI 20, built 2026-10-20 at the user's request "real VRAM
+     allocator do it") is G38 on the kernel's VRAM heap: same registers and gate, its
+     own latch, and CPU VRAM access only inside live, unpinned heap blocks (the console,
+     240..256 MiB and the top 112 MiB are pinned).
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing

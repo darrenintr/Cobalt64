@@ -572,7 +572,7 @@ print('Navi33 VMID1 queue allowlist (GFXHUB only), independent gate and plan bou
 # VMID1 gradient (G38): own gate and latch; GFXHUB and SH_MEM only, never MMHUB.
 vgw=(root/'src/Navi33DarwinVmGradient.cpp').read_text()
 vgh=(root/'src/Navi33Gfx11VmGradient.h').read_text()
-assert 'if(vmgMode)req.attempted=&vmgAttempted_;' in load_fn
+assert 'if(vmgMode)req.attempted=vmaMode ? &vmaAttempted_ : &vmgAttempted_;' in load_fn
 assert 'if(vmgMode)req.writeGate=!killed && !vmKilled &&' in load_fn
 assert 'PE_parse_boot_argn("navi33-vm-gradient"' in load_fn
 assert 'return executeVmGradient(pci,req);' in writer
@@ -589,3 +589,25 @@ for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert '--vm-gradient' not in code and 'N33_VM_GRADIENT_RUN' not in code
 print('Navi33 VMID1 gradient allowlist (GFXHUB + SH_MEM only), independent gate and plan boundary: passed')
+
+# VRAM heap stage (G39): G38's registers and gate, its own latch; CPU VRAM access
+# only inside live, unpinned heap blocks; the heap lives in the provider.
+vaw=(root/'src/Navi33DarwinVmAlloc.cpp').read_text()
+vah=(root/'src/Navi33Gfx11VmAlloc.h').read_text()
+heap=(root/'src/Navi33VramHeap.h').read_text()+(root/'src/Navi33Gmc11Vm.h').read_text()
+assert 'if(vmaMode){req.heap=&vramHeap_;req.vm1=&vm1Space_;}' in load_fn
+assert 'return executeVmAlloc(pci,req);' in writer
+assert 'if(!vg::allowed(io->r,off)' in vaw
+assert '!io->heap->covers(off,len)' in vaw                      # pinned ranges are never CPU-accessible
+assert 'kIOMapInhibitCache|kIOMapReadOnly' in vaw
+assert 'va::Hw hw{&io,read32,nullptr,nullptr,vramRead,nullptr,sleepMs};' in vaw
+assert 'Navi33DarwinVmAlloc.o' in makefile
+assert '*this=' not in heap                                      # no large temporaries on a kernel stack
+for forbidden in ('->configWrite','setMemoryEnable','setBusMasterEnable','setPowerState','WREG32('):
+    assert forbidden not in vaw, f'VRAM heap stage gained {forbidden}'
+for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory','mmhub','MMHUB'):
+    assert forbidden not in vah and forbidden not in heap
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert '--vm-alloc' not in code and 'N33_VM_ALLOC_RUN' not in code
+print('Navi33 VRAM heap stage: G38 allowlist, heap-bounded CPU VRAM access, own latch: passed')

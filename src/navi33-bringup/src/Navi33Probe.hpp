@@ -8,6 +8,7 @@
 #include "Navi33NativeABI.h"
 #include "Navi33StageOwner.h"
 #include "Navi33ProductionOwner.h"
+#include "Navi33Gmc11Vm.h"
 #include <IOKit/IOLib.h>
 
 namespace navi33 { namespace darwin_owner { struct ProbeReport; } }
@@ -77,6 +78,11 @@ private:
     bool gradAttempted_ = false;  // gradient: its own one-shot latch
     bool vmAttempted_ = false;    // VMID1 queue: its own one-shot latch
     bool vmgAttempted_ = false;   // VMID1 gradient: its own one-shot latch
+    bool vmaAttempted_ = false;   // VMID1 on the VRAM heap: its own one-shot latch
+    // The kernel's VRAM heap and VMID 1's address space, for the life of the
+    // kext (under pspLock_). Never freed while a queue may still use them.
+    navi33::vram_heap::Heap vramHeap_;
+    navi33::gmc11_vm::Space vm1Space_;
     bool pspFwAttempted_ = false;   // same for the IP firmware stage
     // Held PCI owner (navi33-owner-hold=1 only). The ticket is nonzero while
     // IOService::open is held; stop() releases it.

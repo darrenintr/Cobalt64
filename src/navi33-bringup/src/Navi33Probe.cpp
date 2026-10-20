@@ -827,7 +827,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     const bool gradKilled=PE_parse_boot_argn("navi33-gradient-off",&gradOff,sizeof(gradOff)) && gradOff!=0u;
     const bool vmMode=mode==N33_VM_QUEUE_PLAN || mode==N33_VM_QUEUE_RUN;
     const bool vmKilled=PE_parse_boot_argn("navi33-vm-off",&vmOff,sizeof(vmOff)) && vmOff!=0u;
-    const bool vmgMode=mode==N33_VM_GRADIENT_PLAN || mode==N33_VM_GRADIENT_RUN;
+    const bool vmaMode=mode==N33_VM_ALLOC_PLAN || mode==N33_VM_ALLOC_RUN;
+    const bool vmgMode=mode==N33_VM_GRADIENT_PLAN || mode==N33_VM_GRADIENT_RUN || vmaMode;
     const bool killed=PE_parse_boot_argn("navi33-psp-off",&pspOff,
                                          sizeof(pspOff)) && pspOff!=0u;
     // Each write stage has its own boot-arg; navi33-psp-off kills all of them.
@@ -873,7 +874,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     if(mecMode)req.attempted=&mecAttempted_;
     if(gradMode)req.attempted=&gradAttempted_;
     if(vmMode)req.attempted=&vmAttempted_;
-    if(vmgMode)req.attempted=&vmgAttempted_;
+    if(vmgMode)req.attempted=vmaMode ? &vmaAttempted_ : &vmgAttempted_;
+    if(vmaMode){req.heap=&vramHeap_;req.vm1=&vm1Space_;}
     result=navi33::darwin_psp::execute(pci,req);
     IOLockUnlock(pspLock_);
     char raw[320];
@@ -927,7 +929,17 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
         result.grad_rptr_before,result.grad_rptr_after,result.grad_fence_a,result.grad_fence_b,
         result.grad_bad_pixels,result.grad_screen_bad,result.grad_fallbacks,result.grad_first_pixel,
         result.grad_screen,result.vm_fault_status,result.vm_fault_addr,result.vm_window);
-    setProperty(mode==N33_VM_GRADIENT_RUN ? "Navi33,LastVmGradient" :
+    if(vmaMode && mode==N33_VM_ALLOC_RUN) {
+        char heap[160];
+        snprintf(heap,sizeof(heap),"total %llu MiB free %llu MiB largest %llu MiB blocks %lu extents %lu tables %lu",
+                 vramHeap_.total()>>20,vramHeap_.freeBytes()>>20,vramHeap_.largestFree()>>20,
+                 static_cast<unsigned long>(vramHeap_.liveBlocks()),static_cast<unsigned long>(vramHeap_.extents()),
+                 static_cast<unsigned long>(vm1Space_.tables()));
+        setProperty("Navi33,VramHeap",heap);
+    }
+    setProperty(mode==N33_VM_ALLOC_RUN ? "Navi33,LastVmAlloc" :
+                mode==N33_VM_ALLOC_PLAN ? "Navi33,LastVmAllocPlan" :
+                mode==N33_VM_GRADIENT_RUN ? "Navi33,LastVmGradient" :
                 mode==N33_VM_GRADIENT_PLAN ? "Navi33,LastVmGradientPlan" :
                 mode==N33_VM_QUEUE_RUN ? "Navi33,LastVmQueue" :
                 mode==N33_VM_QUEUE_PLAN ? "Navi33,LastVmPlan" :

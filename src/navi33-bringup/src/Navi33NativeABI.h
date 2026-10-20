@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 19u /* 19: VMID1 gradient modes; 18: VMID1 queue modes/result; 17: gradient modes/result; 16: MEC queue modes/result; 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
+#define N33_ABI_VERSION 20u /* 20: VRAM heap modes; 19: VMID1 gradient modes; 18: VMID1 queue modes/result; 17: gradient modes/result; 16: MEC queue modes/result; 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -248,6 +248,14 @@ N33_STATIC_ASSERT(sizeof(struct n33_peek_result)==48+4*N33_PEEK_MAX_DWORDS,
 #define N33_VM_GRADIENT_PLAN 19u
 #define N33_VM_GRADIENT_RUN 20u
 #define N33_VMG_MARKER 0x564d4732u
+/* G38 with the kernel's VRAM heap and address-space manager (G39, Phase B2): every
+ * buffer and page-table page is a heap allocation that lives for the boot. Same
+ * registers and gate as G38 plus its own latch: RUN needs navi33-vm-gradient=1.
+ * Result as G38 with marker N33_VMA_MARKER; vm_window is the PDB2 VRAM offset >> 12,
+ * vm_reserved is table pages | buffers << 16. */
+#define N33_VM_ALLOC_PLAN 21u
+#define N33_VM_ALLOC_RUN 22u
+#define N33_VMA_MARKER 0x564d4133u
 #define N33_PSP_FW_RECORDS 27u
 #define N33_PSP_FW_STOP_AUTOLOAD 28u
 #define N33_PSP_LOAD_MAX_INPUT (4u*1024u*1024u)
@@ -289,7 +297,10 @@ enum n33_psp_load_state {
   /* VMID 1 gradient */
   N33_PSPL_VMG_BAD_PRECONDITION=61, N33_PSPL_VMG_WRITE_FAILED=62, N33_PSPL_VMG_NO_FETCH=63,
   N33_PSPL_VMG_FAULT=64, N33_PSPL_VMG_NO_FENCE=65, N33_PSPL_VMG_BAD_PIXELS=66, N33_PSPL_VMG_OK=67,
-  N33_PSPL_VMG_ON_SCREEN=68
+  N33_PSPL_VMG_ON_SCREEN=68,
+  /* VRAM heap (G39); the other outcomes use the VMG states */
+  N33_PSPL_VMA_BAD_PRECONDITION=69, N33_PSPL_VMA_NO_MEMORY=70, N33_PSPL_VMA_OK=71,
+  N33_PSPL_VMA_ON_SCREEN=72
 };
 /* Last step reached: KDB, then SPL, SYS_DRV, sOS (psp_hw_start order). */
 enum n33_psp_load_step {

@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
     --mec-queue) MEC_QUEUE=1 ;;
     --gradient) GRADIENT=1 ;;
     --vm-queue) VM_QUEUE=1 ;;   # kext 0.0.26+: VMID1 translated queue (G36)
-    --vm-gradient) VM_GRADIENT=1 ;;   # kext 0.0.27+: gradient from VMID 1, 4-level table (G38)
+    --vm-gradient) VM_GRADIENT=1 ;;   # kext 0.0.27+: gradient from VMID 1, 4-level table (G38; 0.0.28+ also G39)
     --autostart) AUTOSTART=1 ;;   # kext 0.0.25+: the whole bring-up from start()
     --fb) FB=1 ;;   # G37: Navi33GOPFB (Aux KC) adopts the host console; needs --hostfb
     --psp-load) PSP_LOAD=1 ;;

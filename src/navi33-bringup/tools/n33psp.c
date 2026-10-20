@@ -101,6 +101,10 @@ static const char *stateText(uint32_t s) {
     case N33_PSPL_VMG_NO_FENCE: return "a VMID1 fence never arrived; full power-off required";
     case N33_PSPL_VMG_BAD_PIXELS: return "the VMID1 shader ran but pixels differ from the CPU reference";
     case N33_PSPL_VMG_OK: return "VMID1 GRADIENT OK: 4096 test pixels exact, every address through the 4-level table (no screen)";
+    case N33_PSPL_VMA_BAD_PRECONDITION: return "VRAM heap stage needs the autostart/G34 queue, an untouched GFXHUB and an idle queue 1";
+    case N33_PSPL_VMA_NO_MEMORY: return "the VRAM heap or the page-table manager could not place a buffer (no register written)";
+    case N33_PSPL_VMA_OK: return "VRAM HEAP OK: 4096 test pixels exact from heap buffers through the manager's 4-level table (no screen)";
+    case N33_PSPL_VMA_ON_SCREEN: return "VRAM HEAP ON SCREEN: test image and screen from heap buffers through the manager's 4-level table";
     case N33_PSPL_VMG_ON_SCREEN: return "VMID1 GRADIENT ON SCREEN: test image and screen drawn from VMID 1 through the 4-level table";
     default: return "unknown state";
     }
@@ -128,6 +132,23 @@ static void print(const struct n33_psp_load_result *r) {
                r->vm_l1_before,r->vm_l2_before,r->vm_ctx_before);
         printf("SCRATCH_REG0 %08x; fence on mapped page %08x; queue1 RPTR %u, active %x\n",
                r->vm_scratch,r->vm_fence,r->vm_rptr,r->vm_active);
+        printf("fault status %08x addr %08x; completed %u/5, writes %u, %u ms\n",
+               r->vm_fault_status,r->vm_fault_addr,r->steps_done,r->register_writes,r->elapsed_ms);
+        return;
+    }
+    if(r->vm_marker==N33_VMA_MARKER) {
+        printf("write gate %s; shader %s; sOS heartbeat %08x\n",
+               (r->flags&N33_PSPL_FLAG_WRITE_GATE_OPEN) ? "OPEN" : "closed",
+               (r->flags&N33_PSPL_FLAG_FW_PINNED) ? "pinned" : "NOT pinned",r->c2pmsg81_after);
+        printf("GFXHUB before: L1 TLB %08x, L2 %08x, context1 %08x\n",r->vm_l1_before,r->vm_l2_before,r->vm_ctx_before);
+        printf("heap: root PDB2 at VRAM 0x%llx, %u table pages, %u buffers\n",
+               (unsigned long long)r->vm_window<<12,r->vm_reserved&0xffffu,r->vm_reserved>>16);
+        printf("ring test: SCRATCH_REG0 %08x, fence %08x, queue1 active %x\n",r->vm_scratch,r->vm_fence,r->vm_active);
+        printf("screen %ux%u; queue1 RPTR %u->%u; WPTR fallbacks %u\n",r->grad_screen>>16,
+               r->grad_screen&0xffffu,r->grad_rptr_before,r->grad_rptr_after,r->grad_fallbacks);
+        printf("test image: fence %08x, %u of 4096 pixels wrong, pixel(1,1) %08x\n",
+               r->grad_fence_a,r->grad_bad_pixels,r->grad_first_pixel);
+        printf("screen: fence %08x, %u of 64 samples wrong\n",r->grad_fence_b,r->grad_screen_bad);
         printf("fault status %08x addr %08x; completed %u/5, writes %u, %u ms\n",
                r->vm_fault_status,r->vm_fault_addr,r->steps_done,r->register_writes,r->elapsed_ms);
         return;
@@ -333,7 +354,8 @@ int main(int argc,char **argv) {
            !strcmp(arg,"--mec-plan") || !strcmp(arg,"--mec-queue") ||
            !strcmp(arg,"--gradient-plan") || !strcmp(arg,"--gradient") ||
            !strcmp(arg,"--vm-plan") || !strcmp(arg,"--vm-queue") ||
-           !strcmp(arg,"--vm-gradient-plan") || !strcmp(arg,"--vm-gradient")) {
+           !strcmp(arg,"--vm-gradient-plan") || !strcmp(arg,"--vm-gradient") ||
+           !strcmp(arg,"--vm-alloc-plan") || !strcmp(arg,"--vm-alloc")) {
             if(mode) {bad=1;break;}
             mode=!strcmp(arg,"--plan") ? 1 : !strcmp(arg,"--load") ? 2 :
                  !strcmp(arg,"--ring-plan") ? 3 : !strcmp(arg,"--ring") ? 4 :
@@ -344,7 +366,8 @@ int main(int argc,char **argv) {
                  !strcmp(arg,"--mec-plan") ? 13 : !strcmp(arg,"--mec-queue") ? 14 :
                  !strcmp(arg,"--gradient-plan") ? 15 : !strcmp(arg,"--gradient") ? 16 :
                  !strcmp(arg,"--vm-plan") ? 17 : !strcmp(arg,"--vm-queue") ? 18 :
-                 !strcmp(arg,"--vm-gradient-plan") ? 19 : 20;
+                 !strcmp(arg,"--vm-gradient-plan") ? 19 : !strcmp(arg,"--vm-gradient") ? 20 :
+                 !strcmp(arg,"--vm-alloc-plan") ? 21 : 22;
             if(mode==3 || mode==4) {
                 if(a+1>=argc || strlen(argv[a+1])!=1u ||
                    argv[a+1][0]<'1' || argv[a+1][0]>'3') {bad=1;break;}
@@ -366,8 +389,9 @@ int main(int argc,char **argv) {
         else bad=1;
     }
     const int writes=mode==2 || mode==4 || mode==6 || mode==8 || mode==10 || mode==12 || mode==14 ||
-                     mode==16 || mode==18 || mode==20;
-    const int vmg=mode==19 || mode==20;
+                     mode==16 || mode==18 || mode==20 || mode==22;
+    const int vma=mode==21 || mode==22;
+    const int vmg=mode==19 || mode==20 || vma;
     const int grad=mode==15 || mode==16 || vmg;
     const int vmq=mode==17 || mode==18;
     const int mes=mode==11 || mode==12;
@@ -387,6 +411,8 @@ int main(int argc,char **argv) {
               "       sudo n33psp --smu-scpm-enable --rom rx7600-ipd.bin --i-have-ssh\n"
               "       sudo n33psp --vm-plan --rom rx7600-ipd.bin\n"
               "       sudo n33psp --vm-queue --rom rx7600-ipd.bin --i-have-ssh\n"
+              "       sudo n33psp --vm-alloc-plan --rom rx7600-ipd.bin --fw gradient.co\n"
+              "       sudo n33psp --vm-alloc --rom rx7600-ipd.bin --fw gradient.co --i-have-ssh\n"
               "       sudo n33psp --vm-gradient-plan --rom rx7600-ipd.bin --fw gradient.co\n"
               "       sudo n33psp --vm-gradient --rom rx7600-ipd.bin --fw gradient.co --i-have-ssh\n"
               "       sudo n33psp --gradient-plan --rom rx7600-ipd.bin --fw gradient.co\n"
@@ -434,13 +460,13 @@ int main(int argc,char **argv) {
         IOServiceClose(conn);free(rom);free(fw);return 5;
     }
     const int ringStage=mode==3 || mode==4;
-    const uint32_t planMode=vmg ? N33_VM_GRADIENT_PLAN : vmq ? N33_VM_QUEUE_PLAN : grad ? N33_GRADIENT_PLAN : mec ? N33_MEC_QUEUE_PLAN :mes ? N33_MES_START_PLAN :scpm ? N33_SMU_SCPM_PLAN : smu ? N33_SMU_ENABLE_PLAN : ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
+    const uint32_t planMode=vma ? N33_VM_ALLOC_PLAN : vmg ? N33_VM_GRADIENT_PLAN : vmq ? N33_VM_QUEUE_PLAN : grad ? N33_GRADIENT_PLAN : mec ? N33_MEC_QUEUE_PLAN :mes ? N33_MES_START_PLAN :scpm ? N33_SMU_SCPM_PLAN : smu ? N33_SMU_ENABLE_PLAN : ipfw ? N33_PSP_LOAD_FW_PLAN : ringStage ? N33_PSP_LOAD_RING_PLAN :
                             N33_PSP_LOAD_PLAN;
-    const uint32_t runMode=vmg ? N33_VM_GRADIENT_RUN : vmq ? N33_VM_QUEUE_RUN : grad ? N33_GRADIENT_RUN : mec ? N33_MEC_QUEUE_RUN :mes ? N33_MES_START_RUN :scpm ? N33_SMU_SCPM_RUN : smu ? N33_SMU_ENABLE_RUN : ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
+    const uint32_t runMode=vma ? N33_VM_ALLOC_RUN : vmg ? N33_VM_GRADIENT_RUN : vmq ? N33_VM_QUEUE_RUN : grad ? N33_GRADIENT_RUN : mec ? N33_MEC_QUEUE_RUN :mes ? N33_MES_START_RUN :scpm ? N33_SMU_SCPM_RUN : smu ? N33_SMU_ENABLE_RUN : ipfw ? N33_PSP_LOAD_FW_RUN : ringStage ? N33_PSP_LOAD_RING_RUN :
                            N33_PSP_LOAD_RUN;
     struct n33_psp_load_result r;
     int rc=7;
-    puts(vmg ? "== GFX11 VMID1 gradient plan (read-only)" : vmq ? "== GFX11 VMID1 queue plan (read-only)" : grad ? "== GFX11 gradient plan (read-only)" : mec ? "== GFX11 MEC queue plan (read-only)" :mes ? "== GFX11 MES start plan (read-only)" :scpm ? "== SMU13 SCPM enable-only plan (read-only)" : smu ? "== SMU13 feature enable plan (read-only)" : ipfw ? "== PSP13 IP firmware plan (read-only)" :
+    puts(vma ? "== GFX11 VMID1 on the VRAM heap, plan (read-only)" : vmg ? "== GFX11 VMID1 gradient plan (read-only)" : vmq ? "== GFX11 VMID1 queue plan (read-only)" : grad ? "== GFX11 gradient plan (read-only)" : mec ? "== GFX11 MEC queue plan (read-only)" :mes ? "== GFX11 MES start plan (read-only)" :scpm ? "== SMU13 SCPM enable-only plan (read-only)" : smu ? "== SMU13 feature enable plan (read-only)" : ipfw ? "== PSP13 IP firmware plan (read-only)" :
          ringStage ? "== PSP13 KM ring plan (read-only)" : "== PSP13 sOS load plan (read-only)");
     if(call(conn,planMode,start,stop,rom,romLen,fw,fwLen,&r)) {
         print(&r);
@@ -467,7 +493,8 @@ int main(int argc,char **argv) {
             puts("STOP 28 sends AUTOLOAD_RLC: boot with navi33-psp-autoload=1 as well. Nothing was sent.");
             rc=6;
         } else {
-            puts(vmg ? "== GFX11 VMID1 GRADIENT (writes GFXHUB TLB/L2/context-1, SH_MEM for VMID 1, queue-1 HQD and the window at 252 MiB; the GPU draws the screen)" :
+            puts(vma ? "== GFX11 VMID1 ON THE VRAM HEAP (writes GFXHUB TLB/L2/context-1, SH_MEM for VMID 1, queue-1 HQD and heap buffers in BAR0; the GPU draws the screen)" :
+                 vmg ? "== GFX11 VMID1 GRADIENT (writes GFXHUB TLB/L2/context-1, SH_MEM for VMID 1, queue-1 HQD and the window at 252 MiB; the GPU draws the screen)" :
                  vmq ? "== GFX11 VMID1 QUEUE (writes GFXHUB TLB/L2/context-1, queue-1 HQD and the window at 251 MiB)" :
                  grad ? "== GFX11 GRADIENT (writes GRBM select, SH_MEM_CONFIG, the poll trigger and the MEC window; the GPU draws the screen)" :
                  mec ? "== GFX11 MEC QUEUE (writes MEC/HQD registers, SCRATCH_REG0 and the 1 MiB VRAM window at 250 MiB)" :
@@ -481,7 +508,8 @@ int main(int argc,char **argv) {
             rc=7;
             if(call(conn,runMode,start,stop,rom,romLen,fw,fwLen,&r)) {
                 print(&r);
-                rc=vmg ? ((r.state==N33_PSPL_VMG_ON_SCREEN || r.state==N33_PSPL_VMG_OK) ? 0 : 9) :
+                rc=vma ? ((r.state==N33_PSPL_VMA_ON_SCREEN || r.state==N33_PSPL_VMA_OK) ? 0 : 9) :
+                   vmg ? ((r.state==N33_PSPL_VMG_ON_SCREEN || r.state==N33_PSPL_VMG_OK) ? 0 : 9) :
                    vmq ? (r.state==N33_PSPL_VM_QUEUE_OK ? 0 : 9) :
                    grad ? ((r.state==N33_PSPL_GRAD_ON_SCREEN || r.state==N33_PSPL_GRAD_OK) ? 0 : 9) :
                    mec ? (r.state==N33_PSPL_MEC_QUEUE_OK ? 0 : 9) :
@@ -496,6 +524,7 @@ int main(int argc,char **argv) {
     IOServiceClose(conn);
     free(rom);free(fw);
     puts(!writes ? "GPU writes: NONE; plan only." :
+         vma ? "GPU writes: GFXHUB, SH_MEM and queue-1 registers and heap buffers only; the GPU wrote the pixels through VMID 1." :
          vmg ? "GPU writes: GFXHUB, SH_MEM and queue-1 registers and the 252 MiB window; the GPU wrote the pixels through VMID 1." :
          vmq ? "GPU writes: GFXHUB and queue-1 registers and the VMID1 window only (see write count and flags)." :
          grad ? "GPU writes: GRBM/SH_MEM/poll registers and the MEC window; the GPU wrote the pixels." :

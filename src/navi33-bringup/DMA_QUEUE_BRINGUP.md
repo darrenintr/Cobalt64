@@ -1018,3 +1018,33 @@ SH_MEM_BASES `0x20001000` for VMID != 0).
   `make-opencore.sh --vm-gradient`; `n33psp --vm-gradient-plan` / `--vm-gradient`
   with `--fw gradient.co`. Mutants caught: depth 0, SH_MEM for VMID 0 only, an invalid
   PDE, screen PTEs off by one page, END too small, a VMID 0 queue.
+
+## Stage G39: the kernel's VRAM heap and address-space manager (kext 0.0.28, ABI 20, Phase B2)
+
+The first real memory management in the kext. Three pure headers, all host-tested:
+
+- `src/Navi33VramHeap.h`: one heap over all of VRAM by offset (8176 MiB, RCC_CONFIG_MEMSIZE),
+  the CPU-visible BAR0 (256 MiB) at the low end as on amdgpu. `reserve()` pins ranges for
+  good; `alloc(bytes, align, Visible|Anywhere, tag)` places Visible buffers bottom-up inside
+  BAR0 and Anywhere buffers top-down so BAR0 stays free; `free()` coalesces; handles carry
+  a generation so a stale handle frees nothing. Sorted extent list, 1024 blocks, extents
+  bounded by blocks + 1 (so neither split nor free can run out of room). No dynamic memory,
+  no stack temporaries (the kernel stack is 16 KiB). `tests/test_vram_heap.cpp`: 20 seeds x
+  20000 random operations against a page model, worst-case fragmentation, seven mutants.
+- `src/Navi33Gmc11Vm.h`: one GPU address space as amdgpu builds it on GMC11 (root PDB2,
+  depth 3, 9 bits a level, 48-bit VA below the hole). Table pages come from the heap,
+  zeroed before the parent points at them; `map(va, vramOffset, bytes, pteFlags)` and
+  `unmap()`. A failed write frees its page and leaves no dangling PDE. No TLB invalidation
+  yet, so mappings are made before a context uses them.
+- `src/Navi33Gfx11VmAlloc.h` (runner), `src/Navi33DarwinVmAlloc.cpp` (writer): G38's
+  stage with the heap. Reservations once per boot: [0, max(16 MiB, console end)) boot
+  console/VGA, [240, 256) MiB the bring-up windows (the PSP KM ring and MEC queue 0 still
+  live there), [8064, 8176) MiB the TMR and the firmware-owned top. Five heap buffers
+  (queue 20 KiB, MQD, shader 32 KiB, kernargs, image 16 KiB), each at its own VMID 1 VA,
+  plus the console mapped (not allocated); six table pages in the VM. Registers, gate
+  (`navi33-vm-gradient=1`) and writes (97) are G38's; own latch. The IOKit side maps the
+  whole BAR0 but admits a CPU read or write only inside one live, unpinned heap block. The
+  heap and the address space are members of `Navi33Probe` and live for the boot; buffers
+  a queue may have seen are never freed. ioreg `Navi33,VramHeap` reports the heap.
+  `n33psp --vm-alloc-plan` / `--vm-alloc --fw gradient.co`; states 69-72 plus G38's.
+- One of G36, G38 or G39 per power cycle (each needs the untouched GFXHUB).

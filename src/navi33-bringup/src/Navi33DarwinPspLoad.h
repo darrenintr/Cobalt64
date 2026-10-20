@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 class IOPCIDevice;
+namespace navi33 { namespace vram_heap { class Heap; } namespace gmc11_vm { class Space; } }
 
 namespace navi33 { namespace darwin_psp {
 struct Request {
@@ -25,6 +26,8 @@ struct Request {
     uint32_t startAt=0u;
     bool autoloadGate=false;      // navi33-psp-autoload=1 (and no navi33-psp-off)
     bool *attempted=nullptr;      // provider-wide, one load per boot
+    vram_heap::Heap *heap=nullptr;   // the provider's VRAM heap (VM_ALLOC modes)
+    gmc11_vm::Space *vm1=nullptr;    // VMID 1's address space (VM_ALLOC modes)
 };
 // Caller holds the provider's PSP lock and has checked the PCI identity.
 n33_psp_load_result execute(IOPCIDevice *pci,const Request &req);
@@ -43,4 +46,6 @@ n33_psp_load_result executeGradient(IOPCIDevice *pci,const Request &req);
 n33_psp_load_result executeVm(IOPCIDevice *pci,const Request &req);
 // VMID1 gradient (modes VM_GRADIENT_PLAN / VM_GRADIENT_RUN), Navi33DarwinVmGradient.cpp.
 n33_psp_load_result executeVmGradient(IOPCIDevice *pci,const Request &req);
+// VMID1 gradient on the VRAM heap (modes VM_ALLOC_PLAN / VM_ALLOC_RUN), Navi33DarwinVmAlloc.cpp.
+n33_psp_load_result executeVmAlloc(IOPCIDevice *pci,const Request &req);
 } } // namespace navi33::darwin_psp
