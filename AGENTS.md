@@ -2078,6 +2078,22 @@ parser got two of them wrong:
     context disable; open's `GCVM_L2_CNTL2` invalidate covers reuse) to see whether VMIDs can
     then be reused with correct results.
 
+- **2026-10-20 13:40, kext 0.0.44 (CI run 39375901251, UUID `EEC159C1-5B6C-3CEE-918A-042593BF7862`),
+  same host boot `347bf886-…`: fresh VMIDs stall too, so the stall is not the pending
+  invalidation.** Run `runs/20261020-133957`, nine `n33gpu` then `n33n48n`. VMIDs 8, 10, 11, 12
+  (never used this power cycle) all stalled at their first submission exactly like 2..5 at
+  13:21 (`PQ_RPTR` = `PQ_WPTR` 0xc, `IB_RPTR` 0x38, fence and RPTR report never written,
+  `EOP_RPTR` `0x40000000`, `EOP_WPTR` `0x1f70000`, no fault); device start reclaimed 4 HQDs and
+  retired one, so clients 5..9 got `NoSlot`.
+  - What the failures share is the **HQD**, not the VMID: every client slot whose HQD had
+    already completed work once in this power cycle stalls on reload; the only success at 13:21
+    was slot 5 (pipe 3 queue 0), never used before. A stalled HQD has EOP entries queued
+    (`EOP_WPTR` avail 0x1f7, not EMPTY) but its EOP fetcher never moves (`EOP_RPTR` 0); the one
+    that worked shows `EOP_RPTR` 0x40000008, `EOP_WPTR` 0x1ff8000 (EMPTY). So the RELEASE_MEM end-of-pipe
+    event is never processed after a dequeue/reload: suspect the EOP state across
+    `hqd_destroy` DRAIN_PIPE and our `hqd_load` (not verified). Next for compute: compare the
+    whole HQD block of a stalled reload with a fresh one, and Linux KFD's load/destroy.
+
 ## Adding a register read
 
 Prefer a new `n33peek` invocation over a new kext.
