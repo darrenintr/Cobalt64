@@ -469,6 +469,15 @@ output survives a hang and Linux can inspect a stuck guest.
   (PLAN_OK) and a 16 MiB error (APERTURE_MISMATCH). Next: a kill-switch-closed
   bare-metal boot should show `n33psp --plan` state 14. A bare-metal PSP load is
   still a new write and needs explicit approval.
+  CI `39429401671` green; artifact `cache/artifact-0.0.64-ci`, UUID
+  `994B713D-5C15-3C05-88A7-2E4FD73E9D44`. **Staged on the stick 2026-10-20** (kext
+  and tools identical to the artifact, boot-args unchanged, all write kill
+  switches set; 0.0.63 files in `navi33/backup-0.0.63-pre-0.0.64/`).
+  Reference read 2026-10-20: nullmoth's NVIDIA macOS driver (PolyForm
+  Noncommercial; read for design only, copy no code) holds the I/O registry busy
+  so WindowServer does not start on the firmware screen, blocks `IONDRVSupport`
+  so its framebuffer gets display index 0, and loads its display kexts from the
+  Aux KC. Candidates for the bare-metal desktop step.
   Local clang ASan: `test_client_gpu` overflows the default 8 MiB stack at line 381
   on the unmodified tree too; it passes with `ulimit -s 65536`.
 - **Latest evidence:** 0.0.61, `runs/20261020-200423`, loaded/cached UUID
