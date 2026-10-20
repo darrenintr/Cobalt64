@@ -184,6 +184,14 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
    submit/wait, shader translation, rendered-output readback and recovery
    path have matching live hardware evidence for one owner epoch.** Host
    policy tests, offline manifests and a buildable bundle do not count.
+   Since kext 0.0.54 (G41) Navi33Probe can publish the Metal nub (`Navi48MetalNub`, which the aux
+   accelerator kext matches) itself, once, only with boot-arg `navi33-metal=1` and only when this
+   boot's client GPU core has live evidence: service started, a client compute submission retired,
+   the G40 gfx ring-test fence landed, a per-VMID TLB flush ACKed with none missed (not
+   `navi33-client-tlb-unsafe`), nothing quarantined (`Navi33MetalPure.h` Evidence; verdict in ioreg
+   `Navi33,MetalNub`). That gate covers memory/VM, GFX queue and submit/wait; SDMA is not used
+   (RADV gets no transfer ring) and rendered-output readback through Metal is still required before
+   any claim of acceleration.
 
 ## Physical test loop
 
