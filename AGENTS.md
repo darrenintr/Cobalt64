@@ -391,7 +391,24 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (state at 2026-10-19 22:30): PROJECT PAUSED
+## Resume here (state at 2026-10-20 14:20): ACTIVE, waiting for one power-off
+
+- **The user's goal (2026-10-20): acceleration; "just do them all" — work on without asking,
+  notify at milestones.** Done today: first display driver (Navi33GOPFB, login screen on the
+  card, 13:47); client HQD reload fixed (0.0.46: EOP INIT_FETCHER bit 31, ACTIVE last).
+- **Open blocker: TLB invalidation.** The hub L2 has been busy since our hub setup latched
+  `GCVM_L2_CNTL2` invalidate bits; no engine ACKs, and clearing the bits did not release it
+  in that boot (0.0.47, 14:1x: `L2_STATUS 1->1`, 5 flush misses, opens fail closed).
+- **Next, after the user's full power-off** (`sudo grub-reboot cobalt64-navi33-vm && sudo
+  poweroff`, power button): run `src/navi33-bringup/vm/cold-run.sh` (artifact-0.0.47 cached;
+  autostart + client GPU + GOPFB in one boot, nine clients with slot reuse, repeat 200, N48N,
+  screen dump). Expect `L2_STATUS 0->0`, flushes > 0, misses 0, every client exact. If the
+  engine still never ACKs on a fresh hub, next suspects: CONTEXT0 not enabled (upstream
+  `enable_system_domain`), protection-fault default address, halted SDMA.
+- **Then:** native DCN modeset (`src/dcn321`), then RADV/Metal for gfx1102 (Navi48 stack:
+  `tools/native/navi48accel`, `navi48metal`, `mesa-patches/`, N48N canned device table).
+
+## Earlier resume notes (state at 2026-10-19 22:30): PROJECT PAUSED
 
 - **Paused by the user on 2026-10-19 (exams; may discontinue).** Everything is
   committed and pushed on `feature/navi33-dma-backend` (not merged to `main`).
