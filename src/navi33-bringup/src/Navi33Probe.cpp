@@ -746,8 +746,14 @@ void Navi33Probe::runAutostart() {
     namespace em=navi33::embedded;
     auto *pci=OSDynamicCast(IOPCIDevice,getProvider());
     if(!pci || !pspLock_)return;
-    struct Ctx { Navi33Probe *self; IOPCIDevice *pci; bool fwLatch2=false, fwLatch3=false; unsigned fwRuns=0; };
+    struct Ctx { Navi33Probe *self; IOPCIDevice *pci; bool fwLatch2=false, fwLatch3=false; unsigned fwRuns=0;
+        bool gfxMapGate=false; uint32_t schedulerBefore=0u,schedulerAfter=0u; };
     Ctx ctx{this,pci};
+    uint32_t map=0u,mapOff=0u,mecOff=0u,pspOff=0u;
+    ctx.gfxMapGate=clientGpuGate_ && !(PE_parse_boot_argn("navi33-psp-off",&pspOff,sizeof(pspOff)) && pspOff) &&
+        !(PE_parse_boot_argn("navi33-mec-off",&mecOff,sizeof(mecOff)) && mecOff) &&
+        PE_parse_boot_argn("navi33-gfx-map",&map,sizeof(map)) && map==1u &&
+        !(PE_parse_boot_argn("navi33-gfx-map-off",&mapOff,sizeof(mapOff)) && mapOff);
     IOLog("Navi33Probe: autostart begins (embedded firmware: IPD %lu B, sOS %lu B, IP %lu B)\n",
           static_cast<unsigned long>(em::kIpdBytes),static_cast<unsigned long>(em::kSosBytes),
           static_cast<unsigned long>(em::kIpFwBytes));
@@ -761,6 +767,10 @@ void Navi33Probe::runAutostart() {
         req.fwBytes=s.payload==as::Payload::Sos ? em::kSosBytes : s.payload==as::Payload::IpFw ?
             em::kIpFwBytes : 1u;
         req.writeGate=true;req.autoloadGate=s.autoload;
+        if(s.mode==N33_MEC_QUEUE_RUN && x.gfxMapGate) {
+            req.gfxMapGate=true;req.gfxMapSchedulerBefore=&x.schedulerBefore;
+            req.gfxMapSchedulerAfter=&x.schedulerAfter;
+        }
         req.stopAfter=s.stopAfter;req.startAt=s.startAt;
         fillConsole(req);
         switch(s.mode) {
@@ -785,11 +795,14 @@ void Navi33Probe::runAutostart() {
     };
     auto sleep=[](void *,uint32_t ms){IOSleep(ms);};
     const as::Report rep=as::run(&ctx,step,sleep);
-    char text[256];int n=snprintf(text,sizeof(text),"%s reached %u/%u:",rep.done ? "DONE" : "STOPPED",
+    char text[320];int n=snprintf(text,sizeof(text),"%s reached %u/%u:",rep.done ? "DONE" : "STOPPED",
                                   rep.reached,as::kStepCount);
     for(unsigned i=0;i<as::kStepCount && n>0 && static_cast<size_t>(n)<sizeof(text);++i)
         if(rep.tries[i])n+=snprintf(text+n,sizeof(text)-n," %s=%u/%uw%s",as::kSteps[i].name,
                                     rep.state[i],rep.writes[i],rep.tries[i]>1u ? "+retry" : "");
+    if(ctx.gfxMapGate && n>0 && static_cast<size_t>(n)<sizeof(text))
+        n+=snprintf(text+n,sizeof(text)-n," gfx-scheduler %08x->%08x",
+                    ctx.schedulerBefore,ctx.schedulerAfter);
     setProperty("Navi33,Autostart",text);
     IOLog("Navi33Probe: autostart %s\n",text);
 }
@@ -858,6 +871,14 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     // MEC queue: its own boot-arg; navi33-mec-off and navi33-psp-off both stop it.
     if(mecMode)req.writeGate=!killed && !mecKilled &&
         PE_parse_boot_argn("navi33-mec-queue",&mecOn,sizeof(mecOn)) && mecOn==1u;
+    uint32_t gfxMap=0u,gfxMapOff=0u,gfxMapSchedulerBefore=0u,gfxMapSchedulerAfter=0u;
+    req.gfxMapGate=mecMode && clientGpuGate_ && !killed && !mecKilled &&
+        PE_parse_boot_argn("navi33-gfx-map",&gfxMap,sizeof(gfxMap)) && gfxMap==1u &&
+        !(PE_parse_boot_argn("navi33-gfx-map-off",&gfxMapOff,sizeof(gfxMapOff)) && gfxMapOff);
+    if(req.gfxMapGate) {
+        req.gfxMapSchedulerBefore=&gfxMapSchedulerBefore;
+        req.gfxMapSchedulerAfter=&gfxMapSchedulerAfter;
+    }
     // Gradient: its own boot-arg; navi33-gradient-off and navi33-psp-off both stop it.
     if(gradMode)req.writeGate=!killed && !gradKilled &&
         PE_parse_boot_argn("navi33-gradient",&gradOn,sizeof(gradOn)) && gradOn==1u;
@@ -913,10 +934,10 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
         result.mes_version[1],result.mes_pc[0],result.mes_pc[1],result.mes_samples);
     if(mecMode)snprintf(raw,sizeof(raw),
         "mode %u state %u steps %u writes %u cntl %x->%x RLC %x scratch %x fence %x rptr %x "
-        "active %x->%x window 0x%llx",mode,result.state,result.steps_done,result.register_writes,
+        "active %x->%x scheduler %x->%x window 0x%llx",mode,result.state,result.steps_done,result.register_writes,
         result.mec_cntl_before,result.mec_cntl_after,result.mec_rlc,result.mec_scratch,
         result.mec_fence,result.mec_rptr,result.mec_hqd_active_before,
-        result.mec_hqd_active_after,result.mec_window_mc);
+        result.mec_hqd_active_after,gfxMapSchedulerBefore,gfxMapSchedulerAfter,result.mec_window_mc);
     if(gradMode)snprintf(raw,sizeof(raw),
         "mode %u state %u steps %u writes %u SH_MEM %x rptr %u->%u fences %x/%x bad %u/%u "
         "fallbacks %u pixel(1,1) %08x screen %x",mode,result.state,result.steps_done,

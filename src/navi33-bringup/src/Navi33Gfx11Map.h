@@ -22,7 +22,7 @@ struct Snapshot {
 };
 inline bool ready(const Snapshot &s,uint64_t fb) {
     const uint64_t base=(uint64_t(s.pqHi)<<32)|s.pqLo;
-    return !(s.scheduler&0x80u) && s.active==1u && s.vmid==0u &&
+    return (s.scheduler&0xffu)==0xa0u && s.active==1u && s.vmid==0u &&
         base==((fb+kG34Vram+mec_queue::kRingOff)>>8) &&
         (s.pqControl&0xc0000000u)==0xc0000000u && s.rptr==16u &&
         s.wptrLo==16u && !s.wptrHi && s.fence==mec_queue::kFenceValue && !s.mapped;

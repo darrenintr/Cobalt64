@@ -728,7 +728,7 @@ private:
         const uint32_t zero=0, next[2]={gm::kEndWptr,0u};
         gfxMapAttempted_=true;gfxMap_.state=gm::State::Attempted; // latch before the first stage write
         if(!stagePut(gm::kMapFenceOff,&zero,1u) || !stagePut(gm::kAppendOff,packets,16u) ||
-           !stagePut(mq::kWptrOff,next,2u) || !wr(r_->scheduler,gm::schedulerWord(s.scheduler)))return false;
+           !stagePut(mq::kWptrOff,next,2u))return false;
         if(!sel(mq::grbmSelect(1u,0u,0u)) || !wr(q.poll1,1u) || !sel(0u))return false;
         gfxMap_.state=gm::State::MapTimeout;
         for(uint32_t us=0;us<gfx_ring::kFenceTimeoutUs;us+=100u) {

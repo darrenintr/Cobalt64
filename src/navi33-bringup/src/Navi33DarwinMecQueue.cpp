@@ -19,7 +19,7 @@ namespace mq=mec_queue;
 // The PSP stages own 240..248 MiB and the SDMA ring test 248..249 MiB; the
 // proof covers 240..256 MiB, and this window is the 1 MiB at 250 MiB.
 constexpr uint64_t kProofBytes=16u*1024u*1024u, kWindowFromProof=10u*1024u*1024u;
-struct Io { IOMemoryMap *regs=nullptr, *win=nullptr; mq::Regs r{}; };
+struct Io { IOMemoryMap *regs=nullptr, *win=nullptr; mq::Regs r{}; bool gfxMapGate=false; };
 bool read32(void *ctx,uint64_t off,uint32_t *out) {
     IOMemoryMap *map=static_cast<Io *>(ctx)->regs;
     if(!map || !out || (off&3u) || off>map->getLength() || map->getLength()-off<4u)return false;
@@ -29,7 +29,7 @@ bool read32(void *ctx,uint64_t off,uint32_t *out) {
 }
 bool write32(void *ctx,uint64_t off,uint32_t value) {
     Io *io=static_cast<Io *>(ctx);
-    if(!mq::allowed(io->r,off) || !io->regs || (off&3u) || off>io->regs->getLength() ||
+    if(!mq::allowed(io->r,off,io->gfxMapGate) || !io->regs || (off&3u) || off>io->regs->getLength() ||
        io->regs->getLength()-off<4u)return false;
     *reinterpret_cast<volatile uint32_t *>(
         static_cast<uintptr_t>(io->regs->getVirtualAddress())+off)=value;
@@ -76,7 +76,7 @@ n33_psp_load_result executeMec(IOPCIDevice *pci,const Request &req) {
     const pl::Range console=boot.phys ? boot :
         pl::hostConsole(boot,req.hostConsole,req.hostConsoleOffset,req.hostConsoleBytes,bar0Range);
     const pl::Registers pregs=pl::resolve(disc,bar5Bytes);
-    Io io{};io.r=mq::resolve(disc,bar5Bytes);
+    Io io{};io.r=mq::resolve(disc,bar5Bytes);io.gfxMapGate=req.gfxMapGate;
     if(!pregs.valid || !io.r.valid) {out.state=N33_PSPL_BAD_ROM;return out;}
     io.regs=bar5->map();
     if(!io.regs || static_cast<uint64_t>(io.regs->getLength())<bar5Bytes) {
@@ -109,7 +109,8 @@ n33_psp_load_result executeMec(IOPCIDevice *pci,const Request &req) {
             } else {
                 IOLog("Navi33Probe: MEC queue RUN starts, window MC 0x%llx\n",layout.windowMc);
                 hw.write=write32;hw.vramWrite=vramWrite;
-                out=mq::execute(io.r,layout,hw,true,true,*req.attempted);
+                out=mq::execute(io.r,layout,hw,true,true,*req.attempted,req.gfxMapGate,
+                                req.gfxMapSchedulerBefore,req.gfxMapSchedulerAfter);
                 out.flags|=win.flags|N33_PSPL_FLAG_WRITE_GATE_OPEN;
             }
             if(io.win)io.win->release();
@@ -117,10 +118,11 @@ n33_psp_load_result executeMec(IOPCIDevice *pci,const Request &req) {
     }
     io.regs->release();
     IOLog("Navi33Probe: MEC queue %s state %u steps %u writes %u cntl %x->%x RLC %x scratch %x "
-          "fence %x rptr %x active %x->%x window 0x%llx ms %u\n",run ? "RUN" : "PLAN",out.state,
+          "fence %x rptr %x active %x->%x scheduler %x->%x window 0x%llx ms %u\n",run ? "RUN" : "PLAN",out.state,
           out.steps_done,out.register_writes,out.mec_cntl_before,out.mec_cntl_after,out.mec_rlc,
           out.mec_scratch,out.mec_fence,out.mec_rptr,out.mec_hqd_active_before,
-          out.mec_hqd_active_after,out.mec_window_mc,out.elapsed_ms);
+          out.mec_hqd_active_after,req.gfxMapSchedulerBefore ? *req.gfxMapSchedulerBefore : 0u,
+          req.gfxMapSchedulerAfter ? *req.gfxMapSchedulerAfter : 0u,out.mec_window_mc,out.elapsed_ms);
     return out;
 }
 } } // namespace navi33::darwin_psp

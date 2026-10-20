@@ -25,6 +25,7 @@ namespace kiq=gfx11_kiq;
 // gc_11_0_0_offset.h. Segment 1: GRBM_GFX_CNTL, CP_MEC_RS64_*, SCRATCH_REG0,
 // RLC_RLCS_BOOTLOAD_STATUS. Segment 0: the HQD block, CP_PQ_WPTR_POLL_CNTL1.
 constexpr uint32_t kGrbmGfxCntl=0x0900u, kPrgrmCntrStart=0x2900u, kPrgrmCntrStartHi=0x2938u;
+constexpr uint32_t kSchedulerSeg=1u, kSchedulerDw=0x098au; // RLC_CP_SCHEDULERS
 constexpr uint32_t kScratchReg0=0x2040u, kRlcBootload=0x4e82u, kSosAlive=0x91u;
 constexpr uint32_t kHqdFirst=0x1fa9u, kHqdLast=0x1fe0u, kHqdHole=0x1fb9u; // CP_MQD_BASE_ADDR..CP_HQD_PQ_WPTR_HI
 constexpr uint32_t kPollCntl1=0x1e24u, kEopRptr=0x1fd1u;
@@ -59,7 +60,7 @@ constexpr uint32_t kTimeoutMs=1000u;
 constexpr unsigned kMaxWrites=96u;
 
 struct Regs {
-    uint64_t grbm=0,pc=0,pcHi=0,cntl=0,scratch=0,rlc=0,sos=0,poll1=0,hqd[kHqdLast-kHqdFirst+1u]{};
+    uint64_t grbm=0,pc=0,pcHi=0,cntl=0,scratch=0,rlc=0,sos=0,poll1=0,scheduler=0,hqd[kHqdLast-kHqdFirst+1u]{};
     bool valid=false;
 };
 inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
@@ -68,7 +69,8 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
     const One ones[]={{&r.grbm,Engine::GFX11,1,kGrbmGfxCntl},{&r.pc,Engine::GFX11,1,kPrgrmCntrStart},
         {&r.pcHi,Engine::GFX11,1,kPrgrmCntrStartHi},{&r.cntl,Engine::GFX11,1,gfx11_mec::kCpMecRs64CntlDword},
         {&r.scratch,Engine::GFX11,1,kScratchReg0},{&r.rlc,Engine::GFX11,1,kRlcBootload},
-        {&r.sos,Engine::PSP13,0,kSosAlive},{&r.poll1,Engine::GFX11,0,kPollCntl1}};
+        {&r.sos,Engine::PSP13,0,kSosAlive},{&r.poll1,Engine::GFX11,0,kPollCntl1},
+        {&r.scheduler,Engine::GFX11,kSchedulerSeg,kSchedulerDw}};
     for(const One &o:ones) {
         const auto a=resolveDword(d,o.e,o.seg,o.dw,bytes);
         if(a.code!=AddressCode::Pass)return r;
@@ -83,9 +85,10 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
 }
 inline uint64_t hqd(const Regs &r,uint32_t dw) { return r.hqd[dw-kHqdFirst]; }
 // The only registers the run may write; the hole at 0x1fb9 is never one.
-inline bool allowed(const Regs &r,uint64_t off) {
+inline bool allowed(const Regs &r,uint64_t off,bool gfxMapGate=false) {
     if(!r.valid)return false;
-    if(off==r.grbm || off==r.pc || off==r.pcHi || off==r.cntl || off==r.scratch || off==r.poll1)
+    if(off==r.grbm || off==r.pc || off==r.pcHi || off==r.cntl || off==r.scratch || off==r.poll1 ||
+       (gfxMapGate && off==r.scheduler))
         return true;
     for(uint32_t dw=kHqdFirst;dw<=kHqdLast;++dw)
         if(dw!=kHqdHole && off==hqd(r,dw))return true;
@@ -140,9 +143,9 @@ inline uint32_t sample(const Regs &r,const Hw &h,n33_psp_load_result &o) {
     return N33_PSPL_PLAN_OK;
 }
 struct Writer {
-    const Regs &r; const Hw &h; n33_psp_load_result &o; uint32_t select=0u;
+    const Regs &r; const Hw &h; n33_psp_load_result &o; bool gfxMapGate=false; uint32_t select=0u;
     bool put(uint64_t off,uint32_t v) {
-        if(!allowed(r,off) || o.register_writes>=kMaxWrites || !h.write(h.ctx,off,v))return false;
+        if(!allowed(r,off,gfxMapGate) || o.register_writes>=kMaxWrites || !h.write(h.ctx,off,v))return false;
         ++o.register_writes;o.flags|=N33_PSPL_FLAG_WROTE_REGISTERS;
         if(off==r.grbm)select=v;
         return true;
@@ -156,7 +159,8 @@ struct Writer {
 // Plan calls get no write callback. The run consumes the latch before its
 // first write and never halts, dequeues or retries: recovery is a power-off.
 inline n33_psp_load_result execute(const Regs &r,const Layout &l,const Hw &h,bool run,bool gate,
-                                  bool &attempted) {
+                                  bool &attempted,bool gfxMapGate=false,
+                                  uint32_t *schedulerBefore=nullptr,uint32_t *schedulerAfter=nullptr) {
     auto o=blank();
     if(gate)o.flags|=N33_PSPL_FLAG_WRITE_GATE_OPEN;
     if(!r.valid){o.state=N33_PSPL_BAD_ROM;return o;}
@@ -170,7 +174,7 @@ inline n33_psp_load_result execute(const Regs &r,const Layout &l,const Hw &h,boo
     if(attempted){o.state=N33_PSPL_ALREADY_ATTEMPTED;return o;}
     if(!h.write || !h.sleep || !h.vramWrite || !h.vramRead){o.state=N33_PSPL_BAD_REQUEST;return o;}
     attempted=true;
-    Writer w{r,h,o};
+    Writer w{r,h,o,gfxMapGate};
     // 1. VRAM first (no register touched yet): zeroed window head, MQD, ring,
     //    WPTR in memory = the ring's end. Read everything back.
     static uint32_t zero[kClearBytes/4u];
@@ -209,6 +213,20 @@ inline n33_psp_load_result execute(const Regs &r,const Layout &l,const Hw &h,boo
     if(!w.put(r.scratch,kScratchPreset))return w.stop(N33_PSPL_MEC_WRITE_FAILED);
     // 5. hqd_load_v11() for me 1 pipe 0 queue 0.
     if(!w.sel(grbmSelect(kMeMec,kPipe,kQueue)))return w.stop(N33_PSPL_MEC_WRITE_FAILED);
+    if(gfxMapGate) {
+        uint32_t before=0u;
+        if(!read(h,r.scheduler,before))return w.stop(N33_PSPL_READ_FAILED);
+        if(schedulerBefore)*schedulerBefore=before;
+        // Linux marks the KIQ before loading/activating its HQD. Refuse if
+        // this queue is already marked HIQ; only G34's exact selector changes.
+        if(before&0x80u)return w.stop(N33_PSPL_MEC_BAD_PRECONDITION);
+        const uint32_t target=(before&0xffffff00u)|0xa0u;
+        if(!w.put(r.scheduler,target))return w.stop(N33_PSPL_MEC_WRITE_FAILED);
+        uint32_t after=0u;
+        if(!read(h,r.scheduler,after))return w.stop(N33_PSPL_READ_FAILED);
+        if(schedulerAfter)*schedulerAfter=after;
+        if(after!=target)return w.stop(N33_PSPL_READ_FAILED);
+    }
     uint32_t active=0;
     if(!read(h,hqd(r,kiq::kCpHqdActive),active))return w.stop(N33_PSPL_READ_FAILED);
     o.mec_hqd_active_before=active;

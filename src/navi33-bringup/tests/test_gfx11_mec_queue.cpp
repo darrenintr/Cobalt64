@@ -18,10 +18,10 @@ struct Fake {
     std::map<std::pair<uint32_t,uint64_t>,uint32_t> bank;    // (select, offset)
     std::vector<uint32_t> vram=std::vector<uint32_t>(mq::kWindowBytes/4u,0x5a5a5a5au);
     std::vector<std::pair<uint64_t,uint32_t>> writes;
-    unsigned failWrite=0,attempts=0,failRead=0,reads=0; uint32_t ms=0;
+    unsigned failWrite=0,attempts=0,failRead=0,reads=0; uint32_t ms=0; bool allowMap=false;
     bool pcs[4]{}, polled=false, ran=false, noFence=false, deaf=false;
     explicit Fake(mq::Regs regs):r(regs) {
-        mem={{r.sos,42},{r.rlc,0xc000001fu},{r.grbm,0},{r.cntl,0x400f0000u},{r.scratch,0},{r.poll1,0}};
+        mem={{r.sos,42},{r.rlc,0xc000001fu},{r.grbm,0},{r.cntl,0x400f0000u},{r.scratch,0},{r.poll1,0},{r.scheduler,0x3038u}};
     }
     bool banked(uint64_t off) const {
         if(off==r.pc || off==r.pcHi)return true;
@@ -58,7 +58,7 @@ struct Fake {
     }
     static bool write(void *c,uint64_t off,uint32_t v) {
         auto &f=*static_cast<Fake *>(c);
-        assert(mq::allowed(f.r,off));
+        assert(mq::allowed(f.r,off,f.allowMap));
         if(++f.attempts==f.failWrite)return false;
         f.writes.emplace_back(off,v);
         if(f.banked(off)) {
@@ -91,6 +91,7 @@ int main() {
     assert(r.valid && r.grbm==0x2a400 && r.pc==0x32400 && r.pcHi==0x324e0 && r.cntl==0x32410);
     assert(r.scratch==0x30100 && r.poll1==0xc210 && mq::hqd(r,0x1fa9)==0xc824 && mq::hqd(r,0x1fe0)==0xc900);
     assert(!mq::allowed(r,mq::hqd(r,mq::kHqdHole)) && !mq::allowed(r,r.rlc) && !mq::allowed(r,r.sos));
+    assert(r.scheduler && !mq::allowed(r,r.scheduler) && mq::allowed(r,r.scheduler,true));
     bool attempted=false;
     {   Fake f(r);mq::Hw h=f.hw();h.write=nullptr;h.vramWrite=nullptr;
         auto o=mq::execute(r,f.l,h,false,true,attempted);
@@ -131,6 +132,21 @@ int main() {
         f.mem[r.cntl]=0x400f0000u;
         o=mq::execute(r,f.l,f.hw(),true,true,attempted);
         assert(o.state==N33_PSPL_ALREADY_ATTEMPTED && f.writes.size()==n);
+    }
+    {   Fake f(r); f.allowMap=true; uint32_t before=0,after=0;attempted=false;
+        auto o=mq::execute(r,f.l,f.hw(),true,true,attempted,true,&before,&after);
+        assert(o.state==N33_PSPL_MEC_QUEUE_OK && before==0x3038u && after==0x30a0u);
+        const auto &w=f.writes;auto it=std::find(w.begin(),w.end(),std::make_pair(r.scheduler,0x30a0u));
+        assert(it!=w.end());const size_t i=static_cast<size_t>(it-w.begin());
+        assert(w[i-1u]==std::make_pair(r.grbm,mq::grbmSelect(1,0,0)));
+        assert(w[i+1u].first==mq::hqd(r,kiq::kCpMqdBaseAddrLo));
+        assert(w.size()==84u+1u); // one gated scheduler write, before HQD load
+    }
+    {   Fake f(r); f.allowMap=true;f.mem[r.scheduler]=0x30a0u;attempted=false;uint32_t before=0,after=0;
+        auto o=mq::execute(r,f.l,f.hw(),true,true,attempted,true,&before,&after);
+        assert(o.state==N33_PSPL_MEC_BAD_PRECONDITION && before==0x30a0u && after==0u);
+        assert(std::none_of(f.writes.begin(),f.writes.end(),[&](const auto &w){return w.first==r.scheduler;}));
+        assert(std::none_of(f.writes.begin(),f.writes.end(),[&](const auto &w){return w.first==mq::hqd(r,kiq::kCpHqdActive);}));
     }
     {   Fake f(r);f.noFence=true;attempted=false;
         auto o=mq::execute(r,f.l,f.hw(),true,true,attempted);

@@ -25,6 +25,10 @@ struct Request {
                                   // fw modes: records [startAt, stopAfter), 27 = +AUTOLOAD_RLC
     uint32_t startAt=0u;
     bool autoloadGate=false;      // navi33-psp-autoload=1 (and no navi33-psp-off)
+    // Optional G42 preparation: designate the existing G34 queue HIQ before
+    // its HQD is loaded. Closed unless the complete graphics-map gate is on.
+    bool gfxMapGate=false;
+    uint32_t *gfxMapSchedulerBefore=nullptr, *gfxMapSchedulerAfter=nullptr;
     bool *attempted=nullptr;      // provider-wide, one load per boot
     vram_heap::Heap *heap=nullptr;   // the provider's VRAM heap (VM_ALLOC modes)
     gmc11_vm::Space *vm1=nullptr;    // VMID 1's address space (VM_ALLOC modes)

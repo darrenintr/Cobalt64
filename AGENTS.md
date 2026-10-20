@@ -168,6 +168,12 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      Fixed MAP_QUEUES + confirmed WRITE_DATA fence only, no user-controlled stream.
      Further attempts after a stage write require full power-off. Recovery remains
      guest/host SSH and host full power-off. Design: `GFX_MAP_DESIGN.md`. Not yet run.
+     G42 did run once (see findings below) and timed out. The 0.0.58 offline
+     candidate, gated by the same `navi33-gfx-map=1`, moves the existing
+     RLC_CP_SCHEDULERS HIQ designation into G34 initialization before
+     CP_HQD_ACTIVE; G42 then requires scheduler low byte 0xa0 and does not write
+     it. This is a plausible ordering hypothesis, not a proven cause. The
+     candidate keeps the same register/window/MQD allowlists and latches.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -428,7 +434,7 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (2026-10-20 16:12): G42 mapping implementation ready for CI/live test
+## Resume here (2026-10-20 16:12; updated 2026-10-20): G42 follow-up candidate
 
 - User confirmed full power-off and requested continued work toward a **GPU-rendered
   macOS desktop, wallpaper and apps**. Framebuffer output is not the goal.
@@ -474,13 +480,24 @@ output survives a hang and Linux can inspect a stuck guest.
   ID is still `e04d7ebd-c5ad-4739-be64-daedfc247494`, the same as the earlier
   0.0.54 run, despite the user reporting a full power-off; treat this evidence
   as not independently verified as a cold power cycle.
+- The G42 attempt also has QMP read-only evidence in
+  `g42-qmp-readonly.jsonl` and `summary.txt`: scheduler changed 0x3038->0x30a0,
+  G34 memory WPTR reached 32, KIQ fence stayed 0, MAPPED stayed 0, and the GFX
+  HQD was inactive. `ClientGfx` state 5 is Unhalt. The GFX ring was not kicked.
+- The 0.0.58 offline candidate moves the scheduler HIQ write into the gated G34
+  init before HQD activation, based on Linux's ordering. This is a hypothesis,
+  not a diagnosed cause. `navi33-gfx-map=1` and client GPU gate remain required;
+  `navi33-gfx-map-off`, `navi33-mec-off`, and `navi33-psp-off` close it. Register
+  and VRAM spans, latch semantics, and Metal behavior are unchanged. No build or
+  hardware run is included in this source change; CI is required for the kext.
 - This run's autostart stopped at `sOS=8/0w`; client 1 timed out, but clients
   2..9, the 200-repeat client, N48N and RADV Vulkan fill all passed with exact
   pixels/words. Guest SSH and WindowServer survived. No GPU-rendered desktop,
   wallpaper/apps, or Metal output is established. VM remains running in tmux
   `n33-cold`, artifact 0.0.57. No Metal nub/accelerator installed or enabled.
-  The failed G42 attempt needs read-only investigation and a new bounded design
-  before any further GPU writes.
+  The G42 attempt needs another full power-off and renewed explicit approval
+  before any further GPU writes. The VM remains running on artifact 0.0.57;
+  do not reboot, shut it down, install/download artifacts, or touch hardware.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
   (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
   as a clean cold run. Preserve that memory until dequeue/recovery is verified.
@@ -2343,6 +2360,15 @@ parser got two of them wrong:
   not evidence from a verified full power cycle. Do not repeat G42 without a
   full power-off and renewed authorization. No GPU-rendered desktop or Metal
   output is proven.
+
+- **G42 follow-up candidate (kext 0.0.58, offline source only):** moves the
+  scheduler HIQ write to the G34 initialization sequence before HQD activation,
+  because Linux sets KIQ state before loading/activating its HQD. This is a
+  hypothesis, not a proven explanation for the MAP timeout. G42 evidence remains
+  fence=0, MAPPED=0, GFX HQD inactive, and no graphics ring kick. The VM is left
+  running on 0.0.57. No GPU-rendered desktop, wallpaper/apps, or Metal output is
+  established. Any physical retry needs a full power-off and renewed explicit
+  approval.
 
 ## Adding a register read
 
