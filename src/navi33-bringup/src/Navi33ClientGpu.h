@@ -220,6 +220,7 @@ public:
         if(!(aper&1u) && !wr(r.nbioAperEn,aper|1u))return Code::HwFailed;
         if(!rd(r.nbioAperEn,db_.aper) || !rd(r.mecDbLower,db_.lower) || !rd(r.mecDbUpper,db_.upper))return Code::HwFailed;
         if(!(db_.aper&1u) || db_.lower>doorbellByte(0) || db_.upper<doorbellByte(kClients-1u)+8u)return Code::HwFailed;
+        for(uint32_t i=0;i<kHqdDumpQueues;++i)hqdStartOk_[i]=hqdDump(i,hqdStart_[i]);
         // Client queues an earlier boot of the kext left active (stuck work) are drained
         // and dequeued now, as close() would have; one that will not go is retired.
         for(uint32_t i=0;i<kClients;++i) {
@@ -232,6 +233,20 @@ public:
         started_=true;return Code::Ok;
     }
     bool started() const { return started_; }
+    // Diagnostics (2026-10-20: a client HQD that already finished work stalls after a reload):
+    // the whole HQD block CP_MQD_BASE_ADDR..CP_HQD_DDID_WPTR of MEC pipes 0..3 queues 0/1
+    // except pipe 0 queue 0 (G34's), read under GRBM select. Reads only.
+    static constexpr uint32_t kHqdDumpFirst=0x1fa9u, kHqdDumpLast=0x1fe5u,
+                              kHqdDumpCount=kHqdDumpLast-kHqdDumpFirst+1u, kHqdDumpQueues=8u;
+    static constexpr uint32_t hqdDumpSel(uint32_t i) { return mq::grbmSelect(mq::kMeMec,i/2u,i%2u); }
+    bool hqdDump(uint32_t i,uint32_t out[kHqdDumpCount]) {
+        if(!r_ || i>=kHqdDumpQueues || !i || !sel(hqdDumpSel(i)))return false;
+        const uint64_t base=mq::hqd(r_->g.v.q,kHqdDumpFirst);
+        bool ok=true;
+        for(uint32_t k=0;k<kHqdDumpCount;++k)ok=h_.read(h_.ctx,base+4u*k,&out[k]) && ok;
+        return sel(0u) && ok;
+    }
+    const uint32_t *hqdAtStart(uint32_t i) const { return i<kHqdDumpQueues && hqdStartOk_[i] ? hqdStart_[i] : nullptr; }
     // A new client: VMID k, address space, queue buffers mapped, context k, SH_MEM, queue k loaded.
     Code open(const void *owner,uint32_t &slot) {
         if(!started_)return Code::NotReady;
@@ -636,6 +651,7 @@ private:
     uint32_t select_=0, writes_=0, flushes_=0, faultSeen_=0;
     uint64_t retiredBytes_=0;
     DoorbellSetup db_{};
+    uint32_t hqdStart_[kHqdDumpQueues][kHqdDumpCount]{}; bool hqdStartOk_[kHqdDumpQueues]{};
     bool started_=false;
 };
 } }

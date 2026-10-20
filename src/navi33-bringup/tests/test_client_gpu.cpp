@@ -53,6 +53,8 @@ struct Fake {
     bool banked(uint64_t off) const {
         if(off==r.g.shMem || off==r.g.shBases || off==r.dequeue)return true;
         for(uint32_t dw=mq::kHqdFirst;dw<=mq::kHqdLast;++dw)if(off==mq::hqd(r.g.v.q,dw))return true;
+        const uint64_t b0=mq::hqd(r.g.v.q,mq::kHqdFirst);                       // the diagnostic dump's tail
+        if(off>b0 && off<=b0+4u*(cg::Device::kHqdDumpLast-mq::kHqdFirst))return true;
         return false;
     }
     uint32_t sel(){return mem[r.g.v.q.grbm];}
@@ -247,7 +249,7 @@ int main() {
     // 1. Two clients, each its own VMID, queue, buffers and image.
     {   Fake f(r);
         {uint32_t none=0;assert(f.dev.open(&f,none)==cg::Code::NotReady);}
-        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u);
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u+14u);   // hub, HQD ACTIVE checks, HQD dumps (selects)
         // Doorbells: MEC range 0..0x450 bytes, NBIO aperture bit 0 set, the rest of the word kept.
         assert(f.mem[r.mecDbLower]==0u && f.mem[r.mecDbUpper]==0x450u && f.mem[r.nbioAperEn]==0x101u);
         {   const cg::DoorbellSetup db=f.dev.stats().db;
@@ -429,6 +431,15 @@ int main() {
         assert(f.dev.boCreate(b.slot,4096,x,vx)==cg::Code::Ok && f.dev.vaMap(b.slot,x,0x500000,true,false)==cg::Code::Ok);
         assert(f.flushes==f0+2u && f.dev.boFree(b.slot,x)==cg::Code::Ok && f.flushes==f0+3u && f.dev.stats().tlbFlushes==3u);
     }
+    // 5c'. The HQD dump reads the whole block of every client-capable HQD but G34's, writing nothing but GRBM selects.
+    {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        f.bank[{qsOf(cg::kFirstVmid),mq::hqd(r.g.v.q,0x1fd2u)}]=0x1f70000u;
+        uint32_t w[cg::Device::kHqdDumpCount];const size_t before=f.writes.size();
+        assert(!f.dev.hqdDump(0,w) && f.dev.hqdAtStart(0)==nullptr);
+        assert(f.dev.hqdDump(1,w) && w[0x1fd2u-0x1fa9u]==0x1f70000u && f.dev.hqdAtStart(1) && f.dev.hqdAtStart(1)[0x1fd2u-0x1fa9u]==0u);
+        for(size_t i=before;i<f.writes.size();++i)assert(f.writes[i].first==r.g.v.q.grbm);
+        assert(f.mem[r.g.v.q.grbm]==0u);
+    }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
         f.bank[{qsOf(cg::kFirstVmid),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
@@ -467,7 +478,7 @@ int main() {
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
         h.mem[r.mecDbLower]=0x110u;h.mem[r.mecDbUpper]=0xffcu;h.mem[r.nbioAperEn]=1u;   // MES's range covers ours
-        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==12u);
+        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==14u+12u);
         for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm);          // only the HQD ACTIVE checks
     }
     // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.

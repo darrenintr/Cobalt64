@@ -6,7 +6,7 @@
 set -euo pipefail
 V=/home/darren/Cobalt64/src/navi33-bringup/vm
 N="/home/darren/macos tahoe/navi33"
-ART="${ARTIFACT:-$N/cache/artifact-0.0.44}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
+ART="${ARTIFACT:-$N/cache/artifact-0.0.45}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
 up() { ssh -o ConnectTimeout=3 -o BatchMode=yes macos-vm true 2>/dev/null; }
 if pgrep -f "^qemu-system-x86_64" >/dev/null; then
   ssh macos-vm 'sudo shutdown -h now' >/dev/null 2>&1 || true

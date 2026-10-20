@@ -1224,6 +1224,17 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
              st.db.aperBefore,st.db.aper,st.db.lowerBefore,st.db.upperBefore,st.db.lower,st.db.upper,
              st.db.pqBefore,st.db.pq,st.db.reclaimed);
     setProperty("Navi33,ClientGpu",line);
+    // Every client-capable HQD, at service start and now (diagnostics, reads only).
+    {   char hq[16+cg::Device::kHqdDumpCount*9u];uint32_t w[cg::Device::kHqdDumpCount];char key[48];
+        for(uint32_t i=1;i<cg::Device::kHqdDumpQueues;++i)for(int now=0;now<2;++now) {
+            const uint32_t *v=now ? (gpuHost_.dev.hqdDump(i,w) ? w : nullptr) : gpuHost_.dev.hqdAtStart(i);
+            if(!v)continue;
+            size_t n=0;
+            for(uint32_t k=0;k<cg::Device::kHqdDumpCount && n+10<sizeof(hq);++k)n+=snprintf(hq+n,sizeof(hq)-n,k ? " %x" : "%x",v[k]);
+            snprintf(key,sizeof(key),"Navi33,Hqd p%uq%u %s",i/2u,i%2u,now ? "now" : "start");
+            setProperty(key,hq);
+        }
+    }
     // The last client whose wait timed out: its queue as the CP saw it.
     for(uint32_t i=0;i<navi33::client_gpu::kClients;++i) {
         const navi33::client_gpu::Client *cl=gpuHost_.dev.client(i);
