@@ -155,6 +155,8 @@ struct Fake {
         // GRBM select: 0, a VMID (SH_MEM), or a client HQD: never MES's queues 2+ or pipe 0.
         if(off==f.r.g.v.q.grbm && v && !(v&0xf0u))assert(((v>>2)&3u)==1u && (v&3u)>=1u && ((v>>8)&7u)<=1u);
         if(off==f.r.g.v.q.poll1)for(uint32_t i=0;i<cg::kClients;++i)if(v&cg::pollBit(i))f.runQueue(cg::kFirstVmid+i);
+        for(uint32_t i=0;i<cg::kClients;++i)     // the doorbell is off: nothing may ring it
+            if(off==mq::hqd(f.r.g.v.q,kiq::kCpHqdPqDoorbellControl) && f.sel()==qsOf(cg::kFirstVmid+i))assert(!(v&mq::kDoorbellEn));
         return true;
     }
     static bool vw(void *c,uint64_t off,const uint32_t *src,uint32_t n) {

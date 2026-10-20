@@ -339,7 +339,13 @@ public:
         const uint32_t wp[2]={static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32)};
         if(!vramPut(c->queue.vram+mq::kWptrOff,wp,2u)){quarantine(*c);return Code::Quarantined;}
         c->wptr=end;c->emitted=s;c->seqEnd[s%64u]=end;
-        if(!sel(qsel(slot)) || !wr(r_->g.v.q.poll1,pollBit(slot)) || !sel(0u)) {
+        // Kick: the HQD's own WPTR (MMIO, the queue has no doorbell) and the one-shot
+        // poll. On the card a poll alone never moved a VMID != 0 queue after its load
+        // (2026-10-20 09:37/09:43: PQ_WPTR 0 with 0x10 dwords in memory); upstream gfx11
+        // kicks compute queues by doorbell only, which this path does not set up yet.
+        const mq::Regs &q=r_->g.v.q;
+        if(!sel(qsel(slot)) || !wr(mq::hqd(q,kiq::kCpHqdPqWptrLo),static_cast<uint32_t>(end)) ||
+           !wr(mq::hqd(q,kiq::kCpHqdPqWptrHi),static_cast<uint32_t>(end>>32)) || !wr(q.poll1,pollBit(slot)) || !sel(0u)) {
             quarantine(*c);return Code::Quarantined;
         }
         seq=s;return Code::Ok;
@@ -465,7 +471,7 @@ private:
                 {sel(0u);return Code::HwFailed;}
         const uint64_t poll=kKernelVa+mq::kWptrOff;
         const struct { uint32_t dw; uint32_t val; } tail[]={
-            {kiq::kCpHqdPqDoorbellControl,img.dw[gfx11_mqd::kCpHqdPqDoorbellControl]|mq::kDoorbellEn},
+            {kiq::kCpHqdPqDoorbellControl,img.dw[gfx11_mqd::kCpHqdPqDoorbellControl]&~mq::kDoorbellEn},   // no doorbell
             {kiq::kCpHqdPqWptrLo,0u},{kiq::kCpHqdPqWptrHi,0u},
             {kiq::kCpHqdPqWptrPollAddr,static_cast<uint32_t>(poll)},
             {kiq::kCpHqdPqWptrPollAddrHi,static_cast<uint32_t>(poll>>32)}};
