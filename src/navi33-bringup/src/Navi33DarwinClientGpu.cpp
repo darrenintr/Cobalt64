@@ -48,11 +48,22 @@ bool vramRead(void *ctx,uint64_t off,uint32_t *dst,uint32_t dwords) {
     for(uint32_t i=0;i<dwords;++i)dst[i]=w[i];
     return true;
 }
+// Only the six client queues' 64-bit doorbells, inside the mapped BAR2.
+bool doorbell(void *ctx,uint32_t off,uint64_t value) {
+    IOMemoryMap *m=static_cast<Host *>(ctx)->doorbells;
+    bool client=false;
+    for(uint32_t i=0;i<cg::kClients;++i)if(off==cg::doorbellByte(i))client=true;
+    if(!m || !client || off>m->getLength() || m->getLength()-off<8u)return false;
+    __asm__ __volatile__("mfence" ::: "memory");     // ring and WPTR in VRAM first
+    *reinterpret_cast<volatile uint64_t *>(static_cast<uintptr_t>(m->getVirtualAddress())+off)=value;
+    __asm__ __volatile__("mfence" ::: "memory");
+    return true;
+}
 // Short waits spin (the TLB ACK); longer ones sleep so a waiting client does not burn a CPU.
 void delayUs(void *,uint32_t us) { if(us<50u)IODelay(us); else IOSleep((us+999u)/1000u); }
 } // namespace
 
-client_gpu::Hw hw(Host &h) { return {&h,read32,write32,vramWrite,vramRead,delayUs}; }
+client_gpu::Hw hw(Host &h) { return {&h,read32,write32,vramWrite,vramRead,delayUs,doorbell}; }
 
 client_gpu::Code start(Host &h,IOPCIDevice *pci,const darwin_psp::Request &req,vram_heap::Heap &heap) {
     if(h.startCode>=0)return static_cast<cg::Code>(h.startCode);
@@ -60,7 +71,8 @@ client_gpu::Code start(Host &h,IOPCIDevice *pci,const darwin_psp::Request &req,v
     IPDiscovery disc;
     IODeviceMemory *bar5=pci ? pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress5) : nullptr;
     IODeviceMemory *bar0=pci ? pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0) : nullptr;
-    if(!bar5 || !bar0 || !disc.parse(embedded::kIpd,embedded::kIpdBytes)){h.startCode=int(code);return code;}
+    IODeviceMemory *bar2=pci ? pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress2) : nullptr;
+    if(!bar5 || !bar0 || !bar2 || !disc.parse(embedded::kIpd,embedded::kIpdBytes)){h.startCode=int(code);return code;}
     const uint64_t bar5Bytes=static_cast<uint64_t>(bar5->getLength());
     const pl::Range bar0Range{static_cast<uint64_t>(bar0->getPhysicalAddress()),static_cast<uint64_t>(bar0->getLength())};
     const pl::Range boot{req.consolePhys,req.consoleBytes};
@@ -78,7 +90,9 @@ client_gpu::Code start(Host &h,IOPCIDevice *pci,const darwin_psp::Request &req,v
            vm_alloc::reservations(heap,bar0Range.bytes,win.consoleOffset,console.bytes)) {
             h.fbBaseMc=win.fbBaseMc;h.bar0Phys=bar0Range.phys;h.bar0Bytes=bar0Range.bytes;
             h.bar=bar0->map(kIOMapInhibitCache);
-            if(h.bar && static_cast<uint64_t>(h.bar->getLength())==bar0Range.bytes)
+            h.doorbells=bar2->map(kIOMapInhibitCache);
+            if(h.bar && static_cast<uint64_t>(h.bar->getLength())==bar0Range.bytes && h.doorbells &&
+               h.doorbells->getLength()>=cg::doorbellByte(cg::kClients-1u)+8u)
                 code=h.dev.start(h.r,hw(h),heap,h.fbBaseMc);
         } else code=cg::Code::NotReady;
     }
@@ -86,6 +100,7 @@ client_gpu::Code start(Host &h,IOPCIDevice *pci,const darwin_psp::Request &req,v
           static_cast<unsigned>(code),h.fbBaseMc,h.bar0Bytes>>20,heap.freeBytes()>>20);
     if(code!=cg::Code::Ok) {
         if(h.bar){h.bar->release();h.bar=nullptr;}
+        if(h.doorbells){h.doorbells->release();h.doorbells=nullptr;}
         if(h.regs){h.regs->release();h.regs=nullptr;}
     }
     h.startCode=int(code);

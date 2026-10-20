@@ -1217,11 +1217,12 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
         if(c==cg::Code::Ok && vmid)*vmid=gpuHost_.dev.client(slot)->vmid;
     }
     const cg::Stats st=gpuHost_.dev.stats();
-    char line[224];
+    char line[288];
     snprintf(line,sizeof(line),"clients %u buffers %u emitted %llu retired %llu writes %u flushes %u heap free %llu MiB "
-             "flush misses %u (vmid %u req %x reads %x ack %x)",
+             "flush misses %u (vmid %u req %x reads %x ack %x) doorbells aper %x->%x range %x..%x->%x..%x",
              st.clients,st.bos,st.emitted,st.retired,st.writes,st.tlbFlushes,vramHeap_.freeBytes()>>20,
-             st.miss.misses,st.miss.vmid,st.miss.req,st.miss.reqBack,st.miss.ack);
+             st.miss.misses,st.miss.vmid,st.miss.req,st.miss.reqBack,st.miss.ack,st.db.aperBefore,st.db.aper,
+             st.db.lowerBefore,st.db.upperBefore,st.db.lower,st.db.upper);
     setProperty("Navi33,ClientGpu",line);
     // The last client whose wait timed out: its queue as the CP saw it.
     for(uint32_t i=0;i<navi33::client_gpu::kClients;++i) {

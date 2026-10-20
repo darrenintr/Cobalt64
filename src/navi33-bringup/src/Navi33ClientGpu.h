@@ -27,6 +27,7 @@
 #pragma once
 #include "Navi33Gfx11VmGradient.h"
 #include "Navi33Gmc11Vm.h"
+#include "Navi33Nbio43Capacity.h"
 namespace navi33 { namespace client_gpu {
 namespace vg=vm_gradient;
 namespace vh=vram_heap;
@@ -62,7 +63,20 @@ static_assert(ctxCntl(1)==0x1689u && ctxBaseLo(2)==0x16f7u && ctxStartLo(2)==0x1
               "context register strides (gfxhub_v3_0 ctx_distance 1, ctx_addr_distance 2)");
 constexpr uint32_t kInvReq17=0x16bcu, kInvAck17=0x16ceu, kDequeueRequest=0x1fc1u;
 constexpr uint32_t kDrainPipe=1u;
-constexpr uint32_t kGbAddrConfig=0x13deu;                       // regGB_ADDR_CONFIG, read only                               // enum hqd_dequeue_request_type
+constexpr uint32_t kGbAddrConfig=0x13deu;                       // regGB_ADDR_CONFIG, read only
+// Doorbells (the only way upstream gfx11 kicks a compute queue): gc_11_0_0_offset.h
+// CP_MEC_DOORBELL_RANGE_LOWER/UPPER (byte offsets, gfx_v11_0_kiq_init_register:
+// (kiq * 2) << 2 .. (userqueue_end * 2) << 2), nbio_4_3_0_offset.h
+// RCC_DEV0_EPF0_RCC_DOORBELL_APER_EN (BASE_IDX 2, bit 0, nbio_v4_3_enable_doorbell_aperture),
+// amdgpu_doorbell.h AMDGPU_NAVI10_DOORBELL_KIQ 0, USERQUEUE_START 0x0d, USERQUEUE_END 0x8a
+// (64-bit doorbells; a queue's DOORBELL_OFFSET is its dword index = index << 1).
+constexpr uint32_t kMecDbLower=0x1dfcu, kMecDbUpper=0x1dfdu, kNbioAperEn=0x00c0u;
+constexpr uint32_t kDbUserqueueStart=0x0du, kDbUserqueueEnd=0x8au;
+constexpr uint32_t kMecDbLowerValue=0u, kMecDbUpperValue=(kDbUserqueueEnd*2u)<<2;
+constexpr uint32_t doorbellDword(uint32_t slot) { return (kDbUserqueueStart+slot)<<1; }
+constexpr uint32_t doorbellByte(uint32_t slot) { return 4u*doorbellDword(slot); }
+constexpr uint32_t kDbOffsetMask=0x0ffffffcu, kDbEn=1u<<30;      // CP_HQD_PQ_DOORBELL_CONTROL
+static_assert(kMecDbUpperValue==0x450u && doorbellByte(5)<kMecDbUpperValue && doorbellByte(0)==0x68u,"doorbells");                               // enum hqd_dequeue_request_type
 // gfxhub_v3_0_get_invalidate_req(vmid, 0): PER_VMID bit, FLUSH_TYPE 0, L2 PTES/PDE0/1/2, L1 PTES.
 constexpr uint32_t invalidateReq(uint32_t vmid) { return (1u<<vmid)|(1u<<19)|(1u<<20)|(1u<<21)|(1u<<22)|(1u<<23); }
 static_assert(invalidateReq(2)==0x00f80004u,"GCVM_INVALIDATE_ENG0_REQ word");
@@ -81,6 +95,7 @@ struct Regs {
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
     uint64_t invReq=0, invAck=0, dequeue=0;
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
+    uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0;
     bool valid=false;
 };
 inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
@@ -97,7 +112,11 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
     if(!one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) || !one(kDequeueRequest,r.dequeue) ||
-       !one(kGbAddrConfig,r.gbAddrConfig))return r;
+       !one(kGbAddrConfig,r.gbAddrConfig) || !one(kMecDbLower,r.mecDbLower) || !one(kMecDbUpper,r.mecDbUpper))return r;
+    IPEntry nbif{};
+    if(!d.find(ipid::NBIF,0u,nbif) || nbif.major!=4u || nbif.minor!=3u || nbif.numBases<=2u || !nbif.bases[2] ||
+       (nbif.bases[2]+kNbioAperEn)*4u+4u>bytes)return r;
+    r.nbioAperEn=(nbif.bases[2]+kNbioAperEn)*4u;
     r.valid=true;return r;
 }
 // Writable registers: the GFXHUB words, contexts 2..7, invalidation engine 17's
@@ -107,7 +126,7 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
 inline bool allowed(const Regs &r,uint64_t off) {
     if(!r.valid || off==r.g.v.q.scratch || off==r.g.v.ctx || off==r.g.v.baseLo || off==r.g.v.baseHi ||
        off==r.g.v.startLo || off==r.g.v.startHi || off==r.g.v.endLo || off==r.g.v.endHi)return false;
-    if(off==r.invReq)return true;
+    if(off==r.invReq || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn)return true;
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
 }
@@ -118,6 +137,7 @@ struct Hw {
     bool (*vramWrite)(void *,uint64_t off,const uint32_t *src,uint32_t dwords)=nullptr;   // heap blocks only
     bool (*vramRead)(void *,uint64_t off,uint32_t *dst,uint32_t dwords)=nullptr;
     void (*delayUs)(void *,uint32_t)=nullptr;
+    bool (*doorbell)(void *,uint32_t byteOff,uint64_t value)=nullptr;    // 64-bit write into BAR2
 };
 struct Bo { vh::Handle h{}; uint64_t vram=0, bytes=0, va=0; uint64_t vaFlags=0; bool live=false, cpuMapped=false; };
 struct Mapping { uint64_t va=0, bytes=0; };
@@ -141,8 +161,10 @@ struct Client {
 };
 // The last TLB flush that got no ACK: the VMID, the request written, what REQ and ACK read back.
 struct FlushMiss { uint32_t vmid=0, req=0, reqBack=0, ack=0, misses=0; };
+// The doorbell setup found at start (before any write) and after it.
+struct DoorbellSetup { uint32_t aperBefore=0, lowerBefore=0, upperBefore=0, aper=0, lower=0, upper=0; };
 struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
-               FlushMiss miss{}; };
+               FlushMiss miss{}; DoorbellSetup db{}; };
 
 class Device {
 public:
@@ -150,7 +172,7 @@ public:
     // Sets up the GFXHUB as gfxhub_v3_0 does unless G36-G39 already did.
     Code start(const Regs &r,const Hw &h,vh::Heap &heap,uint64_t fbBaseMc) {
         if(started_)return Code::Ok;
-        if(!r.valid || !h.read || !h.write || !h.vramWrite || !h.vramRead || !h.delayUs || !heap.total() || !fbBaseMc)
+        if(!r.valid || !h.read || !h.write || !h.vramWrite || !h.vramRead || !h.delayUs || !h.doorbell || !heap.total() || !fbBaseMc)
             return Code::BadArgs;
         r_=&r;h_=h;heap_=&heap;fbBase_=fbBaseMc;
         const v1::Regs &v=r.g.v;
@@ -171,6 +193,16 @@ public:
             return Code::Hub;                // a hub we do not recognise: touch nothing
         }
         if(fault)faultSeen_=fault;
+        // Doorbells: the MEC range as gfx_v11_0_kiq_init_register, the NBIO aperture as
+        // nbio_v4_3_enable_doorbell_aperture; only what is not already so is written.
+        uint32_t aper=0,lower=0,upper=0;
+        if(!rd(r.nbioAperEn,aper) || !rd(r.mecDbLower,lower) || !rd(r.mecDbUpper,upper))return Code::HwFailed;
+        db_={aper,lower,upper,aper,lower,upper};
+        if(lower!=kMecDbLowerValue && !wr(r.mecDbLower,kMecDbLowerValue))return Code::HwFailed;
+        if(upper!=kMecDbUpperValue && !wr(r.mecDbUpper,kMecDbUpperValue))return Code::HwFailed;
+        if(!(aper&1u) && !wr(r.nbioAperEn,aper|1u))return Code::HwFailed;
+        if(!rd(r.nbioAperEn,db_.aper) || !rd(r.mecDbLower,db_.lower) || !rd(r.mecDbUpper,db_.upper))return Code::HwFailed;
+        if(!(db_.aper&1u) || db_.lower!=kMecDbLowerValue || db_.upper!=kMecDbUpperValue)return Code::HwFailed;
         started_=true;return Code::Ok;
     }
     bool started() const { return started_; }
@@ -339,15 +371,10 @@ public:
         const uint32_t wp[2]={static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32)};
         if(!vramPut(c->queue.vram+mq::kWptrOff,wp,2u)){quarantine(*c);return Code::Quarantined;}
         c->wptr=end;c->emitted=s;c->seqEnd[s%64u]=end;
-        // Kick: the HQD's own WPTR (MMIO, the queue has no doorbell) and the one-shot
-        // poll. On the card a poll alone never moved a VMID != 0 queue after its load
-        // (2026-10-20 09:37/09:43: PQ_WPTR 0 with 0x10 dwords in memory); upstream gfx11
-        // kicks compute queues by doorbell only, which this path does not set up yet.
-        const mq::Regs &q=r_->g.v.q;
-        if(!sel(qsel(slot)) || !wr(mq::hqd(q,kiq::kCpHqdPqWptrLo),static_cast<uint32_t>(end)) ||
-           !wr(mq::hqd(q,kiq::kCpHqdPqWptrHi),static_cast<uint32_t>(end>>32)) || !wr(q.poll1,pollBit(slot)) || !sel(0u)) {
-            quarantine(*c);return Code::Quarantined;
-        }
+        // Kick: the queue's doorbell, as gfx_v11_0_ring_set_wptr_compute. On the card
+        // (2026-10-20 09:37..09:48) neither the one-shot poll nor an MMIO write of an
+        // active HQD's WPTR moved a VMID != 0 queue (PQ_WPTR read back 0).
+        if(!h_.doorbell(h_.ctx,doorbellByte(slot),end)){quarantine(*c);return Code::Quarantined;}
         seq=s;return Code::Ok;
     }
     // Wait until seq retired (timeoutUs 0: just poll once).
@@ -406,7 +433,7 @@ public:
             ++s.clients;s.emitted+=c.emitted;s.retired+=c.retired;
             for(const Bo &b:c.bo)if(b.live)++s.bos;
         }
-        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.miss=miss_;return s;
+        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.miss=miss_;s.db=db_;return s;
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
@@ -471,7 +498,8 @@ private:
                 {sel(0u);return Code::HwFailed;}
         const uint64_t poll=kKernelVa+mq::kWptrOff;
         const struct { uint32_t dw; uint32_t val; } tail[]={
-            {kiq::kCpHqdPqDoorbellControl,img.dw[gfx11_mqd::kCpHqdPqDoorbellControl]&~mq::kDoorbellEn},   // no doorbell
+            {kiq::kCpHqdPqDoorbellControl,(img.dw[gfx11_mqd::kCpHqdPqDoorbellControl]&~(kDbOffsetMask|kDbEn))|
+                                          (doorbellDword(index(c))<<2)|kDbEn},
             {kiq::kCpHqdPqWptrLo,0u},{kiq::kCpHqdPqWptrHi,0u},
             {kiq::kCpHqdPqWptrPollAddr,static_cast<uint32_t>(poll)},
             {kiq::kCpHqdPqWptrPollAddrHi,static_cast<uint32_t>(poll>>32)}};
@@ -571,6 +599,7 @@ private:
     uint32_t select_=0, writes_=0, flushes_=0, faultSeen_=0;
     uint64_t retiredBytes_=0;
     FlushMiss miss_{};
+    DoorbellSetup db_{};
     bool started_=false;
 };
 } }

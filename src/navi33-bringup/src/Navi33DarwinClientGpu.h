@@ -11,7 +11,7 @@ class IOMemoryMap;
 class IOMemoryDescriptor;
 namespace navi33 { namespace darwin_client {
 struct Host {
-    IOMemoryMap *regs=nullptr, *bar=nullptr;
+    IOMemoryMap *regs=nullptr, *bar=nullptr, *doorbells=nullptr;   // BAR5, BAR0, BAR2
     client_gpu::Regs r{};
     client_gpu::Device dev;
     const vram_heap::Heap *heap=nullptr;

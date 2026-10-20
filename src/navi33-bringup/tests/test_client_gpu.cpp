@@ -42,7 +42,7 @@ struct Fake {
         mem={{v.q.sos,42},{v.q.rlc,0xc000001fu},{v.q.grbm,0},{v.q.cntl,0x3c000000u},{v.q.scratch,0xdeadbeefu},
              {v.q.poll1,0},{v.l1,v1::kL1Default},{v.l2,v1::kL2Default},{v.l2c2,0},{v.l2c3,v1::kL2Cntl3Default},
              {v.l2c4,v1::kL2Cntl4Default},{v.l2c5,v1::kL2Cntl5Default},{v.faultStatus,0},{v.faultAddr,0},
-             {r.invReq,0},{r.invAck,0}};
+             {r.invReq,0},{r.invAck,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u}};
         for(auto o:v.ident)mem[o]=0;
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
         assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
@@ -155,8 +155,7 @@ struct Fake {
         // GRBM select: 0, a VMID (SH_MEM), or a client HQD: never MES's queues 2+ or pipe 0.
         if(off==f.r.g.v.q.grbm && v && !(v&0xf0u))assert(((v>>2)&3u)==1u && (v&3u)>=1u && ((v>>8)&7u)<=1u);
         if(off==f.r.g.v.q.poll1)for(uint32_t i=0;i<cg::kClients;++i)if(v&cg::pollBit(i))f.runQueue(cg::kFirstVmid+i);
-        for(uint32_t i=0;i<cg::kClients;++i)     // the doorbell is off: nothing may ring it
-            if(off==mq::hqd(f.r.g.v.q,kiq::kCpHqdPqDoorbellControl) && f.sel()==qsOf(cg::kFirstVmid+i))assert(!(v&mq::kDoorbellEn));
+
         return true;
     }
     static bool vw(void *c,uint64_t off,const uint32_t *src,uint32_t n) {
@@ -170,7 +169,23 @@ struct Fake {
         return true;
     }
     static void delay(void *,uint32_t){}
-    cg::Hw hw(){return {this,read,write,vw,vr,delay};}
+    // A doorbell rings the queue whose HQD carries that offset with DOORBELL_EN, if the NBIO
+    // aperture is on and the MEC range covers it; the value is the new WPTR.
+    unsigned rings=0;
+    static bool doorbell(void *c,uint32_t byteOff,uint64_t v) {
+        auto &f=*static_cast<Fake *>(c);++f.rings;
+        if(!(f.mem[f.r.nbioAperEn]&1u) || byteOff<f.mem[f.r.mecDbLower] || byteOff>=f.mem[f.r.mecDbUpper])return true;
+        for(uint32_t i=0;i<cg::kClients;++i) {
+            const uint32_t k=cg::kFirstVmid+i, dc=f.bank[{qsOf(k),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqDoorbellControl)}];
+            if((dc&cg::kDbEn) && (dc&cg::kDbOffsetMask)==4u*byteOff/4u) {
+                const uint64_t poll=f.bank[{qsOf(k),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqWptrPollAddr)}];
+                uint64_t pa=0;assert(f.translate(k,poll,pa) && f.get(pa)==uint32_t(v));   // memory and doorbell agree
+                f.runQueue(k);
+            }
+        }
+        return true;
+    }
+    cg::Hw hw(){return {this,read,write,vw,vr,delay,doorbell};}
     // CPU write into a client's buffer (what the user's CPU mapping does).
     void put(uint32_t slot,uint32_t handle,uint32_t off,const std::vector<uint32_t> &v) {
         uint64_t base=0,bytes=0;assert(dev.boRange(slot,handle,base,bytes) && off+4u*v.size()<=bytes);
@@ -230,7 +245,12 @@ int main() {
     // 1. Two clients, each its own VMID, queue, buffers and image.
     {   Fake f(r);
         {uint32_t none=0;assert(f.dev.open(&f,none)==cg::Code::NotReady);}
-        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==12u);
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u);
+        // Doorbells: MEC range 0..0x450 bytes, NBIO aperture bit 0 set, the rest of the word kept.
+        assert(f.mem[r.mecDbLower]==0u && f.mem[r.mecDbUpper]==0x450u && f.mem[r.nbioAperEn]==0x101u);
+        {   const cg::DoorbellSetup db=f.dev.stats().db;
+            assert(db.aperBefore==0x100u && db.lowerBefore==0x1234u && db.upperBefore==0u && db.aper==0x101u && db.upper==0x450u);}
+        assert(cg::allowed(r,r.nbioAperEn) && r.nbioAperEn==(0xd20u+0xc0u)*4u && r.mecDbLower==(0x1260u+0x1dfcu)*4u);
         App a=setup(f,co,k,7,0x100000000ull), c=setup(f,co,k,99,0x100000000ull);   // same VAs, different VMIDs
         assert(a.slot==0 && c.slot==1 && f.dev.client(0)->vmid==2u && f.dev.client(1)->vmid==3u);
         uint64_t sa=0,sc=0,ret=0;
@@ -420,6 +440,7 @@ int main() {
         Fake g(r);g.mem[r.g.v.q.cntl]=0x400f0000u;
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
+        h.mem[r.mecDbLower]=0u;h.mem[r.mecDbUpper]=0x450u;h.mem[r.nbioAperEn]=1u;   // and the doorbells are on
         assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.empty());
     }
     // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.
