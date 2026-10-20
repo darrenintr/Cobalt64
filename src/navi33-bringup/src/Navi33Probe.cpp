@@ -28,6 +28,7 @@
 #include "Navi33Psp13Status.h"
 #include "Navi33Psp13Loader.h"
 #include "Navi33ConsoleSources.h"
+#include "Navi33Psp13FwLoad.h"
 #include "Navi33Sdma6Status.h"
 #include "Navi33Sdma6QueueCensus.h"
 #include "Navi33HwProbeLogic.h"
@@ -970,6 +971,8 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
     IOLockLock(pspLock_);
     req.attempted=ringMode ? &pspRingAttempted_ : fwMode ? &pspFwAttempted_ :
                              &pspLoadAttempted_;
+    // One boot must hold SMU image then the other records on bare metal.
+    if(fwMode && navi33::psp13fwload::smuOnlyRange(startAt,stopAfter))req.attempted=&pspFwSmuAttempted_;
     if(smuMode)req.attempted=&smuAttempted_;
     if(mesMode)req.attempted=&mesAttempted_;
     if(mecMode)req.attempted=&mecAttempted_;

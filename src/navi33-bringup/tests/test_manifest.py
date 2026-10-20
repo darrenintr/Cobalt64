@@ -392,6 +392,10 @@ assert 'PE_parse_boot_argn("navi33-psp-autoload"' in load_fn
 assert "req.attempted=ringMode ? &pspRingAttempted_ : fwMode ? &pspFwAttempted_ :" in load_fn
 assert "req.autoloadGate=!killed && fwMode &&" in load_fn      # psp-off kills autoload too
 assert "bool pspFwAttempted_ = false;" in (root/"src/Navi33Probe.hpp").read_text()
+# Bare metal (2026-10-20): only the exact SMU-only range [26,27) gets a second latch.
+assert "bool pspFwSmuAttempted_ = false;" in (root/"src/Navi33Probe.hpp").read_text()
+assert "if(fwMode && navi33::psp13fwload::smuOnlyRange(startAt,stopAfter))req.attempted=&pspFwSmuAttempted_;" in load_fn
+assert source.count("pspFwSmuAttempted_")==1
 assert "return executeFw(pci,req);" in writer
 assert all(o in link_line for o in ("$(BUILD)/Navi33DarwinPspFw.o","$(BUILD)/kmod_info.o"))
 fwc=(root/"src/Navi33DarwinPspFw.cpp").read_text()

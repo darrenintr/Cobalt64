@@ -29,6 +29,15 @@ constexpr uint64_t kWindowBytes=8u*1024u*1024u;
 constexpr uint32_t kStageOff=4u*1024u*1024u;
 constexpr uint32_t kStageBytes=4u*1024u*1024u;
 constexpr uint32_t kStopAutoload=N33_PSP_FW_STOP_AUTOLOAD;
+// The SMU image is the last record (26) and Linux sends it alone, before the
+// others (2026-10-18). On bare metal a restart resets the PSP (2026-10-20), so
+// sOS, ring, SMU image and the other records must all fit in one boot: the
+// SMU-only range gets its own once-per-boot latch; every other range keeps the
+// stage's single latch.
+constexpr uint32_t kSmuRecord=kStopAutoload-2u;
+constexpr bool smuOnlyRange(uint32_t start,uint32_t stop) {
+    return start==kSmuRecord && stop==kSmuRecord+1u;
+}
 
 struct Plan {
     n33_psp_load_state state=N33_PSPL_BAD_REQUEST;

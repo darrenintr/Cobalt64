@@ -325,6 +325,12 @@ int main() {
      assert(out.state==N33_PSPL_FW_DONE && out.steps_done==2u && out.fw_last_record==1u &&
             out.register_writes==2u && (out.ring_flags&N33_PSPR_FLAG_FW_LOADED) &&
             out.fw_tmr_addr==o.lastFwAddr && (out.flags&N33_PSPL_FLAG_WROTE_REGISTERS));}
+    // Only exactly [26,27) is the SMU-only range with its own latch.
+    {namespace fl=navi33::psp13fwload;
+     static_assert(fl::kSmuRecord==26u,"SMU image is record 26");
+     assert(fl::smuOnlyRange(26u,27u));
+     assert(!fl::smuOnlyRange(26u,28u) && !fl::smuOnlyRange(0u,27u) && !fl::smuOnlyRange(25u,27u) &&
+            !fl::smuOnlyRange(0u,26u) && !fl::smuOnlyRange(27u,28u));}
     std::puts("PSP13 IP firmware stage planner and runner tests passed");
     return 0;
 }

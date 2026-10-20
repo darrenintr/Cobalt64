@@ -48,7 +48,10 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      only `C2PMSG_67` (the ring write pointer)
      and two zones of an 8 MiB window in VRAM (ring pages, staging area). It
      needs `navi33-psp-fw=1`, is killed by `navi33-psp-off`, and runs at most
-     once per boot. It sends `LOAD_IP_FW` for records of the 27-record list
+     once per boot; since kext 0.0.65 the exact SMU-only range `[26,27)` has its own
+     once-per-boot latch (`pspFwSmuAttempted_`), because on bare metal a restart resets
+     the PSP and sOS, ring, SMU image and the other records must fit in one boot
+     (2026-10-20). It sends `LOAD_IP_FW` for records of the 27-record list
      (record 26 is the SMU image, added in kext 0.0.11 at the user's choice
      on 2026-10-18; Linux sends it first, so it goes alone as range 26..27
      before the others). `AUTOLOAD_RLC` (stop value 28) is refused

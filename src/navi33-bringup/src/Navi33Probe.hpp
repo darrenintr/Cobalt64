@@ -107,6 +107,7 @@ private:
     navi33::darwin_client::Host gpuHost_;
     bool clientGpuGate_ = false;  // navi33-client-gpu=1, no -off, no navi33-psp-off; set in start()
     bool pspFwAttempted_ = false;   // same for the IP firmware stage
+    bool pspFwSmuAttempted_ = false; // the SMU-only range [26,27) of that stage
     // Held PCI owner (navi33-owner-hold=1 only). The ticket is nonzero while
     // IOService::open is held; stop() releases it.
     navi33::production_owner::Owner pciOwner_{};
