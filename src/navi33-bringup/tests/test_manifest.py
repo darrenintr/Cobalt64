@@ -611,3 +611,25 @@ for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert '--vm-alloc' not in code and 'N33_VM_ALLOC_RUN' not in code
 print('Navi33 VRAM heap stage: G38 allowlist, heap-bounded CPU VRAM access, own latch: passed')
+
+# Client GPU contexts (B4): own boot-arg, register writes only through client_gpu::allowed,
+# CPU VRAM access only inside heap blocks, context closed with the user client.
+cgw=(root/'src/Navi33DarwinClientGpu.cpp').read_text()
+cgh=(root/'src/Navi33ClientGpu.h').read_text()
+probe=(root/'src/Navi33Probe.cpp').read_text()
+nclient=(root/'src/Navi33NativeClient.cpp').read_text()
+assert 'PE_parse_boot_argn("navi33-client-gpu",&cgOn,sizeof(cgOn)) && cgOn==1u' in probe
+assert 'clientGpuGate_=!pspKilled &&' in probe
+assert 'if(!clientGpuGate_ || !pspLock_)return kIOReturnUnsupported;' in probe
+assert 'if(!cg::allowed(h->r,off)' in cgw and '!h->heap->covers(off,len)' in cgw
+assert 'if(md)gpuHost_.dev.markCpuMapped(slot,handle);' in probe   # CPU-mapped memory never reused
+assert 'owner_->gpuContext(this, N33_CTX_OP_CLOSE, nullptr);' in nclient
+assert 'Navi33DarwinClientGpu.o' in makefile
+for forbidden in ('->configWrite','setMemoryEnable','setBusMasterEnable','setPowerState','WREG32('):
+    assert forbidden not in cgw, f'client GPU host gained {forbidden}'
+for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory','mmhub','MMHUB'):
+    assert forbidden not in cgh
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert 'n33gpu' not in code and 'navi33-client-gpu' not in code
+print('Navi33 client GPU contexts: own gate, allowlist, heap-bounded CPU access, close with the client: passed')

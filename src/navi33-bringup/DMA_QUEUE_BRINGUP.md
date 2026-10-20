@@ -1048,3 +1048,39 @@ The first real memory management in the kext. Three pure headers, all host-teste
   a queue may have seen are never freed. ioreg `Navi33,VramHeap` reports the heap.
   `n33psp --vm-alloc-plan` / `--vm-alloc --fw gradient.co`; states 69-72 plus G38's.
 - One of G36, G38 or G39 per power cycle (each needs the untouched GFXHUB).
+
+## Phase B4 step 1: per-client GPU contexts, user-space submission (kext 0.0.29, ABI 21)
+
+The first path where a user program, not the kext, decides what the GPU runs.
+
+- `src/Navi33ClientGpu.h` (core, host-tested by `tests/test_client_gpu.cpp`): a client is VMID k
+  and compute queue me 1 pipe 0 queue k (k = 2..7), its own four-level address space
+  (`Navi33Gmc11Vm.h`) and its buffers, all from the kernel's VRAM heap. Context k is set up as
+  `gfxhub_v3_0_setup_vmid_config` (depth 3), SH_MEM for VMID k as `gfx_v11_0_constants_init`,
+  the queue as `hqd_load_v11`, with its ring (GPU read-only) and fence in a kernel buffer at
+  the top of the client's VA space. Every map and unmap ends with `gmc_v11_0_flush_gpu_tlb`'s
+  MMIO path (engine 17, request word `0x00f8000k`-style, wait for the VMID's ACK bit).
+  Submission is `gfx_v11_0_ring_emit_ib_compute` + `_emit_fence`: INDIRECT_BUFFER with the
+  VMID in its control word, then a RELEASE_MEM of the sequence number; 64-bit monotonic WPTR,
+  kicked by the one-shot poll trigger proven in G35. Back-pressure: a full ring or 63 jobs in
+  flight answers Busy. A hub fault in VMID k stops only that client.
+- Teardown: wait for the last fence, `hqd_destroy_v11` (DRAIN_PIPE, wait for ACTIVE to clear),
+  disable context k, flush, then free. Anything unconfirmed quarantines the client and keeps
+  its memory. A buffer that was ever CPU-mapped is never returned to the heap this boot (a user
+  mapping can outlive BO_FREE; to fix by tracking and revoking the mappings).
+- Register allowlist: G38's plus contexts 2..7, invalidation engine 17's request; never
+  context 0/1, SCRATCH_REG0, the MEC controls or the fault registers. CPU VRAM access only
+  inside live, unpinned heap blocks.
+- N33N selectors 2..7 (scalars; shapes in `Navi33NativeABI.h`), `IOConnectMapMemory64` with the
+  buffer handle for CPU access, the context closed with the user client. Behind
+  `navi33-client-gpu=1` (kill `navi33-client-gpu-off` or `navi33-psp-off`), capability bit
+  `N33_CAP_CLIENT_GPU` (not acceleration: Metal stays off, rule 6). The first context of the
+  boot starts the device: BAR0 == VRAM proof, heap reservations, the GFXHUB words (or
+  recognises them from G36-G39). ioreg `Navi33,ClientGpu`.
+- `tools/n33gpu.cpp`: opens a context, creates and maps four buffers, writes the kernel and its
+  arguments through CPU mappings, builds the PM4 in user space, submits, waits, checks all 4096
+  pixels. `vm/client-gpu.sh` runs it in the VM (with `--autostart`, so a fresh card works too).
+- Host test: two clients at the same VAs in different VMIDs, 300 submissions wrapping the
+  ring, Busy under a paused queue, remap/free only safe with the TLB flush (the fake TLB keeps
+  translations until engine 17 flushes them), fault isolation, drain/dequeue teardown,
+  quarantine on a stuck queue or a missing ACK, the CPU-mapped retire rule. Ten mutants caught.

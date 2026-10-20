@@ -111,6 +111,12 @@ jobs:
             -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33psp.c \
             -framework IOKit -framework CoreFoundation -o /tmp/n33psp
           file /tmp/n33psp
+      - name: Compile the client GPU user program (do not execute)
+        run: |
+          clang++ -arch x86_64 -std=c++17 -O2 -Wall -Wextra -Werror -pedantic \
+            -mmacosx-version-min=12.0 src/navi33-bringup/tools/n33gpu.cpp \
+            -framework IOKit -framework CoreFoundation -o /tmp/n33gpu
+          file /tmp/n33gpu
       - name: Compile boot autorun launcher (do not execute)
         run: |
           clang -arch x86_64 -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
@@ -155,7 +161,7 @@ jobs:
           mkdir -p "$usb/EFI/OC/Kexts" "$usb/navi33"
           cp -R src/navi33-bringup/build/Navi33Probe.kext "$usb/EFI/OC/Kexts/"
           cp /tmp/n33query /tmp/n33compute /tmp/n33vram /tmp/n33peek \
-             /tmp/n33psp /tmp/n33autorun src/navi33-bringup/usb/* "$usb/navi33/"
+             /tmp/n33psp /tmp/n33gpu /tmp/n33autorun src/navi33-bringup/usb/* "$usb/navi33/"
           python3 src/navi33-bringup/tools/ipd-from-capture.py \
             src/navi33-bringup/tests/fixtures/rx7600-linux-ipd.txt \
             "$usb/navi33/rx7600-ipd.bin"

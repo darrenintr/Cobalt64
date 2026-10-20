@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Host-testable, no-I/O validation of the N33N selector shapes.
-// BO/VM/CTX/SUBMIT/WAIT are unsupported. Owned DMA staging is opt-in.
+// BO/VM/CTX/SUBMIT/WAIT answer only behind navi33-client-gpu=1 (the kext checks the gate). Owned DMA staging is opt-in.
 // PSP_LOAD's write is gated in the Kext by boot-args, not by its shape.
 #pragma once
 #include "Navi33NativeABI.h"
@@ -30,8 +30,22 @@ inline Shape validate(uint32_t selector, uint32_t scalarIn,
         selector != N33_SEL_VRAM_GEOMETRY &&
         selector != N33_SEL_QUEUE_CENSUS &&
         selector != N33_SEL_MMIO_PEEK &&
-        selector != N33_SEL_PSP_LOAD)
+        selector != N33_SEL_PSP_LOAD &&
+        (selector < N33_SEL_BO_CREATE || selector > N33_SEL_WAIT))
         return Shape::Unsupported;
+    // Client GPU selectors: scalars only, exact counts (SUBMIT: 1 + 2n, n = 1..4).
+    if (selector >= N33_SEL_BO_CREATE && selector <= N33_SEL_WAIT) {
+        const uint32_t in = selector == N33_SEL_BO_CREATE ? 2u : selector == N33_SEL_BO_FREE ? 1u :
+            selector == N33_SEL_VM_MAP ? 4u : selector == N33_SEL_CTX_CREATE ? 1u :
+            selector == N33_SEL_WAIT ? 2u : 0u;
+        const uint32_t out = selector == N33_SEL_BO_CREATE ? 2u : selector == N33_SEL_CTX_CREATE ? 1u :
+            selector == N33_SEL_SUBMIT ? 1u : selector == N33_SEL_WAIT ? 2u : 0u;
+        const bool inOk = selector == N33_SEL_SUBMIT
+            ? (scalarIn >= 3u && scalarIn <= 1u + 2u * N33_SUBMIT_MAX_IBS && (scalarIn & 1u))
+            : scalarIn == in;
+        return inOk && scalarOut == out && !structIn && !structOut && !haveStructOut &&
+               haveScalarsIn && haveScalarsOut == (out != 0u) ? Shape::Valid : Shape::BadArgument;
+    }
     if (selector == N33_SEL_HELLO)
         return scalarIn == 2u && scalarOut == 3u && !structIn &&
                !structOut && haveScalarsIn && haveScalarsOut

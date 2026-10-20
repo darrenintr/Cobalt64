@@ -297,6 +297,16 @@ int main() {
         assert(f.dev.submit(slot,&i1,1,s)==cg::Code::Ok && f.dev.wait(slot,s,1000,ret)==cg::Code::Faulted);
         assert(f.get(vx)==0x1111u);
     }
+    // 3d. A buffer the CPU mapped is never given back to the heap (a user mapping may outlive it).
+    {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        uint32_t slot=0,x=0,y=0;uint64_t vx=0,vy=0;
+        assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.boCreate(slot,8192,x,vx)==cg::Code::Ok &&
+               f.dev.boCreate(slot,4096,y,vy)==cg::Code::Ok && f.dev.markCpuMapped(slot,x));
+        assert(f.dev.boFree(slot,x)==cg::Code::Ok && f.heap.covers(vx,8192) && f.dev.stats().retiredBytes==8192u);
+        assert(f.dev.boFree(slot,y)==cg::Code::Ok && !f.heap.covers(vy,4096));
+        uint32_t z=0;uint64_t vz=0;assert(f.dev.boCreate(slot,8192,z,vz)==cg::Code::Ok && vz!=vx);
+        assert(f.dev.markCpuMapped(slot,z) && f.dev.close(slot)==cg::Code::Ok && f.heap.covers(vz,8192));
+    }
     // 3c. Close with work still queued waits; if the queue never drains, nothing is freed.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
         App a=setup(f,co,k,7,0x100000000ull);uint64_t s=0;

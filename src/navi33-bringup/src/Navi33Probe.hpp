@@ -9,6 +9,7 @@
 #include "Navi33StageOwner.h"
 #include "Navi33ProductionOwner.h"
 #include "Navi33Gmc11Vm.h"
+#include "Navi33DarwinClientGpu.h"
 #include <IOKit/IOLib.h>
 
 namespace navi33 { namespace darwin_owner { struct ProbeReport; } }
@@ -54,10 +55,20 @@ public:
         result.gfx_ip_version = N33_GFX_IP_VERSION;
         result.family = N33_FAMILY_GFX1102;
         // No acceleration, VRAM size or GTT size is inferred from PCI BARs.
-        result.capabilities = nativeFlags_ &
-            (N33_CAP_PCI_INVENTORY | N33_CAP_ROM_DISCOVERY);
+        result.capabilities = (nativeFlags_ &
+            (N33_CAP_PCI_INVENTORY | N33_CAP_ROM_DISCOVERY)) |
+            (clientGpuGate_ ? N33_CAP_CLIENT_GPU : 0u);
         return result;
     }
+    // Per-client GPU contexts (Phase B4, navi33-client-gpu=1). `client` is the
+    // N33N user client; each owns at most one context. All under pspLock_.
+    IOReturn gpuContext(const void *client,uint32_t op,uint64_t *vmid);
+    IOReturn gpuBoCreate(const void *client,uint64_t bytes,uint32_t *handle,uint64_t *size);
+    IOReturn gpuBoFree(const void *client,uint32_t handle);
+    IOReturn gpuVaMap(const void *client,uint32_t handle,uint64_t va,uint32_t flags,uint32_t op);
+    IOReturn gpuSubmit(const void *client,const uint64_t *pairs,uint32_t n,uint64_t *seq);
+    IOReturn gpuWait(const void *client,uint64_t seq,uint32_t timeoutUs,uint64_t *retired,uint32_t *state);
+    IOMemoryDescriptor *gpuBoMemory(const void *client,uint32_t handle);
 
 private:
     static void autostartThunk(thread_call_param_t self,thread_call_param_t);
@@ -83,6 +94,9 @@ private:
     // kext (under pspLock_). Never freed while a queue may still use them.
     navi33::vram_heap::Heap vramHeap_;
     navi33::gmc11_vm::Space vm1Space_;
+    // Per-client GPU contexts on the same heap (Phase B4).
+    navi33::darwin_client::Host gpuHost_;
+    bool clientGpuGate_ = false;  // navi33-client-gpu=1, no -off, no navi33-psp-off; set in start()
     bool pspFwAttempted_ = false;   // same for the IP firmware stage
     // Held PCI owner (navi33-owner-hold=1 only). The ticket is nonzero while
     // IOService::open is held; stop() releases it.

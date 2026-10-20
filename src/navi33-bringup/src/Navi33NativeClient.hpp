@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Root-only N33N query and opt-in OS IOMMU staging; NO GPU submission.
+// Root-only N33N query, opt-in OS IOMMU staging and, behind navi33-client-gpu=1,
+// per-client GPU contexts (buffers, GPU VA, submit, wait).
 #pragma once
 #include <IOKit/IOUserClient.h>
 #include <IOKit/IOLib.h>
@@ -16,6 +17,8 @@ public:
     void stop(IOService *provider) override;
     IOReturn clientClose() override;
     IOReturn clientDied() override;
+    IOReturn clientMemoryForType(UInt32 type, IOOptionBits *options,
+                                 IOMemoryDescriptor **memory) override;
     void free() override;
     IOReturn externalMethod(uint32_t selector,
                             IOExternalMethodArguments *args,

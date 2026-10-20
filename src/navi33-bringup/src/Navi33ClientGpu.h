@@ -106,7 +106,7 @@ struct Hw {
     bool (*vramRead)(void *,uint64_t off,uint32_t *dst,uint32_t dwords)=nullptr;
     void (*delayUs)(void *,uint32_t)=nullptr;
 };
-struct Bo { vh::Handle h{}; uint64_t vram=0, bytes=0, va=0; uint64_t vaFlags=0; bool live=false; };
+struct Bo { vh::Handle h{}; uint64_t vram=0, bytes=0, va=0; uint64_t vaFlags=0; bool live=false, cpuMapped=false; };
 struct Mapping { uint64_t va=0, bytes=0; };
 enum class State : uint8_t { Free=0, Open, Faulted, Quarantined };
 struct Client {
@@ -120,7 +120,7 @@ struct Client {
     uint64_t seqEnd[64]{};                  // ring position after seq (modulo 64)
     uint32_t vmid=0, faultStatus=0, faultAddr=0;
 };
-struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0; uint32_t writes=0, tlbFlushes=0; };
+struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0; };
 
 class Device {
 public:
@@ -242,7 +242,15 @@ public:
         if(!c || !b)return Code::NotFound;
         if(b->va){const Code u=vaUnmap(slot,handle);if(u!=Code::Ok)return u;}
         if(c->state==State::Quarantined)return Code::Quarantined;
-        heap_->free(b->h);*b=Bo{};return Code::Ok;
+        release(*b);return Code::Ok;
+    }
+    // A user CPU mapping may outlive BO_FREE and the context (it belongs to the task
+    // until IOKit tears it down), so a buffer that was ever CPU-mapped is never given
+    // back to the heap this boot: it is unmapped from the GPU and retired.
+    bool markCpuMapped(uint32_t slot,uint32_t handle) {
+        Client *c=live(slot);Bo *b=c ? bo(*c,handle) : nullptr;
+        if(!c || !b || c->state==State::Quarantined)return false;
+        b->cpuMapped=true;return true;
     }
     // The CPU-visible VRAM range of a buffer (for the user client's CPU mapping).
     bool boRange(uint32_t slot,uint32_t handle,uint64_t &vram,uint64_t &bytes) {
@@ -312,7 +320,7 @@ public:
         uint32_t cntl=0;
         if(!rd(r_->ctx[slot][0],cntl) || !wr(r_->ctx[slot][0],cntl&~1u) || !flushTlb(c->vmid))
             {quarantine(*c);c->owner=nullptr;return Code::Quarantined;}
-        for(Bo &b:c->bo)if(b.live)heap_->free(b.h);
+        for(Bo &b:c->bo)if(b.live)release(b);
         heap_->free(c->queue.h);heap_->free(c->mqd.h);
         c->space.destroy();
         resetClient(*c);
@@ -331,7 +339,7 @@ public:
             ++s.clients;s.emitted+=c.emitted;s.retired+=c.retired;
             for(const Bo &b:c.bo)if(b.live)++s.bos;
         }
-        s.writes=writes_;s.tlbFlushes=flushes_;return s;
+        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;return s;
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
@@ -452,6 +460,11 @@ private:
         return c.state==State::Faulted ? Code::Faulted : c.state==State::Quarantined ? Code::Quarantined : Code::NotReady;
     }
     void quarantine(Client &c) { c.state=State::Quarantined; }
+    void release(Bo &b) {
+        if(b.cpuMapped)retiredBytes_+=b.bytes;      // stays allocated: a CPU mapping may remain
+        else heap_->free(b.h);
+        b=Bo{};
+    }
     Code fail(Client &c,Code code) { quarantine(c);sel(0u);return code; }
     // Before the context exists nothing on the GPU references the client: free it all.
     void quarantineIfMapped(Client &c) {
@@ -468,6 +481,7 @@ private:
     Client c_[kClients]{};
     TableIo tio_{};
     uint32_t select_=0, writes_=0, flushes_=0, faultSeen_=0;
+    uint64_t retiredBytes_=0;
     bool started_=false;
 };
 } }

@@ -100,6 +100,10 @@ $(BUILD)/Navi33DarwinMes.o: src/Navi33DarwinMes.cpp src/Navi33Gfx11MesStart.h sr
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD)/Navi33DarwinClientGpu.o: src/Navi33DarwinClientGpu.cpp src/Navi33DarwinClientGpu.h src/Navi33ClientGpu.h src/Navi33Gfx11VmAlloc.h src/Navi33Gmc11Vm.h src/Navi33VramHeap.h src/Navi33Gfx11VmGradient.h src/Navi33Gfx11Vmid.h src/Navi33Gfx11Gradient.h src/Navi33Gfx11MecQueue.h src/Navi33Gfx11Mqd.h src/Navi33Gfx11KiqHqd.h src/Navi33Psp13Loader.h src/Navi33DarwinPspLoad.h src/Navi33NativeABI.h src/Navi33HardwarePlan.h src/Navi33Discovery.h src/Navi33EmbeddedFirmware.h
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD)/Navi33DarwinVmAlloc.o: src/Navi33DarwinVmAlloc.cpp src/Navi33Gfx11VmAlloc.h src/Navi33Gmc11Vm.h src/Navi33VramHeap.h src/Navi33Gfx11VmGradient.h src/Navi33Gfx11Vmid.h src/Navi33Gfx11Gradient.h src/Navi33Gfx11MecQueue.h src/Navi33Gfx11Shader.h src/Navi33Sha256.h src/Navi33Gfx11Dispatch.h src/Navi33Gfx11Mqd.h src/Navi33Gfx11KiqHqd.h src/Navi33Psp13Loader.h src/Navi33DarwinPspLoad.h src/Navi33NativeABI.h src/Navi33HardwarePlan.h src/Navi33Discovery.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -124,9 +128,9 @@ $(BUILD)/kmod_info.o: src/kmod_info.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KEXT): $(BUILD)/Navi33DarwinVmAlloc.o $(BUILD)/Navi33DarwinVmGradient.o $(BUILD)/Navi33DarwinVmid.o $(BUILD)/Navi33EmbeddedFirmware.o $(BUILD)/Navi33DarwinGradient.o $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o Info.plist
+$(KEXT): $(BUILD)/Navi33DarwinClientGpu.o $(BUILD)/Navi33DarwinVmAlloc.o $(BUILD)/Navi33DarwinVmGradient.o $(BUILD)/Navi33DarwinVmid.o $(BUILD)/Navi33EmbeddedFirmware.o $(BUILD)/Navi33DarwinGradient.o $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o Info.plist
 	@mkdir -p $(KEXT)/Contents/MacOS
-	$(CXX) $(LDFLAGS) $(BUILD)/Navi33DarwinVmAlloc.o $(BUILD)/Navi33DarwinVmGradient.o $(BUILD)/Navi33DarwinVmid.o $(BUILD)/Navi33EmbeddedFirmware.o $(BUILD)/Navi33DarwinGradient.o $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o -o $(EXEC)
+	$(CXX) $(LDFLAGS) $(BUILD)/Navi33DarwinClientGpu.o $(BUILD)/Navi33DarwinVmAlloc.o $(BUILD)/Navi33DarwinVmGradient.o $(BUILD)/Navi33DarwinVmid.o $(BUILD)/Navi33EmbeddedFirmware.o $(BUILD)/Navi33DarwinGradient.o $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o -o $(EXEC)
 	cp Info.plist $(KEXT)/Contents/Info.plist
 	xattr -cr $(KEXT)
 	codesign --force --sign - $(KEXT)

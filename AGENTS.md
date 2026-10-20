@@ -117,6 +117,13 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      allocator do it") is G38 on the kernel's VRAM heap: same registers and gate, its
      own latch, and CPU VRAM access only inside live, unpinned heap blocks (the console,
      240..256 MiB and the top 112 MiB are pinned).
+   - **Client GPU contexts (Phase B4, kext 0.0.29, ABI 21, built 2026-10-20 after the user
+     asked to go on with B4):** `navi33-client-gpu=1` (kill `navi33-client-gpu-off` or
+     `navi33-psp-off`) lets N33N user clients (root) open a context: VMID/queue k = 2..7,
+     GFXHUB words (G38's, or recognised), contexts 2..7, SH_MEM under VMID k, the queue-k HQD,
+     invalidation engine 17, CP_HQD_DEQUEUE_REQUEST, the poll trigger, and CPU writes only
+     inside the kernel heap's live blocks. Not a one-shot stage: a service, usable with
+     `--autostart`. Not acceleration (rule 6 unchanged).
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing

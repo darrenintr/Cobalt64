@@ -16,8 +16,21 @@ int main() {
     assert(validate(N33_SEL_QUERY_CAPS,0,0,0,63,false,false,true,false)==Shape::BadArgument);
     assert(validate(N33_SEL_QUERY_CAPS,0,0,0,64,false,false,false,false)==Shape::BadArgument);
     assert(validate(N33_SEL_QUERY_CAPS,0,0,0,64,false,false,true,true)==Shape::BadArgument);
-    for(uint32_t sel=N33_SEL_BO_CREATE;sel<=N33_SEL_WAIT;++sel)
-        assert(validate(sel,0,0,0,0,true,true,true,false)==Shape::Unsupported);
+    // Client GPU selectors: scalars only, exact counts; the kext checks the boot-arg gate.
+    assert(validate(N33_SEL_CTX_CREATE,1,1,0,0,true,true,false,false)==Shape::Valid);
+    assert(validate(N33_SEL_BO_CREATE,2,2,0,0,true,true,false,false)==Shape::Valid);
+    assert(validate(N33_SEL_BO_FREE,1,0,0,0,true,false,false,false)==Shape::Valid);
+    assert(validate(N33_SEL_VM_MAP,4,0,0,0,true,false,false,false)==Shape::Valid);
+    assert(validate(N33_SEL_WAIT,2,2,0,0,true,true,false,false)==Shape::Valid);
+    for(uint32_t n=1;n<=N33_SUBMIT_MAX_IBS;++n)
+        assert(validate(N33_SEL_SUBMIT,1+2*n,1,0,0,true,true,false,false)==Shape::Valid);
+    assert(validate(N33_SEL_SUBMIT,2,1,0,0,true,true,false,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_SUBMIT,11,1,0,0,true,true,false,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_BO_CREATE,2,2,64,0,true,true,false,false)==Shape::BadArgument);   // no structs
+    assert(validate(N33_SEL_BO_CREATE,2,2,0,64,true,true,true,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_BO_FREE,1,0,0,0,true,false,false,true)==Shape::BadArgument);    // no descriptors
+    assert(validate(N33_SEL_VM_MAP,3,0,0,0,true,false,false,false)==Shape::BadArgument);
+    assert(validate(N33_SEL_CTX_CREATE,1,0,0,0,true,false,false,false)==Shape::BadArgument);
     assert(validate(N33_SEL_PSP_STATUS,0,0,0,sizeof(n33_psp_status),false,false,true,false)==Shape::Valid);
     assert(validate(N33_SEL_PSP_STATUS,0,0,0,63,false,false,true,false)==Shape::BadArgument);
     assert(validate(N33_SEL_SDMA_STATUS,0,0,0,sizeof(n33_sdma_status),false,false,true,false)==Shape::Valid);
@@ -93,7 +106,7 @@ int main() {
     static_assert(N33_SEL_PSP_LOAD==18 && N33_SEL_COUNT==19,"selector numbering");
     assert(validate(N33_SEL_COUNT,0,0,0,64,
                     false,false,true,false)==Shape::Unsupported);
-    static_assert(N33_ABI_VERSION==20u,"VRAM heap modes ABI bump");
+    static_assert(N33_ABI_VERSION==21u,"client GPU selectors ABI bump");
     const n33_capabilities info={N33_ABI_VERSION,sizeof(n33_capabilities),
         N33_PCI_VENDOR,N33_PCI_DEVICE,N33_GFX_IP_VERSION,N33_FAMILY_GFX1102,
         N33_CAP_PCI_INVENTORY|N33_CAP_ROM_DISCOVERY,0u,0u,0u,0u,0u};

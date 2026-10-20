@@ -11,7 +11,7 @@ SCRIPT = pathlib.Path(__file__).resolve().parents[2] / 'vm/make-opencore.sh'
 
 class SmuBootArgsTests(unittest.TestCase):
     def generate(self, load=False, ring=False, fw=False, autoload=False,
-                 smu=False, scpm=False, dma_preflight=False, mes=False, mec=False, grad=False, auto=False, vmq=False, vmg=False):
+                 smu=False, scpm=False, dma_preflight=False, mes=False, mec=False, grad=False, auto=False, vmq=False, vmg=False, cg=False):
         code = SCRIPT.read_text().split("<<'EOF'\n", 1)[1].split('\nEOF', 1)[0]
         guid = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
         with tempfile.TemporaryDirectory() as directory:
@@ -28,7 +28,7 @@ class SmuBootArgsTests(unittest.TestCase):
             args = [str(config), str(int(load)), str(binary), str(tmp / 'manifest'),
                     'test-OC', '', str(int(ring)), str(int(fw)), str(int(autoload)),
                     str(int(smu or scpm)), str(int(scpm)), str(int(dma_preflight)),
-                    '0', '0', '0', '0', str(int(mes)), str(int(mec)), str(int(grad)), str(int(auto)), str(int(vmq)), '0', str(int(vmg))]
+                    '0', '0', '0', '0', str(int(mes)), str(int(mec)), str(int(grad)), str(int(auto)), str(int(vmq)), '0', str(int(vmg)), str(int(cg))]
             subprocess.run([sys.executable, '-I', '-', *args], input=code,
                            text=True, capture_output=True, check=True)
             result = plistlib.loads(config.read_bytes())
@@ -129,6 +129,19 @@ class SmuBootArgsTests(unittest.TestCase):
             self.assertIn(flag, args)
         for closed in (self.generate(), self.generate(vmq=True), self.generate(grad=True)):
             self.assertNotIn('navi33-vm-gradient=1', closed)
+
+    def test_client_gpu_is_a_service_next_to_autostart(self):
+        for args in (self.generate(cg=True), self.generate(cg=True, auto=True)):
+            self.assertIn('navi33-client-gpu=1', args)
+            for flag in ('navi33-psp-off=1', 'navi33-client-gpu-off=1', 'navi33-psp-load=1', 'navi33-psp-ring=1',
+                         'navi33-psp-fw=1', 'navi33-vm-queue=1', 'navi33-vm-gradient=1'):
+                self.assertNotIn(flag, args)
+            for flag in ('navi33-gradient-off=1', 'navi33-vm-off=1'):
+                self.assertIn(flag, args)
+        self.assertIn('navi33-autostart=1', self.generate(cg=True, auto=True))
+        for closed in (self.generate(), self.generate(auto=True), self.generate(vmg=True)):
+            self.assertIn('navi33-client-gpu-off=1', closed)
+            self.assertNotIn('navi33-client-gpu=1', closed)
 
     def test_mes_refuses_combined_gate(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -12,7 +12,7 @@
 #else
 #define N33_STATIC_ASSERT(x,m) _Static_assert(x,m)
 #endif
-#define N33_ABI_VERSION 20u /* 20: VRAM heap modes; 19: VMID1 gradient modes; 18: VMID1 queue modes/result; 17: gradient modes/result; 16: MEC queue modes/result; 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
+#define N33_ABI_VERSION 21u /* 21: client GPU selectors 2..7; 20: VRAM heap modes; 19: VMID1 gradient modes; 18: VMID1 queue modes/result; 17: gradient modes/result; 16: MEC queue modes/result; 9: PSP_LOAD; 10: ring modes; 11: IP firmware modes; 12: +SMU record; 13: SMU enable modes/result; 14: SCPM enable-only modes/result; 15: MES start modes/result */
 #define N33_UC_TYPE 0x4e33334eu /* N33N */
 #define N33_PCI_VENDOR 0x1002u
 #define N33_PCI_DEVICE 0x7480u
@@ -21,6 +21,9 @@
 #define N33_CAP_PCI_INVENTORY (1u<<0)
 #define N33_CAP_ROM_DISCOVERY (1u<<1)
 #define N33_CAP_DMA_PREFLIGHT (1u<<2)
+/* Per-client GPU contexts (Phase B4): BO_CREATE/BO_FREE/VM_MAP/CTX_CREATE/SUBMIT/WAIT
+ * answer, behind navi33-client-gpu=1. Not acceleration (no N33_CAP_HW_* bit). */
+#define N33_CAP_CLIENT_GPU (1u<<3)
 #define N33_CAP_HW_VM (1u<<16)
 #define N33_CAP_HW_SDMA (1u<<17)
 #define N33_CAP_HW_GFX (1u<<18)
@@ -38,6 +41,28 @@ enum n33_selector {
   N33_SEL_MMIO_PEEK=17, N33_SEL_PSP_LOAD=18,
   N33_SEL_COUNT=19
 };
+/* Client GPU selectors (ABI 21, navi33-client-gpu=1; each user client owns at most one
+ * context, closed with the client). Scalars only:
+ *   CTX_CREATE  in [0] op (1 open, 2 close)                    out [0] VMID
+ *   BO_CREATE   in [0] bytes (<= 64 MiB) [1] flags (0)         out [0] handle [1] size
+ *   BO_FREE     in [0] handle                                  (unmaps first; waits for idle)
+ *   VM_MAP      in [0] handle [1] GPU VA [2] flags [3] op (1 map, 2 unmap)
+ *   SUBMIT      in [0] n (1..4) then n pairs (IB VA, dwords)   out [0] sequence number
+ *   WAIT        in [0] sequence [1] timeout us (<= 2 s)        out [0] retired [1] N33_GPU_* state
+ * CPU access to a buffer: IOConnectMapMemory64(type = handle). */
+#define N33_VM_MAP_WRITE (1u<<0)
+#define N33_VM_MAP_EXEC (1u<<1)
+#define N33_VM_OP_MAP 1u
+#define N33_VM_OP_UNMAP 2u
+#define N33_CTX_OP_OPEN 1u
+#define N33_CTX_OP_CLOSE 2u
+#define N33_SUBMIT_MAX_IBS 4u
+#define N33_WAIT_MAX_US 2000000u
+#define N33_GPU_OK 0u
+#define N33_GPU_TIMEOUT 1u
+#define N33_GPU_FAULTED 2u
+#define N33_GPU_QUARANTINED 3u
+
 // PSP status is deliberately read-only, never a readiness flag for GFX.
 enum n33_psp_state {
   N33_PSP_DISABLED=0, N33_PSP_NO_INVENTORY=1, N33_PSP_BAD_MMIO_PLAN=2,

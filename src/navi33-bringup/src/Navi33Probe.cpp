@@ -170,12 +170,15 @@ bool Navi33Probe::start(IOService *provider) {
     const bool vmWrites=!pspKilled &&
         !(PE_parse_boot_argn("navi33-vm-off",&vmOff,sizeof(vmOff)) && vmOff!=0u) &&
         PE_parse_boot_argn("navi33-vm-queue",&vmOn,sizeof(vmOn)) && vmOn==1u;
+    uint32_t cgOn=0u,cgOff=0u;
+    clientGpuGate_=!pspKilled && !(PE_parse_boot_argn("navi33-client-gpu-off",&cgOff,sizeof(cgOff)) && cgOff!=0u) &&
+        PE_parse_boot_argn("navi33-client-gpu",&cgOn,sizeof(cgOn)) && cgOn==1u;
     const bool vmgWrites=!pspKilled &&
         !(PE_parse_boot_argn("navi33-vm-off",&vmOff,sizeof(vmOff)) && vmOff!=0u) &&
         PE_parse_boot_argn("navi33-vm-gradient",&vmgOn,sizeof(vmgOn)) && vmgOn==1u;
     setProperty("Navi33,GpuWritesEnabled",
                 static_cast<uint64_t>(pspWrites || smuWrites || mesWrites || mecWrites || gradWrites || vmWrites ||
-                                      vmgWrites), 32);
+                                      vmgWrites || clientGpuGate_), 32);
     setProperty("Navi33,FirmwareLoadingImplemented",
                 "PSP13 sOS bootloader, KM ring (TOC, TMR) and IP firmware records only");
     setProperty("Navi33,GpuQueuesImplemented", static_cast<uint64_t>(0), 8);
@@ -1161,3 +1164,120 @@ IOReturn Navi33Probe::newUserClient(task_t owningTask, void *securityID,
     *handler = client;
     return kIOReturnSuccess;
 }
+
+// ---- Per-client GPU contexts (Phase B4) -------------------------------------
+namespace {
+IOReturn gpuReturn(navi33::client_gpu::Code c) {
+    using C=navi33::client_gpu::Code;
+    switch(c) {
+    case C::Ok: return kIOReturnSuccess;
+    case C::BadArgs: return kIOReturnBadArgument;
+    case C::NotReady: return kIOReturnNotReady;
+    case C::NoSlot: return kIOReturnNoResources;
+    case C::NoMemory: return kIOReturnNoMemory;
+    case C::Busy: return kIOReturnBusy;
+    case C::Timeout: return kIOReturnTimeout;
+    case C::Faulted: return kIOReturnIOError;
+    case C::Quarantined: return kIOReturnAborted;
+    case C::NotFound: return kIOReturnNotFound;
+    case C::Hub: return kIOReturnNotPermitted;
+    default: return kIOReturnDeviceError;
+    }
+}
+}
+IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) {
+    namespace cg=navi33::client_gpu;
+    if(!clientGpuGate_ || !pspLock_)return kIOReturnUnsupported;
+    if(!client || (op!=N33_CTX_OP_OPEN && op!=N33_CTX_OP_CLOSE))return kIOReturnBadArgument;
+    IOLockLock(pspLock_);
+    uint32_t slot=0;
+    cg::Code c=cg::Code::Ok;
+    if(op==N33_CTX_OP_CLOSE) {
+        // Called again by clientClose(); a client with no context has nothing to do.
+        c=gpuHost_.dev.slotOf(client,slot) ? gpuHost_.dev.close(slot) : cg::Code::Ok;
+    } else if(gpuHost_.dev.slotOf(client,slot)) {
+        c=cg::Code::BadArgs;
+    } else {
+        navi33::darwin_psp::Request req{};fillConsole(req);
+        c=navi33::darwin_client::start(gpuHost_,OSDynamicCast(IOPCIDevice,getProvider()),req,vramHeap_);
+        if(c==cg::Code::Ok)c=gpuHost_.dev.open(client,slot);
+        if(c==cg::Code::Ok && vmid)*vmid=gpuHost_.dev.client(slot)->vmid;
+    }
+    const cg::Stats st=gpuHost_.dev.stats();
+    char line[160];
+    snprintf(line,sizeof(line),"clients %u buffers %u emitted %llu retired %llu writes %u flushes %u heap free %llu MiB",
+             st.clients,st.bos,st.emitted,st.retired,st.writes,st.tlbFlushes,vramHeap_.freeBytes()>>20);
+    setProperty("Navi33,ClientGpu",line);
+    IOLockUnlock(pspLock_);
+    IOLog("Navi33Probe: client GPU context op %u -> %u (%s)\n",op,static_cast<unsigned>(c),line);
+    return gpuReturn(c);
+}
+#define N33_GPU_SLOT(client) \
+    uint32_t slot=0; \
+    if(!clientGpuGate_ || !pspLock_)return kIOReturnUnsupported; \
+    IOLockLock(pspLock_); \
+    if(!gpuHost_.dev.slotOf(client,slot)){IOLockUnlock(pspLock_);return kIOReturnNotReady;}
+IOReturn Navi33Probe::gpuBoCreate(const void *client,uint64_t bytes,uint32_t *handle,uint64_t *size) {
+    N33_GPU_SLOT(client)
+    uint32_t h=0;uint64_t vram=0;
+    const navi33::client_gpu::Code c=gpuHost_.dev.boCreate(slot,bytes,h,vram);
+    uint64_t off=0,len=0;
+    if(c==navi33::client_gpu::Code::Ok){gpuHost_.dev.boRange(slot,h,off,len);*handle=h;*size=len;}
+    IOLockUnlock(pspLock_);
+    return gpuReturn(c);
+}
+IOReturn Navi33Probe::gpuBoFree(const void *client,uint32_t handle) {
+    N33_GPU_SLOT(client)
+    const navi33::client_gpu::Code c=gpuHost_.dev.boFree(slot,handle);
+    IOLockUnlock(pspLock_);
+    return gpuReturn(c);
+}
+IOReturn Navi33Probe::gpuVaMap(const void *client,uint32_t handle,uint64_t va,uint32_t flags,uint32_t op) {
+    if(flags&~(N33_VM_MAP_WRITE|N33_VM_MAP_EXEC) || (op!=N33_VM_OP_MAP && op!=N33_VM_OP_UNMAP))return kIOReturnBadArgument;
+    N33_GPU_SLOT(client)
+    const navi33::client_gpu::Code c=op==N33_VM_OP_MAP ?
+        gpuHost_.dev.vaMap(slot,handle,va,flags&N33_VM_MAP_WRITE,flags&N33_VM_MAP_EXEC) :
+        gpuHost_.dev.vaUnmap(slot,handle);
+    IOLockUnlock(pspLock_);
+    return gpuReturn(c);
+}
+IOReturn Navi33Probe::gpuSubmit(const void *client,const uint64_t *pairs,uint32_t n,uint64_t *seq) {
+    if(!pairs || !n || n>N33_SUBMIT_MAX_IBS)return kIOReturnBadArgument;
+    navi33::client_gpu::Device::Ib ibs[N33_SUBMIT_MAX_IBS];
+    for(uint32_t i=0;i<n;++i) {
+        if(pairs[2*i+1]>0xffffffffull)return kIOReturnBadArgument;
+        ibs[i]={pairs[2*i],static_cast<uint32_t>(pairs[2*i+1])};
+    }
+    N33_GPU_SLOT(client)
+    const navi33::client_gpu::Code c=gpuHost_.dev.submit(slot,ibs,n,*seq);
+    IOLockUnlock(pspLock_);
+    return gpuReturn(c);
+}
+IOReturn Navi33Probe::gpuWait(const void *client,uint64_t seq,uint32_t timeoutUs,uint64_t *retired,uint32_t *state) {
+    if(timeoutUs>N33_WAIT_MAX_US)return kIOReturnBadArgument;
+    N33_GPU_SLOT(client)
+    // Waits in short slices so other clients are not held behind the lock for long.
+    navi33::client_gpu::Code c=navi33::client_gpu::Code::Timeout;
+    for(uint32_t spent=0;;) {
+        c=gpuHost_.dev.wait(slot,seq,0u,*retired);
+        if(c!=navi33::client_gpu::Code::Timeout || spent>=timeoutUs)break;
+        IOLockUnlock(pspLock_);IOSleep(1);spent+=1000u;IOLockLock(pspLock_);
+        if(!gpuHost_.dev.slotOf(client,slot)){IOLockUnlock(pspLock_);return kIOReturnNotReady;}
+    }
+    using C=navi33::client_gpu::Code;
+    *state=c==C::Ok ? N33_GPU_OK : c==C::Timeout ? N33_GPU_TIMEOUT : c==C::Faulted ? N33_GPU_FAULTED :
+           c==C::Quarantined ? N33_GPU_QUARANTINED : N33_GPU_TIMEOUT;
+    IOLockUnlock(pspLock_);
+    return c==C::Ok || c==C::Timeout || c==C::Faulted || c==C::Quarantined ? kIOReturnSuccess : gpuReturn(c);
+}
+IOMemoryDescriptor *Navi33Probe::gpuBoMemory(const void *client,uint32_t handle) {
+    uint32_t slot=0;
+    if(!clientGpuGate_ || !pspLock_)return nullptr;
+    IOLockLock(pspLock_);
+    IOMemoryDescriptor *md=gpuHost_.dev.slotOf(client,slot) ?
+        navi33::darwin_client::boMemory(gpuHost_,OSDynamicCast(IOPCIDevice,getProvider()),slot,handle) : nullptr;
+    if(md)gpuHost_.dev.markCpuMapped(slot,handle);     // never back to the heap this boot
+    IOLockUnlock(pspLock_);
+    return md;
+}
+#undef N33_GPU_SLOT

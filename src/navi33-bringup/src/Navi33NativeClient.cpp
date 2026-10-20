@@ -67,7 +67,21 @@ void Navi33NativeClient::stop(IOService *provider) {
     super::stop(provider);
 }
 
+// A buffer's CPU mapping (IOConnectMapMemory64, type = BO handle): BAR0, uncached.
+IOReturn Navi33NativeClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
+                                                 IOMemoryDescriptor **memory) {
+    if (!active_ || !owner_ || !options || !memory) return kIOReturnNotReady;
+    IOMemoryDescriptor *md = owner_->gpuBoMemory(this, type);
+    if (!md) return kIOReturnBadArgument;
+    *options = kIOMapInhibitCache;
+    *memory = md;           // IOUserClient releases it once the mapping exists
+    return kIOReturnSuccess;
+}
+
 IOReturn Navi33NativeClient::clientClose() {
+    // The GPU context first: drain, dequeue, free (or quarantine) before the
+    // provider reference goes away.
+    if (owner_) owner_->gpuContext(this, N33_CTX_OP_CLOSE, nullptr);
     if (dmaLock_) IOLockLock(dmaLock_);
     active_ = false;
     releaseStageLocked(); // close/client death is equivalent to RELEASE
@@ -123,6 +137,42 @@ IOReturn Navi33NativeClient::externalMethod(
     if (result != navi33::native_policy::Shape::Valid)
         return kIOReturnBadArgument;
 
+    if (selector >= N33_SEL_BO_CREATE && selector <= N33_SEL_WAIT) {
+        const uint64_t *in = args->scalarInput;
+        uint64_t *out = args->scalarOutput;
+        switch (selector) {
+        case N33_SEL_CTX_CREATE:
+            if (in[0] > 0xffffffffull) return kIOReturnBadArgument;
+            return owner_->gpuContext(this, static_cast<uint32_t>(in[0]), &out[0]);
+        case N33_SEL_BO_CREATE: {
+            if (in[1] != 0u) return kIOReturnBadArgument;
+            uint32_t handle = 0u;
+            const IOReturn r = owner_->gpuBoCreate(this, in[0], &handle, &out[1]);
+            out[0] = handle;
+            return r;
+        }
+        case N33_SEL_BO_FREE:
+            if (!in[0] || in[0] > 0xffffffffull) return kIOReturnBadArgument;
+            return owner_->gpuBoFree(this, static_cast<uint32_t>(in[0]));
+        case N33_SEL_VM_MAP:
+            if (!in[0] || in[0] > 0xffffffffull || in[2] > 0xffffffffull || in[3] > 0xffffffffull)
+                return kIOReturnBadArgument;
+            return owner_->gpuVaMap(this, static_cast<uint32_t>(in[0]), in[1],
+                                    static_cast<uint32_t>(in[2]), static_cast<uint32_t>(in[3]));
+        case N33_SEL_SUBMIT:
+            if (in[0] != (args->scalarInputCount - 1u) / 2u) return kIOReturnBadArgument;
+            return owner_->gpuSubmit(this, &in[1], static_cast<uint32_t>(in[0]), &out[0]);
+        case N33_SEL_WAIT: {
+            if (in[1] > N33_WAIT_MAX_US) return kIOReturnBadArgument;
+            uint32_t state = 0u;
+            const IOReturn r = owner_->gpuWait(this, in[0], static_cast<uint32_t>(in[1]), &out[0], &state);
+            out[1] = state;
+            return r;
+        }
+        default:
+            return kIOReturnUnsupported;
+        }
+    }
     if (selector == N33_SEL_HELLO) {
         if (args->scalarInput[0] != N33_ABI_VERSION ||
             args->scalarInput[1] != 0u)

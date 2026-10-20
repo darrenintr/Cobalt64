@@ -54,7 +54,7 @@ int main() {
     assert(f.reads==16u &&
            sample.flags==N33_QUEUE_FLAG_APPARENTLY_PARKED);
     auto result=c::report(sample);
-    assert(result.abi_version==20u && result.size==64u);
+    assert(result.abi_version==21u && result.size==64u);
     assert(result.read_count==16u && result.ring_base_lo==0u);
     assert(result.reserved0==0u && result.reserved1==0u);
 
