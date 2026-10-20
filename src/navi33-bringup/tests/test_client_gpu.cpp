@@ -62,16 +62,16 @@ struct Fake {
         if(!mem[r.g.v.faultStatus]){mem[r.g.v.faultStatus]=0x100u|(vmid<<20);mem[r.g.v.faultAddr]=uint32_t(va>>12);}
     }
     // VA in VMID k -> VRAM offset, through the TLB first.
-    bool translate(uint32_t vmid,uint64_t va,uint64_t &pa,bool write=false) {
+    bool translate(uint32_t vmid,uint64_t va,uint64_t &pa,bool write=false,bool exec=false) {
         const auto &c=r.ctx[vmid-cg::kFirstVmid];
         const v1::Regs &v=r.g.v;
         if((mem[v.l1]&0x58u)!=0x58u || !(mem[v.l2]&1u) || !(mem[c[0]]&1u) || ((mem[c[0]]>>1)&3u)!=3u){fault(vmid,va);return false;}
         auto t=tlb.find({vmid,va>>12});
-        if(t!=tlb.end()){pa=t->second+(va&0xfffu);return true;}
+        if(t!=tlb.end() && !exec){pa=t->second+(va&0xfffu);return true;}
         uint64_t table=(mem[c[1]]|(uint64_t(mem[c[2]])<<32))&gv::kAddrMask;
         for(uint32_t lv=3;;--lv) {
             const uint64_t e=q(table+8u*gv::index(va,lv));
-            if(!(e&1u) || (!lv && write && !(e&gv::kPteWrite))){fault(vmid,va);return false;}
+            if(!(e&1u) || (!lv && write && !(e&gv::kPteWrite)) || (!lv && exec && !(e&gv::kPteExec))){fault(vmid,va);return false;}
             table=e&gv::kAddrMask;
             if(!lv)break;
         }
@@ -83,7 +83,8 @@ struct Fake {
     void exec(uint32_t k,uint64_t base,uint64_t from,uint64_t to,bool ring,uint64_t &pgm,uint64_t &karg,uint32_t &masks) {
         for(uint64_t i=from;i<to;) {
             auto at=[&](uint64_t d){return base+4u*(ring ? d%cg::kRingDwords : d);};
-            const uint32_t h=rd(k,at(i));
+            uint64_t hp=0;
+            const uint32_t h=ring ? rd(k,at(i)) : (translate(k,at(i),hp,false,true) ? get(hp) : 0xdeadu);   // IBs: execute
             if(faultNow)return;
             if(h==mq::kNop){++i;continue;}
             const uint32_t op=(h>>8)&0xffu,n=((h>>16)&0x3fffu)+1u;
@@ -216,7 +217,7 @@ App setup(Fake &f,const std::vector<uint8_t> &co,const gfx11_shader::Kernel &k,u
     assert(f.dev.vaMap(a.slot,a.shader,vaBase,false,true)==cg::Code::Ok);
     assert(f.dev.vaMap(a.slot,a.args,vaBase+0x10000,true,false)==cg::Code::Ok);
     assert(f.dev.vaMap(a.slot,a.image,vaBase+0x20000,true,false)==cg::Code::Ok);
-    assert(f.dev.vaMap(a.slot,a.ib,vaBase+0x30000,false,false)==cg::Code::Ok);
+    assert(f.dev.vaMap(a.slot,a.ib,vaBase+0x30000,false,true)==cg::Code::Ok);
     std::vector<uint32_t> code(gr::kShaderMax/4u,0u);
     for(uint64_t i=0;i<k.codeBytes;++i)code[i/4u]|=uint32_t(co[k.codeOffset+i])<<(8u*(i%4u));
     f.put(a.slot,a.shader,0,code);
@@ -265,6 +266,10 @@ int main() {
         // VMID k's context: depth 3 at the client's root; SH_MEM for VMID k only.
         assert(f.mem[r.ctx[0][0]]==0x01fffe07u && (f.mem[r.ctx[0][1]]&~0xfffu)==f.dev.client(0)->space.rootVram());
         assert((f.bank[{2u<<4,r.g.shMem}]==gr::kShMemDefault) && (f.bank[{0u,r.g.shMem}]==0u));
+        // An IB must sit in an executable mapping (the CP fetches it as code).
+        {   uint32_t ro=0;uint64_t vro=0,sq=0;
+            assert(f.dev.boCreate(c.slot,4096,ro,vro)==cg::Code::Ok && f.dev.vaMap(c.slot,ro,0x300000000ull,false,false)==cg::Code::Ok);
+            const cg::Device::Ib nx{0x300000000ull,8};assert(f.dev.submit(c.slot,&nx,1,sq)==cg::Code::BadArgs);}
         // Isolation: client c cannot submit an IB at a VA it never mapped.
         const cg::Device::Ib far{0x200000000ull,4};
         uint64_t s=0;assert(f.dev.submit(c.slot,&far,1,s)==cg::Code::BadArgs);
@@ -304,7 +309,7 @@ int main() {
         assert(f.dev.open(&f,slot)==cg::Code::Ok);
         assert(f.dev.boCreate(slot,4096,x,vx)==cg::Code::Ok && f.dev.boCreate(slot,4096,y,vy)==cg::Code::Ok &&
                f.dev.boCreate(slot,4096,ib,vi)==cg::Code::Ok);
-        assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Ok && f.dev.vaMap(slot,ib,0x600000,false,false)==cg::Code::Ok);
+        assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Ok && f.dev.vaMap(slot,ib,0x600000,false,true)==cg::Code::Ok);
         const std::vector<uint32_t> w={gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,
                                        0x500000u,0u,0x1234u,0u,0u};
         f.put(slot,ib,0,w);
@@ -325,7 +330,7 @@ int main() {
         uint32_t slot=0,x=0,ib=0;uint64_t vx=0,vi=0,s=0,ret=0;
         assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.boCreate(slot,4096,x,vx)==cg::Code::Ok &&
                f.dev.boCreate(slot,4096,ib,vi)==cg::Code::Ok);
-        assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Ok && f.dev.vaMap(slot,ib,0x600000,false,false)==cg::Code::Ok);
+        assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Ok && f.dev.vaMap(slot,ib,0x600000,false,true)==cg::Code::Ok);
         f.put(slot,ib,0,{gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,0x500000u,0u,0x1111u,0u,0u});
         const cg::Device::Ib i1{0x600000,8};
         assert(f.dev.submit(slot,&i1,1,s)==cg::Code::Ok && f.dev.wait(slot,s,1000,ret)==cg::Code::Ok && f.get(vx)==0x1111u);
@@ -378,7 +383,7 @@ int main() {
         assert(f.dev.submit(a.slot,&ia,1,s,0x7ffff0030000ull)==cg::Code::BadArgs);           // read-only IB buffer
         uint64_t em=0,re=0;assert(f.dev.sequences(a.slot,em,re) && em==3u && re==3u);
         uint32_t nul=0;uint64_t vn=0;
-        assert(f.dev.boCreate(a.slot,4096,nul,vn)==cg::Code::Ok && f.dev.vaMap(a.slot,nul,0x10000,false,false)==cg::Code::Ok);
+        assert(f.dev.boCreate(a.slot,4096,nul,vn)==cg::Code::Ok && f.dev.vaMap(a.slot,nul,0x10000,false,true)==cg::Code::Ok);
         f.put(a.slot,nul,0,{gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,0u,0u,1u,0u,0u});
         const cg::Device::Ib in{0x10000,8};
         assert(f.dev.submit(a.slot,&in,1,s)==cg::Code::Ok && f.dev.wait(a.slot,s,1000,ret)==cg::Code::Faulted);
@@ -388,7 +393,7 @@ int main() {
         App good=setup(f,co,k,5,0x100000000ull);
         uint32_t slot=0,ib=0;uint64_t vi=0,s=0,ret=0;
         assert(f.dev.open(&f,slot)==cg::Code::Ok && f.dev.boCreate(slot,4096,ib,vi)==cg::Code::Ok &&
-               f.dev.vaMap(slot,ib,0x700000,false,false)==cg::Code::Ok);
+               f.dev.vaMap(slot,ib,0x700000,false,true)==cg::Code::Ok);
         f.put(slot,ib,0,{gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,0x900000u,0u,1u,0u,0u});
         const cg::Device::Ib bad{0x700000,8};
         assert(f.dev.submit(slot,&bad,1,s)==cg::Code::Ok);
@@ -493,7 +498,7 @@ int main() {
         const uint32_t RW=N48N_VM_PAGE_READABLE|N48N_VM_PAGE_WRITEABLE, RX=N48N_VM_PAGE_READABLE|N48N_VM_PAGE_EXECUTABLE;
         assert(va(sh[0],0x800000000ull,RX,N48N_VA_OP_MAP,gr::kShaderMax)==nf::R::Ok);
         assert(va(ag[0],0x800100000ull,RW)==nf::R::Ok && va(im[0],0x800200000ull,RW)==nf::R::Ok);
-        assert(va(ib[0],0x800300000ull,N48N_VM_PAGE_READABLE)==nf::R::Ok && va(fe[0],0x800400000ull,RW)==nf::R::Ok);
+        assert(va(ib[0],0x800300000ull,RX)==nf::R::Ok && va(fe[0],0x800400000ull,RW)==nf::R::Ok);
         assert(va(999u,0x800500000ull,RW)==nf::R::NotFound);
         assert(va(ib[0],0x800600000ull,RW,N48N_VA_OP_MAP,0,4096)==nf::R::BadArgument);              // offset in BO
         assert(va(im[0],0x800600000ull,RW|N48N_VM_PAGE_PRT)==nf::R::Unsupported);

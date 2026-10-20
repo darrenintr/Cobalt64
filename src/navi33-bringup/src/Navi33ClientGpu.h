@@ -366,7 +366,7 @@ public:
         if(!ibs || !n || n>kMaxIbs)return Code::BadArgs;
         for(uint32_t i=0;i<n;++i)
             if(!ibs[i].dwords || ibs[i].dwords>=(1u<<20) || (ibs[i].va&3u) ||
-               !mapped(*c,ibs[i].va,4ull*ibs[i].dwords,gv::kPteRead))return Code::BadArgs;
+               !mapped(*c,ibs[i].va,4ull*ibs[i].dwords,gv::kPteRead|gv::kPteExec))return Code::BadArgs;   // the CP fetches IBs as code
         if(userFence && ((userFence&7u) || !mapped(*c,userFence,8u,gv::kPteWrite)))return Code::BadArgs;
         poll(*c);
         if(c->state!=State::Open)return stateCode(*c);

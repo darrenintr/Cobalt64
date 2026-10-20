@@ -87,7 +87,7 @@ int main(int argc,char **argv) {
     Buffer shader=buffer(gr::kShaderMax,base,N33_VM_MAP_EXEC);
     Buffer args=buffer(4096,base+0x10000,N33_VM_MAP_WRITE);
     Buffer image=buffer(gr::kImageBytes,base+0x20000,N33_VM_MAP_WRITE);
-    Buffer ib=buffer(4096,base+0x30000,0u);
+    Buffer ib=buffer(4096,base+0x30000,N33_VM_MAP_EXEC);   // the CP fetches IBs with execute permission
     // The kernel code (zero tail), the arguments, a cleared image.
     for(uint32_t i=0;i<gr::kShaderMax/4u;++i)shader.cpu[i]=0u;
     for(uint64_t i=0;i<k.codeBytes;i+=4) {

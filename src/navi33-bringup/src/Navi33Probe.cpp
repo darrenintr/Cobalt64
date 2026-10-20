@@ -1227,6 +1227,12 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
     // The last client whose wait timed out: its queue as the CP saw it.
     for(uint32_t i=0;i<navi33::client_gpu::kClients;++i) {
         const navi33::client_gpu::Client *cl=gpuHost_.dev.client(i);
+        if(cl && cl->faultStatus) {
+            char fl[96];
+            snprintf(fl,sizeof(fl),"vmid %u status %08x page %08x",cl->vmid,cl->faultStatus,cl->faultAddr);
+            setProperty("Navi33,ClientGpuFault",fl);
+            IOLog("Navi33Probe: client GPU fault %s\n",fl);
+        }
         if(!cl || !cl->snap.taken)continue;
         const navi33::client_gpu::QueueSnap &q=cl->snap;
         char snap[256];

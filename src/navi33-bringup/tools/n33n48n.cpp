@@ -68,7 +68,7 @@ int main(int argc,char **argv) {
     Bo shader=bo(gr::kShaderMax,base,N48N_VM_PAGE_EXECUTABLE,N48N_GEM_DOMAIN_VRAM);
     Bo args=bo(4096,base+0x100000,N48N_VM_PAGE_WRITEABLE,N48N_GEM_DOMAIN_GTT);
     Bo image=bo(gr::kImageBytes,base+0x200000,N48N_VM_PAGE_WRITEABLE,N48N_GEM_DOMAIN_VRAM);
-    Bo ib=bo(4096,base+0x300000,0u,N48N_GEM_DOMAIN_GTT);
+    Bo ib=bo(4096,base+0x300000,N48N_VM_PAGE_EXECUTABLE,N48N_GEM_DOMAIN_GTT);
     Bo fence=bo(4096,base+0x400000,N48N_VM_PAGE_WRITEABLE,N48N_GEM_DOMAIN_GTT);
     for(uint32_t i=0;i<gr::kShaderMax/4u;++i)shader.cpu[i]=0u;
     for(uint64_t i=0;i<k.codeBytes;i+=4){uint32_t w=0;for(uint64_t b=0;b<4 && i+b<k.codeBytes;++b)w|=uint32_t(co[k.codeOffset+i+b])<<(8u*b);shader.cpu[i/4u]=w;}
