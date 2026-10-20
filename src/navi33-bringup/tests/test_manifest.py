@@ -500,7 +500,7 @@ assert 'PE_parse_boot_argn("navi33-mec-queue"' in load_fn
 assert 'PE_parse_boot_argn("navi33-mec-off"' in load_fn
 assert 'bool mecAttempted_ = false;' in (root/'src/Navi33Probe.hpp').read_text()
 assert 'return executeMec(pci,req);' in writer
-assert 'if(!mq::allowed(io->r,off)' in mecq
+assert 'if(!mq::allowed(io->r,off,io->gfxMapGate)' in mecq
 assert 'withSubRange(bar0,win.fwPriOffset+kWindowFromProof' in mecq
 assert 'mq::Hw hw{&io,read32,nullptr,nullptr,vramRead,sleepMs};' in mecq   # the plan cannot write
 assert 'Navi33DarwinMecQueue.o' in makefile

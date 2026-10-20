@@ -298,7 +298,7 @@ struct Fake {
         return true;
     }
     void g34() {
-        g42=true;mem[r.scheduler]=0x3038u;mem[r.gfxMapped]=0u;
+        g42=true;mem[r.scheduler]=0x30a0u;mem[r.gfxMapped]=0u;
         const uint32_t qs=mq::grbmSelect(1,0,0);
         const uint64_t base=(kFb+gfx_map::kG34Vram+mq::kRingOff)>>8;
         bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
@@ -615,7 +615,7 @@ int main() {
         assert(!cg::allowed(r,r.scheduler) && cg::mapAllowed(r,r.scheduler) && !cg::mapAllowed(r,r.gfxMapped));
         auto f=std::make_unique<Fake>(r);f->g34();
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady() && !f->stageWrites);
-        assert(f->mem[r.scheduler]==0x3038u);
+        assert(f->mem[r.scheduler]==0x30a0u);
         f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->dev.gfxReady());
         assert(f->dev.gfxMapReport().state==gfx_map::State::Mapped && f->stageWrites==3u);
@@ -623,7 +623,7 @@ int main() {
         f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);
         f->vram[gfx_map::kG34Vram+mq::kWptrOff]=32u;
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
-        assert(f->dev.gfxMapReport().state==gfx_map::State::Refused && f->stageWrites==0u && f->mem[r.scheduler]==0x3038u);
+        assert(f->dev.gfxMapReport().state==gfx_map::State::Refused && f->stageWrites==0u && f->mem[r.scheduler]==0x30a0u);
         f=std::make_unique<Fake>(r);f->g34();f->mapStuck=true;f->dev.setGfxMap(true);
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady());
         assert(f->dev.gfxMapReport().state==gfx_map::State::MapTimeout && f->stageWrites==3u);

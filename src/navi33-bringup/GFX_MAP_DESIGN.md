@@ -48,7 +48,8 @@ partial attempt, no reuse of G34's appended span, no alternate packet stream.
 Before a stage write, read and require the original G34 ME1/pipe0/queue0:
 ACTIVE=1, VMID=0, ring base exactly FB+250MiB+0x2000, PRIV_STATE and KMD_QUEUE
 set, RPTR=16, WPTR memory=16/0, original fence 0x0c0b1601; scheduler HIQ bit
-clear and graphics MAPPED=0. GRBM selects return to zero. The usual live
+clear before gated G34 initialization, scheduler low byte 0xa0 after it, and
+graphics MAPPED=0. GRBM selects return to zero. The usual live
 console/BAR0/VRAM proof and heap reservations precede this plan.
 
 ## Exact additional writes

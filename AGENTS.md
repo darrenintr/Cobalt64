@@ -164,7 +164,8 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      VRAM250MiB +0x2040 (16 dwords), +0x3008 (2 dwords), +0x4008 (1 dword), exact
      callback allowlist, readback required. MQD stays in live GFXR heap memory.
      Requires G34's exact original base/VMID/privilege/RPTR16/WPTR16/fence and
-     scheduler HIQ clear, gfx MAPPED0; own latch before first stage-window write.
+     scheduler HIQ clear before gated G34 initialization and low byte 0xa0
+     after it, gfx MAPPED0; own latch before first stage-window write.
      Fixed MAP_QUEUES + confirmed WRITE_DATA fence only, no user-controlled stream.
      Further attempts after a stage write require full power-off. Recovery remains
      guest/host SSH and host full power-off. Design: `GFX_MAP_DESIGN.md`. Not yet run.
