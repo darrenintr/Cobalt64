@@ -465,10 +465,9 @@ output survives a hang and Linux can inspect a stuck guest.
   start-time platform console at the relocated BAR0 with identical geometry.
   `console::resolve()` now picks that relocated console when `boot_args` is outside
   BAR0 (inside BAR0, same geometry only); the plan's HUBP check still proves the
-  offset. `Navi33,ConsolePick` reports the choice. Host tests cover the real values
-  (PLAN_OK) and a 16 MiB error (APERTURE_MISMATCH). Next: a kill-switch-closed
-  bare-metal boot should show `n33psp --plan` state 14. A bare-metal PSP load is
-  still a new write and needs explicit approval.
+  offset. `Navi33,ConsolePick` reports the choice. **Confirmed on bare metal
+  2026-10-20 21:29: PLAN_OK (state 14), nothing written** (findings log). A
+  bare-metal PSP load is still a new write and needs explicit approval.
   CI `39429401671` green; artifact `cache/artifact-0.0.64-ci`, UUID
   `994B713D-5C15-3C05-88A7-2E4FD73E9D44`. **Staged on the stick 2026-10-20** (kext
   and tools identical to the artifact, boot-args unchanged, all write kill
@@ -2653,6 +2652,21 @@ parser got two of them wrong:
     0.0.6 saw. So the platform console is usable only if read at `start()`.
   - The plan still reports state 11 (`NO_CONSOLE`), console `0x7c00000000`,
     as expected: 0.0.63 only captures. 0.0.64 resolves the relocated console.
+
+- **2026-10-20 21:29, kext 0.0.64 on bare-metal macOS, boot autorun: the first
+  bare-metal PLAN_OK** (stick file `navi33/results-20261020-212917-boot.txt`). Loaded
+  UUID `994B713D-5C15-3C05-88A7-2E4FD73E9D44` matches the artifact. All write kill
+  switches set; nothing written (`state 14: plan OK, nothing written`, writes 0).
+  - `Navi33,ConsolePick` = `relocated 830000000 bytes 7e9000`; the start-time
+    sources match the 21:08 capture.
+  - `n33psp --plan`: state 14, flags `0xf`; console `0x830000000` (8100 KiB) =
+    vram+0x0 inside BAR0 `0x830000000`+256 MiB; HUBP0 surface MC `0x8000000000`
+    active (pipes `0x1`), HUBP1..3 0; MMHUB and DCN FB `0x8000-0x81ff`; fw_pri
+    vram+0xf000000 = MC `0x800f000000` (`C2PMSG_36` `0x800f0`). PSP
+    bootloader-ready (`C2PMSG_35` `80000000`, `C2PMSG_81` 0).
+  - So the live HUBP surface proves BAR0 offset 0 = VRAM offset 0 on bare metal,
+    the same layout the VM loads used. Step 1 of the bare-metal plan is met. A
+    bare-metal PSP load is still a new write and needs the user's explicit approval.
 
 ## Adding a register read
 

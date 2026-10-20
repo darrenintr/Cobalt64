@@ -75,8 +75,11 @@ start-time `PE_state.video` at `0x830000001` (inside BAR0, offset 0, same
 1920x1080x32 geometry); at plan time `PE_state.video` is a kernel mapping.
 `console::resolve()` keeps a boot console inside BAR0, otherwise uses the
 start-time platform console only when it is inside BAR0 with identical geometry,
-and otherwise picks nothing. `planWindow()`'s HUBP proof is unchanged. Next: a
-kill-switch-closed bare-metal boot reaching PLAN_OK.
+and otherwise picks nothing. `planWindow()`'s HUBP proof is unchanged.
+**Met on bare metal 2026-10-20 21:29 (kext 0.0.64):** `n33psp --plan` state 14 with
+the relocated console at vram+0x0, HUBP0 active at MC `0x8000000000`, fw_pri MC
+`0x800f000000`, nothing written. The next step is a bounded bare-metal PSP/autostart
+sequence, which needs explicit card-write approval.
 
 ## 2. Establish reliable KIQ transport, then the graphics queue
 
