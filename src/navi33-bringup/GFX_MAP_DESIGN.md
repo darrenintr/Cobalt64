@@ -247,3 +247,14 @@ with `UnexpectedRemap`, and a near miss (`0x385c`/`0x3854`) is tested. Host
 tests pass, and removing the power-on branch fails `test_client_gpu`. This
 change has not run on the card. A physical run needs a full host power-off and
 renewed explicit approval.
+
+## 0.0.61 run: why the flush readback failed (offline fix)
+
+The 0.0.61 run (`runs/20261020-200423`) wrote the remap pair, then the flush
+readback stopped at `FlushReadbackFailed`. The NBIO memsize register read
+`0x1ff0` (8176 MiB, as in the guest's own dump), but `nbio4::inspect()` refused
+it: it required a multiple of 256 MiB, and 8176 is not one. The card really
+reports 8 GiB minus a 16 MiB reserve, so the granularity is now 16 MiB and
+`test_nbio43_capacity` checks that 8176 passes and 8200 still refuses. The
+host suite passes. Not run on the card; any new G42 attempt needs a full
+host power-off and renewed approval.

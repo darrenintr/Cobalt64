@@ -82,6 +82,9 @@ int main() {
     assert(n::inspect(p,read,&regs).code==n::Code::InvalidCapacity);
     regs.words[p.byteOffset/4u]=8200u;regs.reads=0u;
     assert(n::inspect(p,read,&regs).code==n::Code::InvalidCapacity);
+    // The real RX 7600 value (0x1ff0 = 8 GiB minus 16 MiB) must pass.
+    regs.words[p.byteOffset/4u]=8176u;regs.reads=0u;
+    assert(n::inspect(p,read,&regs).code==n::Code::Pass && n::inspect(p,read,&regs).capacityMiB==8176u);
     regs.words[p.byteOffset/4u]=16384u;regs.reads=0u;
     const auto larger=n::inspect(p,read,&regs);
     assert(larger.code==n::Code::Pass);

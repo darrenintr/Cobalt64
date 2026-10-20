@@ -17,6 +17,7 @@ constexpr uint32_t kMiB=1024u*1024u;
 // initialize GPU memory from a guessed capacity.
 constexpr uint32_t kMinimumSizeMiB=512u;
 constexpr uint32_t kMaximumSizeMiB=32768u;
+constexpr uint32_t kGranularityMiB=16u;
 enum class Code : uint8_t {
     NoInventory=0, UnsupportedRevision, MissingBase,
     OutsideBar5, ReadFailed, Unstable, InvalidCapacity, Pass
@@ -89,8 +90,10 @@ inline Sample inspect(const Plan &plan,Read read,void *context) {
     if(first!=second) {
         out.code=Code::Unstable;return out;
     }
+    // The RX 7600 reports 8176 MiB (0x1ff0) = 8 GiB minus a 16 MiB reserve, so
+    // the granularity is 16 MiB, not 256 MiB (the old rule refused the real card).
     if(first<kMinimumSizeMiB || first>kMaximumSizeMiB ||
-       (first&255u)!=0u) {
+       (first%kGranularityMiB)!=0u) {
         out.code=Code::InvalidCapacity;return out;
     }
     out.capacityMiB=first;
