@@ -36,10 +36,12 @@ namespace kiq=gfx11_kiq;
 namespace gd=gfx11_dispatch;
 namespace v1=vmid1;
 constexpr uint32_t kFirstVmid=2u, kClients=6u;                 // VMIDs / queues 2..7
-constexpr uint32_t kMaxBos=256u, kMaxIbs=4u;
-constexpr uint64_t kUserVaMin=0x10000u, kUserVaMax=0x7fff00000000ull;   // [min, max)
-constexpr uint64_t kKernelVa=0x7fffffe00000ull;                 // the client's queue, above user VAs
-static_assert(kKernelVa>=kUserVaMax && kKernelVa+(2u<<20)<=gv::kVaLimit,"kernel VA range");
+constexpr uint32_t kMaxBos=512u, kMaxIbs=16u;
+// The client's queue lives below the first user page (Mesa's amdgpu VA manager starts at
+// 0x10000 and runs to the GMC hole), page 0 left unmapped so a null GPU pointer faults.
+constexpr uint64_t kUserVaMin=0x10000u, kUserVaMax=gv::kVaLimit;   // [min, max)
+constexpr uint64_t kKernelVa=0u;
+static_assert(kKernelVa+0x5000u<=kUserVaMin,"kernel VA range");
 constexpr uint64_t kMaxBoBytes=64ull<<20;
 constexpr uint32_t kTagClient=0x434c4e54u;
 // gc_11_0_0_offset.h (GC segment 0): context k registers, invalidation engine 17,
@@ -51,15 +53,16 @@ constexpr uint32_t ctxEndLo(uint32_t k) { return 0x1733u+2u*k; }
 static_assert(ctxCntl(1)==0x1689u && ctxBaseLo(2)==0x16f7u && ctxStartLo(2)==0x1717u && ctxEndLo(7)+1u==0x1742u,
               "context register strides (gfxhub_v3_0 ctx_distance 1, ctx_addr_distance 2)");
 constexpr uint32_t kInvReq17=0x16bcu, kInvAck17=0x16ceu, kDequeueRequest=0x1fc1u;
-constexpr uint32_t kDrainPipe=1u;                               // enum hqd_dequeue_request_type
+constexpr uint32_t kDrainPipe=1u;
+constexpr uint32_t kGbAddrConfig=0x13deu;                       // regGB_ADDR_CONFIG, read only                               // enum hqd_dequeue_request_type
 // gfxhub_v3_0_get_invalidate_req(vmid, 0): PER_VMID bit, FLUSH_TYPE 0, L2 PTES/PDE0/1/2, L1 PTES.
 constexpr uint32_t invalidateReq(uint32_t vmid) { return (1u<<vmid)|(1u<<19)|(1u<<20)|(1u<<21)|(1u<<22)|(1u<<23); }
 static_assert(invalidateReq(2)==0x00f80004u,"GCVM_INVALIDATE_ENG0_REQ word");
 constexpr uint32_t kFaultVmidShift=20u, kFaultVmidMask=0xf00000u;
-// The queue buffer at kKernelVa, mec_queue's layout: EOP 0x1000, ring 0x2000 (GPU
-// read-only), RPTR/WPTR 0x3000/0x3008, fence 0x4000.
+// The queue buffer at kKernelVa, mec_queue's layout: page 0 unmapped, EOP 0x1000, ring
+// 0x2000 (GPU read-only), RPTR/WPTR 0x3000/0x3008, fence 0x4000.
 constexpr uint32_t kQueueBytes=0x5000u, kRingDwords=mq::kRingBytes/4u;
-constexpr uint32_t kSubmitMaxDwords=4u*kMaxIbs+8u+8u;          // IBs, fence, padding
+constexpr uint32_t kSubmitMaxDwords=4u*kMaxIbs+8u+8u+8u;       // IBs, user fence, fence, padding
 constexpr uint32_t kTlbTimeoutUs=100000u, kDequeueTimeoutMs=1000u;
 
 enum class Code : uint8_t {
@@ -69,6 +72,7 @@ struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
     uint64_t invReq=0, invAck=0, dequeue=0;
+    uint64_t gbAddrConfig=0;        // read only (QueryInfo)
     bool valid=false;
 };
 inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
@@ -84,7 +88,8 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         const uint32_t dws[7]={ctxCntl(k),ctxBaseLo(k),ctxBaseLo(k)+1u,ctxStartLo(k),ctxStartLo(k)+1u,ctxEndLo(k),ctxEndLo(k)+1u};
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
-    if(!one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) || !one(kDequeueRequest,r.dequeue))return r;
+    if(!one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) || !one(kDequeueRequest,r.dequeue) ||
+       !one(kGbAddrConfig,r.gbAddrConfig))return r;
     r.valid=true;return r;
 }
 // Writable registers: the GFXHUB words, contexts 2..7, invalidation engine 17's
@@ -172,7 +177,8 @@ public:
         tio_.dev=this;
         const gv::Io io{&tio_,zeroPage,putEntry};
         if(!zero(c.queue) || !zero(c.mqd) || c.space.init(*heap_,io)!=gv::Code::Ok ||
-           c.space.map(kKernelVa,q.offset,0x2000u,gv::kPteVram)!=gv::Code::Ok ||            // pad, EOP
+           c.space.map(kKernelVa+mq::kEopOff,q.offset+mq::kEopOff,0x1000u,
+                       gv::kPteValid|gv::kPteRead|gv::kPteWrite)!=gv::Code::Ok ||
            c.space.map(kKernelVa+mq::kRingOff,q.offset+mq::kRingOff,0x1000u,gv::kPteValid|gv::kPteRead)!=gv::Code::Ok ||
            c.space.map(kKernelVa+mq::kRptrOff,q.offset+mq::kRptrOff,0x2000u,
                        gv::kPteValid|gv::kPteRead|gv::kPteWrite)!=gv::Code::Ok) {
@@ -195,16 +201,17 @@ public:
         return loadQueue(c)==Code::Ok ? Code::Ok : fail(c,Code::HwFailed);
     }
     // A zeroed, CPU-visible VRAM buffer. Returns handle 1..kMaxBos.
-    Code boCreate(uint32_t slot,uint64_t bytes,uint32_t &handle,uint64_t &vram) {
+    Code boCreate(uint32_t slot,uint64_t bytes,uint32_t &handle,uint64_t &vram,uint64_t align=4096u) {
         Client *c=live(slot);
         if(!c)return Code::NotFound;
         if(c->state!=State::Open)return stateCode(*c);
-        if(!bytes || bytes>kMaxBoBytes)return Code::BadArgs;
+        if(!bytes || bytes>kMaxBoBytes || align>(2u<<20) || (align&(align-1u)))return Code::BadArgs;
+        if(align<4096u)align=4096u;
         bytes=(bytes+4095u)&~4095ull;
         uint32_t i=0;
         while(i<kMaxBos && c->bo[i].live)++i;
         if(i==kMaxBos)return Code::NoSlot;
-        const vh::Alloc a=heap_->alloc(bytes,4096u,vh::Place::Visible,kTagClient);
+        const vh::Alloc a=heap_->alloc(bytes,align,vh::Place::Visible,kTagClient);
         if(a.code!=vh::Code::Ok)return Code::NoMemory;
         c->bo[i]={a.h,a.offset,bytes,0,0,true};
         if(!zero(c->bo[i])){heap_->free(a.h);c->bo[i]=Bo{};return Code::HwFailed;}
@@ -270,8 +277,10 @@ public:
         vram=b->vram;bytes=b->bytes;return true;
     }
     struct Ib { uint64_t va=0; uint32_t dwords=0; };
-    // Append the IBs and a fence to the client's ring and kick the queue.
-    Code submit(uint32_t slot,const Ib *ibs,uint32_t n,uint64_t &seq) {
+    // Append the IBs and a fence to the client's ring and kick the queue. userFence
+    // (optional, 8-byte aligned, inside a writeable mapping) also receives the 64-bit
+    // sequence number, as amdgpu's cs_chunk_fence.
+    Code submit(uint32_t slot,const Ib *ibs,uint32_t n,uint64_t &seq,uint64_t userFence=0) {
         Client *c=live(slot);
         if(!c)return Code::NotFound;
         if(c->state!=State::Open)return stateCode(*c);
@@ -279,6 +288,7 @@ public:
         for(uint32_t i=0;i<n;++i)
             if(!ibs[i].dwords || ibs[i].dwords>=(1u<<20) || (ibs[i].va&3u) ||
                !mapped(*c,ibs[i].va,4ull*ibs[i].dwords,gv::kPteRead))return Code::BadArgs;
+        if(userFence && ((userFence&7u) || !mapped(*c,userFence,8u,gv::kPteWrite)))return Code::BadArgs;
         poll(*c);
         if(c->state!=State::Open)return stateCode(*c);
         if(c->emitted-c->retired>=63u || c->wptr+kSubmitMaxDwords-retiredWptr(*c)>kRingDwords)return Code::Busy;
@@ -289,6 +299,12 @@ public:
             p[k++]=kIbValid|ibs[i].dwords|(c->vmid<<24);
         }
         const uint64_t s=c->emitted+1u, fence=kKernelVa+mq::kFenceOff;
+        if(userFence) {     // RELEASE_MEM DATA_SEL 2: the 64-bit sequence number
+            const uint32_t u[8]={gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,2u<<29,
+                                 static_cast<uint32_t>(userFence),static_cast<uint32_t>(userFence>>32),
+                                 static_cast<uint32_t>(s),static_cast<uint32_t>(s>>32),0u};
+            for(uint32_t v:u)p[k++]=v;
+        }
         const uint32_t rel[8]={gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,
                                static_cast<uint32_t>(fence),static_cast<uint32_t>(fence>>32),static_cast<uint32_t>(s),0u,0u};
         for(uint32_t v:rel)p[k++]=v;
@@ -343,6 +359,18 @@ public:
         return false;
     }
     const Client *client(uint32_t slot) const { return slot<kClients ? &c_[slot] : nullptr; }
+    // Refresh and report a client's sequence numbers (for WaitSeq / QueryInfo).
+    bool sequences(uint32_t slot,uint64_t &emitted,uint64_t &retired) {
+        Client *c=live(slot);
+        if(!c)return false;
+        poll(*c);emitted=c->emitted;retired=c->retired;return true;
+    }
+    // The GPU VA and size a buffer is mapped at (0 if unmapped).
+    bool boMapping(uint32_t slot,uint32_t handle,uint64_t &va,uint64_t &bytes) {
+        Client *c=live(slot);Bo *b=c ? bo(*c,handle) : nullptr;
+        if(!b)return false;
+        va=b->va;bytes=b->bytes;return true;
+    }
     Stats stats() const {
         Stats s{};
         for(const Client &c:c_) {

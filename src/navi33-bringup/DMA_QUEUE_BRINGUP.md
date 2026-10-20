@@ -1088,3 +1088,27 @@ The first path where a user program, not the kext, decides what the GPU runs.
   ring, Busy under a paused queue, remap/free only safe with the TLB flush (the fake TLB keeps
   translations until engine 17 flushes them), fault isolation, drain/dequeue teardown,
   quarantine on a stuck queue or a missing ACK, the CPU-mapped retire rule. Ten mutants caught.
+
+## Phase B4 step 2: the N48N front end for RADV (kext 0.0.30)
+
+RADV's Darwin backend (`mesa-patches/0002`, speaking the Navi48 "N48N" ABI) can now reach
+the RX 7600: Navi33Probe accepts user-client type `'N48N'` (root, `navi33-client-gpu=1`) and
+answers selectors 0..8 with the v1.0 structs, copied byte for byte into
+`src/Navi33N48nAbi.h` (no shared Navi48 source; layout asserts on every offset Mesa uses).
+`src/Navi33N48nFront.h` (pure, tested in `tests/test_client_gpu.cpp` section 7 on the same
+fake GC) translates onto the client core:
+
+- HELLO opens the client's context (VMID, queue); QUERYINFO reports gfx 11.0.2, the live
+  GB_ADDR_CONFIG, the BAR0 pool minus the pinned ranges, VA 0x10000..0x7FFF_FFFF_FFFF.
+- BOCREATE: VRAM and GTT domains both placed in CPU-visible VRAM (reported as VRAM),
+  alignment up to 2 MiB, refused flags as amdgpu's (MQD, encrypted, preemptible).
+- GEMVA: whole-buffer map/unmap (RADV's use), R/W/X; PRT and partial maps refused.
+- CTX: up to 64 ids per connection, QUERY_STATE2 reports reset/guilty after a fault.
+- SUBMIT: up to 16 IBs; `ip_type` COMPUTE runs on the client's compute queue; GFX answers
+  Unsupported until the graphics ring exists; the fence chunk becomes a second RELEASE_MEM
+  writing the 64-bit sequence into the user's buffer.
+- WAITSEQ: sleeps in 1 ms slices with the provider lock dropped. READREGS: GB_ADDR_CONFIG only.
+- `tools/n33n48n.cpp` replays exactly those calls on the card (run by `vm/client-gpu.sh`).
+
+Still missing for RADV to run: a gfx1102 device table in Mesa (patch 0001 cans gfx1201),
+the GFX ring (PFP/ME) for graphics, and real system-memory (GTT) buffers.

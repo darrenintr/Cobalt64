@@ -123,7 +123,9 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      GFXHUB words (G38's, or recognised), contexts 2..7, SH_MEM under VMID k, the queue-k HQD,
      invalidation engine 17, CP_HQD_DEQUEUE_REQUEST, the poll trigger, and CPU writes only
      inside the kernel heap's live blocks. Not a one-shot stage: a service, usable with
-     `--autostart`. Not acceleration (rule 6 unchanged).
+     `--autostart`. Not acceleration (rule 6 unchanged). Kext 0.0.30 adds the N48N user
+     client (type 'N48N', RADV's Darwin ABI, selectors 0..8, compute IBs only) on the same
+     contexts and gate.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -1976,7 +1978,8 @@ parser got two of them wrong:
   jobs green; the host-test failure was the glibc one-argument assert, fixed next commit), UUID
   `C77872A1-4C8E-35F0-AC46-9525F7F3358E`, cached `artifact-0.0.29`). The permission check
   blocked the agent from starting either VM run even after the user's "please do it for me";
-  the user runs them with `!`: `vm/client-gpu.sh` (B4, uses --autostart) or `vm/stage.sh vma
+  the user runs them with `!`: `vm/client-gpu.sh` (B4, uses --autostart; kext 0.0.30 adds
+  `n33n48n`, the N48N/RADV path, and CPU-mapping revocation; uses `artifact-0.0.30`) or `vm/stage.sh vma
   "--vm-gradient" "--vm-alloc-plan --fw gradient.co" "--vm-alloc --fw gradient.co"` (G39, needs
   an untouched GFXHUB: one of G36/G38/G39/B4 per power cycle, since B4 also sets the hub).
 

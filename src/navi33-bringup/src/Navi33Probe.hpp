@@ -10,6 +10,7 @@
 #include "Navi33ProductionOwner.h"
 #include "Navi33Gmc11Vm.h"
 #include "Navi33DarwinClientGpu.h"
+#include "Navi33N48nFront.h"
 #include <IOKit/IOLib.h>
 
 namespace navi33 { namespace darwin_owner { struct ProbeReport; } }
@@ -71,6 +72,12 @@ public:
     IOMemoryDescriptor *gpuBoMemory(const void *client,uint32_t handle);
     // The user client removed and unmapped every CPU mapping of handle (0: all).
     void gpuCpuUnmapped(const void *client,uint32_t handle);
+    // The N48N front end (Navi33N48nClient): bind the session to its context, then one
+    // selector under pspLock_ (WAITSEQ sleeps with the lock dropped).
+    IOReturn n48nAttach(const void *client,navi33::n48n_front::Session &s);
+    IOReturn n48nCall(const void *client,navi33::n48n_front::Session &s,uint32_t selector,
+                      IOExternalMethodArguments *args);
+    uint32_t kextBuild() const;
 
 private:
     static void autostartThunk(thread_call_param_t self,thread_call_param_t);

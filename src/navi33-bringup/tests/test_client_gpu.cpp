@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "../src/Navi33ClientGpu.h"
+#include "../src/Navi33N48nFront.h"
 #include "rx7600_ipd_fixture.h"
 #include <cassert>
 #include <cstdio>
@@ -42,8 +43,8 @@ struct Fake {
              {r.invReq,0},{r.invAck,0}};
         for(auto o:v.ident)mem[o]=0;
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
-        assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,1)==vh::Code::Ok &&
-               heap.reserve(240ull<<20,16ull<<20,2)==vh::Code::Ok);
+        assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
+               heap.reserve(240ull<<20,16ull<<20,0x53544753u)==vh::Code::Ok);
     }
     uint32_t get(uint64_t off){auto i=vram.find(off);return i==vram.end() ? 0u : i->second;}
     uint64_t q(uint64_t off){return get(off)|(uint64_t(get(off+4))<<32);}
@@ -107,7 +108,10 @@ struct Fake {
                         if(x<w && y<hh)wr(k,px+4ull*(y*pitch+x),gfx11_shader::gradientPixel(x,y,w,hh,fr));
                 }
                 masks=0;
-            } else if(op==gd::kReleaseMem) wr(k,b[2]|(uint64_t(b[3])<<32),b[4]);
+            } else if(op==gd::kReleaseMem) {
+                const uint64_t to=b[2]|(uint64_t(b[3])<<32);wr(k,to,b[4]);
+                if((b[1]>>29)==2u)wr(k,to+4u,b[5]);
+            }
             else assert(!"unexpected packet");
             i+=1u+n;
         }
@@ -212,7 +216,8 @@ int main() {
     auto b=rx7600_fixture::blob();IPDiscovery d;assert(d.parse(b.data(),b.size()));
     const auto r=cg::resolve(d,rx7600_fixture::kBar5);
     assert(r.valid && r.invReq==(0x1260u+0x16bcu)*4u && r.invAck==(0x1260u+0x16ceu)*4u && r.dequeue==(0x1260u+0x1fc1u)*4u);
-    assert(r.ctx[0][0]==(0x1260u+0x168au)*4u && r.ctx[5][6]==(0x1260u+0x1742u)*4u);
+    assert(r.ctx[0][0]==(0x1260u+0x168au)*4u && r.ctx[5][6]==(0x1260u+0x1742u)*4u && r.gbAddrConfig==0x263eu*4u);
+    assert(!cg::allowed(r,r.gbAddrConfig));
     // Never context 0/1, SCRATCH, the MEC controls or the fault registers.
     for(uint64_t o:{r.g.v.ctx,r.g.v.baseLo,r.g.v.endHi,r.g.v.q.scratch,r.g.v.q.cntl,r.g.v.q.pc,r.g.v.faultStatus,r.invAck})
         assert(!cg::allowed(r,o));
@@ -328,6 +333,24 @@ int main() {
         assert(f.dev.close(a.slot)==cg::Code::Quarantined && f.heap.usedBytes(cg::kTagClient)==used);
         assert((f.bank[{mq::grbmSelect(1,0,2),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]==1u));   // never dequeued under work
     }
+    // 3f. The user fence (cs_chunk_fence): the 64-bit sequence lands in the user's buffer;
+    //     a fence outside a writeable mapping is refused; a GPU null pointer faults.
+    {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        App a=setup(f,co,k,7,0x7ffff0000000ull);uint64_t s=0,ret=0,va=0,bytes=0;
+        const cg::Device::Ib ia{0x7ffff0030000ull,ibDwords(k)};
+        assert(f.dev.boMapping(a.slot,a.args,va,bytes) && va==0x7ffff0010000ull);
+        for(int i=0;i<3;++i)assert(f.dev.submit(a.slot,&ia,1,s,va+0x800u)==cg::Code::Ok);
+        assert(f.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok && s==3u);
+        uint64_t base=0;assert(f.dev.boRange(a.slot,a.args,base,bytes) && f.q(base+0x800u)==3u);
+        assert(f.dev.submit(a.slot,&ia,1,s,va+0x804u)==cg::Code::BadArgs);                  // alignment
+        assert(f.dev.submit(a.slot,&ia,1,s,0x7ffff0030000ull)==cg::Code::BadArgs);           // read-only IB buffer
+        uint64_t em=0,re=0;assert(f.dev.sequences(a.slot,em,re) && em==3u && re==3u);
+        uint32_t nul=0;uint64_t vn=0;
+        assert(f.dev.boCreate(a.slot,4096,nul,vn)==cg::Code::Ok && f.dev.vaMap(a.slot,nul,0x10000,false,false)==cg::Code::Ok);
+        f.put(a.slot,nul,0,{gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,0u,0u,1u,0u,0u});
+        const cg::Device::Ib in{0x10000,8};
+        assert(f.dev.submit(a.slot,&in,1,s)==cg::Code::Ok && f.dev.wait(a.slot,s,1000,ret)==cg::Code::Faulted);
+    }
     // 4. A fault in the client's VMID ends that client (not the others); it can still be torn down.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
         App good=setup(f,co,k,5,0x100000000ull);
@@ -365,7 +388,7 @@ int main() {
         uint32_t slot=0,x=0;uint64_t vx=0;assert(f.dev.open(&f,slot)==cg::Code::Ok);
         assert(f.dev.boCreate(slot,0,x,vx)==cg::Code::BadArgs && f.dev.boCreate(slot,(64ull<<20)+1,x,vx)==cg::Code::BadArgs);
         assert(f.dev.boCreate(slot,5000,x,vx)==cg::Code::Ok);
-        for(uint64_t va:std::vector<uint64_t>{0x0ull,0x1000ull,0x500001ull,cg::kUserVaMax,cg::kKernelVa})assert(f.dev.vaMap(slot,x,va,true,false)==cg::Code::BadArgs);
+        for(uint64_t va:std::vector<uint64_t>{0x0ull,0x1000ull,0x500001ull,cg::kUserVaMax,0xf000ull,cg::kUserVaMax-4096u})assert(f.dev.vaMap(slot,x,va,true,false)==cg::Code::BadArgs);
         assert(f.dev.vaMap(slot,x,0x500000,true,false)==cg::Code::Ok && f.dev.vaMap(slot,x,0x900000,true,false)==cg::Code::BadArgs);
         uint32_t y=0;assert(f.dev.boCreate(slot,4096,y,vx)==cg::Code::Ok && f.dev.vaMap(slot,y,0x501000,true,false)==cg::Code::BadArgs);
         uint64_t s=0;const cg::Device::Ib ib{0x500000,0};assert(f.dev.submit(slot,&ib,1,s)==cg::Code::BadArgs);
@@ -379,6 +402,86 @@ int main() {
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
         assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.empty());
+    }
+    // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.
+    {   namespace nf=n48n_front;
+        Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        nf::Session ss{};
+        uint64_t o4[4]={0,0,0,0};
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_VRAM,0},o4)==nf::R::NotReady);
+        assert(f.dev.open(&ss,ss.slot)==cg::Code::Ok);ss.open=true;
+        n48n_info inf{};nf::info(f.dev,ss,f.heap,0x26010042u,29u,inf);
+        assert(inf.abi_version==1u && inf.vmid==2u && inf.gc_version==0x0b0002u && inf.gb_addr_config==0x26010042u);
+        assert(inf.va_low_first==0x10000u && inf.va_low_last==0x7fffffffffffull && inf.max_ibs==16u && inf.ring_size_dw==1024u);
+        assert(inf.vram_vis_total==(256ull-32ull)<<20 && inf.vram_vis_free<inf.vram_vis_total && inf.gtt_cap>0u && !inf.flags);
+        // Buffers: GTT is served from BAR0 VRAM; refused flags and domains.
+        uint64_t sh[4],ag[4],im[4],ib[4],fe[4];
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{gr::kShaderMax,0x10000,N48N_GEM_DOMAIN_VRAM,N48N_GEM_CPU_ACCESS_REQUIRED},sh)==nf::R::Ok);
+        assert(sh[2]==N48N_GEM_DOMAIN_VRAM && (sh[3]&N48N_PLACED_CPU_MAPPABLE));
+        uint64_t vr=0,by=0;assert(f.dev.boRange(ss.slot,uint32_t(sh[0]),vr,by) && !(vr&0xffffu));   // alignment kept
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_GTT,N48N_GEM_CPU_GTT_USWC},ag)==nf::R::Ok);
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{gr::kImageBytes,0,N48N_GEM_DOMAIN_VRAM|N48N_GEM_DOMAIN_GTT,0},im)==nf::R::Ok);
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_GTT,0},ib)==nf::R::Ok);
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_GTT,0},fe)==nf::R::Ok);
+        uint64_t x[4];
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_VRAM,N48N_GEM_CP_MQD_GFX9},x)==nf::R::BadArgument);
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,0,N48N_GEM_DOMAIN_CPU,0},x)==nf::R::BadArgument);
+        assert(nf::boCreate(f.dev,ss,n48n_gem_create_in{4096,3,N48N_GEM_DOMAIN_VRAM,0},x)==nf::R::BadArgument);
+        // GEM VA, as RADV maps: whole buffers at its own VAs.
+        auto va=[&](uint64_t h,uint64_t addr,uint32_t flags,uint32_t op=N48N_VA_OP_MAP,uint64_t size=0,uint64_t off=0){
+            n48n_gem_va g{};g.handle=uint32_t(h);g.operation=op;g.flags=flags;g.va_address=addr;g.map_size=size;g.offset_in_bo=off;
+            return nf::gemVa(f.dev,ss,g);
+        };
+        const uint32_t RW=N48N_VM_PAGE_READABLE|N48N_VM_PAGE_WRITEABLE, RX=N48N_VM_PAGE_READABLE|N48N_VM_PAGE_EXECUTABLE;
+        assert(va(sh[0],0x800000000ull,RX,N48N_VA_OP_MAP,gr::kShaderMax)==nf::R::Ok);
+        assert(va(ag[0],0x800100000ull,RW)==nf::R::Ok && va(im[0],0x800200000ull,RW)==nf::R::Ok);
+        assert(va(ib[0],0x800300000ull,N48N_VM_PAGE_READABLE)==nf::R::Ok && va(fe[0],0x800400000ull,RW)==nf::R::Ok);
+        assert(va(x[0],0x800500000ull,RW)==nf::R::NotFound);
+        assert(va(ib[0],0x800600000ull,RW,N48N_VA_OP_MAP,0,4096)==nf::R::BadArgument);              // offset in BO
+        assert(va(im[0],0x800600000ull,RW|N48N_VM_PAGE_PRT)==nf::R::Unsupported);
+        assert(va(im[0],0x800600000ull,RW,3u)==nf::R::Unsupported);
+        assert(va(ib[0],0x800999000ull,0,N48N_VA_OP_UNMAP)==nf::R::BadArgument);                     // wrong VA
+        {   n48n_gem_va g{};g.handle=uint32_t(ib[0]);g.operation=N48N_VA_OP_MAP;g.va_address=0x800700000ull;g.vm_timeline_point=1;
+            assert(nf::gemVa(f.dev,ss,g)==nf::R::BadArgument);}
+        // Contexts.
+        n48n_ctx c1{},c2{},q{};
+        assert(nf::ctx(f.dev,ss,n48n_ctx{N48N_CTX_OP_ALLOC,0,0,0},c1)==nf::R::Ok && c1.op==1u);
+        assert(nf::ctx(f.dev,ss,n48n_ctx{N48N_CTX_OP_ALLOC,0,0,0},c2)==nf::R::Ok && c2.op==2u);
+        assert(nf::ctx(f.dev,ss,n48n_ctx{N48N_CTX_OP_QUERY_STATE2,0,1,0},q)==nf::R::Ok && q.op==0u);
+        assert(nf::ctx(f.dev,ss,n48n_ctx{N48N_CTX_OP_FREE,0,2,0},q)==nf::R::Ok && nf::ctx(f.dev,ss,n48n_ctx{N48N_CTX_OP_FREE,0,2,0},q)==nf::R::BadArgument);
+        // The gradient through CS: shader, args, a compute IB, a fence chunk.
+        std::vector<uint32_t> code(gr::kShaderMax/4u,0u);
+        for(uint64_t i=0;i<k.codeBytes;++i)code[i/4u]|=uint32_t(co[k.codeOffset+i])<<(8u*(i%4u));
+        f.put(ss.slot,uint32_t(sh[0]),0,code);
+        uint32_t argv[6];gr::args(argv,0x800200000ull,64,64,64,42);f.put(ss.slot,uint32_t(ag[0]),0,std::vector<uint32_t>(argv,argv+6));
+        const std::vector<uint32_t> pm4=gradientIb(k,0x800000000ull,0x800100000ull,64,64);
+        f.put(ss.slot,uint32_t(ib[0]),0,pm4);
+        n48n_cs_in h{N48N_ABI_VERSION,1,1,N48N_CS_HAS_FENCE,uint32_t(fe[0]),16,0};
+        n48n_cs_ib one{0,N48N_IB_FLAG_PREAMBLE,0x800300000ull,uint32_t(4u*pm4.size()),N48N_HW_IP_COMPUTE,0,0};
+        uint64_t seq=0,w[3];
+        assert(nf::submit(f.dev,ss,h,&one,seq)==nf::R::Ok && seq==1u);
+        assert(nf::waitOnce(f.dev,ss,seq,w)==nf::R::Ok && !w[0] && w[1]==1u && w[2]==1u);
+        assert(nf::waitOnce(f.dev,ss,N48N_SEQ_LAST,w)==nf::R::Ok && !w[0]);
+        App view{};view.slot=ss.slot;view.image=uint32_t(im[0]);assert(imageOk(f,view,42));
+        uint64_t fb=0;assert(f.dev.boRange(ss.slot,uint32_t(fe[0]),fb,by) && f.q(fb+16u)==1u);     // the user fence
+        // Refusals: graphics IBs (no GFX ring yet), unknown ctx, bad fence, bad IB flags.
+        n48n_cs_ib gfx=one;gfx.ip_type=N48N_HW_IP_GFX;
+        assert(nf::submit(f.dev,ss,h,&gfx,seq)==nf::R::Unsupported);
+        n48n_cs_in badCtx=h;badCtx.ctx_id=2;assert(nf::submit(f.dev,ss,badCtx,&one,seq)==nf::R::BadArgument);
+        n48n_cs_in badFence=h;badFence.fence_offset=4092;assert(nf::submit(f.dev,ss,badFence,&one,seq)==nf::R::BadArgument);
+        n48n_cs_in roFence=h;roFence.fence_handle=uint32_t(ib[0]);roFence.fence_offset=0;
+        assert(nf::submit(f.dev,ss,roFence,&one,seq)==nf::R::BadArgument);                         // read-only mapping
+        n48n_cs_ib ce=one;ce.flags=N48N_IB_FLAG_CE;assert(nf::submit(f.dev,ss,h,&ce,seq)==nf::R::BadArgument);
+        assert(nf::waitOnce(f.dev,ss,99,w)==nf::R::BadArgument);
+        uint32_t reg=0;
+        assert(nf::readRegs(0x263e,1,0x26010042u,&reg)==nf::R::Ok && reg==0x26010042u);
+        assert(nf::readRegs(0x263f,1,0,&reg)==nf::R::Unsupported && nf::readRegs(0x263e,2,0,&reg)==nf::R::Unsupported);
+        // A faulting session reports itself through QUERY_STATE2 and info.flags.
+        f.put(ss.slot,uint32_t(ib[0]),0,{gd::packet3(gd::kReleaseMem,6u),gd::kReleaseMemControl,gd::kReleaseMemDataSel32,0x0u,0x9u,1u,0u,0u});
+        n48n_cs_ib bad=one;bad.ib_bytes=32;
+        assert(nf::submit(f.dev,ss,h,&bad,seq)==nf::R::Ok && nf::waitOnce(f.dev,ss,seq,w)==nf::R::Aborted);
+        assert(nf::ctx(f.dev,ss,n48n_ctx{N48N_CTX_OP_QUERY_STATE2,0,1,0},q)==nf::R::Ok && (q.op&N48N_CTX_QUERY2_GUILTY));
+        nf::info(f.dev,ss,f.heap,0,29u,inf);assert(inf.flags&N48N_INFO_HUNG);
     }
     puts("Client GPU contexts: per-client VMID/queue/address space, user IBs through INDIRECT_BUFFER, fences, "
          "ring wrap and back-pressure, TLB flush on remap, fault isolation, drain/dequeue teardown, quarantine: passed");

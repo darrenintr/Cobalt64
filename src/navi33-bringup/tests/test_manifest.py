@@ -638,3 +638,17 @@ assert 'while (IOMemoryMap *map = removeMappingForDescriptor(gpuBoMd_[i]))' in n
 assert nclient.index('revokeCpuMappings(static_cast<uint32_t>(in[0]));') < nclient.index('return owner_->gpuBoFree(this, static_cast<uint32_t>(in[0]));')
 assert nclient.index('revokeCpuMappings(0u);') < nclient.index('owner_->gpuContext(this, N33_CTX_OP_CLOSE, nullptr);')
 print('Navi33 client GPU CPU mappings revoked before reuse: passed')
+
+# The N48N front end (RADV's Darwin backend): only with the client GPU gate, root only,
+# mappings revoked before BOFREE and close, HELLO opens the context.
+n48c=(root/'src/Navi33N48nClient.cpp').read_text()
+assert 'if (!probeOn || !clientOn || kill || !clientGpuGate_) return kIOReturnUnsupported;' in probe
+assert 'clientHasPrivilege(securityID, kIOClientPrivilegeAdministrator)' in n48c
+assert n48c.index('revokeCpuMappings(static_cast<uint32_t>(args->scalarInput[0]));') < n48c.index('r = owner_->n48nCall(this, session_, selector, args);')
+assert n48c.index('revokeCpuMappings(0u);') < n48c.index('owner_->gpuContext(this, N33_CTX_OP_CLOSE, nullptr);')
+assert 'Navi33N48nClient.o' in makefile
+front=(root/'src/Navi33N48nFront.h').read_text()
+assert 'if(b.ip_type==N48N_HW_IP_GFX)return R::Unsupported;' in front          # no graphics ring yet
+for forbidden in ('<IOKit/','IOLog(','WREG32('):
+    assert forbidden not in front
+print('Navi33 N48N front end: gate, root, revoke-before-free, compute only: passed')

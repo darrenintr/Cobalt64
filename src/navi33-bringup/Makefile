@@ -100,6 +100,10 @@ $(BUILD)/Navi33DarwinMes.o: src/Navi33DarwinMes.cpp src/Navi33Gfx11MesStart.h sr
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD)/Navi33N48nClient.o: src/Navi33N48nClient.cpp src/Navi33N48nClient.hpp src/Navi33N48nFront.h src/Navi33N48nAbi.h src/Navi33ClientGpu.h src/Navi33Probe.hpp
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD)/Navi33DarwinClientGpu.o: src/Navi33DarwinClientGpu.cpp src/Navi33DarwinClientGpu.h src/Navi33ClientGpu.h src/Navi33Gfx11VmAlloc.h src/Navi33Gmc11Vm.h src/Navi33VramHeap.h src/Navi33Gfx11VmGradient.h src/Navi33Gfx11Vmid.h src/Navi33Gfx11Gradient.h src/Navi33Gfx11MecQueue.h src/Navi33Gfx11Mqd.h src/Navi33Gfx11KiqHqd.h src/Navi33Psp13Loader.h src/Navi33DarwinPspLoad.h src/Navi33NativeABI.h src/Navi33HardwarePlan.h src/Navi33Discovery.h src/Navi33EmbeddedFirmware.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -128,9 +132,9 @@ $(BUILD)/kmod_info.o: src/kmod_info.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KEXT): $(BUILD)/Navi33DarwinClientGpu.o $(BUILD)/Navi33DarwinVmAlloc.o $(BUILD)/Navi33DarwinVmGradient.o $(BUILD)/Navi33DarwinVmid.o $(BUILD)/Navi33EmbeddedFirmware.o $(BUILD)/Navi33DarwinGradient.o $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o Info.plist
+$(KEXT): $(BUILD)/Navi33N48nClient.o $(BUILD)/Navi33DarwinClientGpu.o $(BUILD)/Navi33DarwinVmAlloc.o $(BUILD)/Navi33DarwinVmGradient.o $(BUILD)/Navi33DarwinVmid.o $(BUILD)/Navi33EmbeddedFirmware.o $(BUILD)/Navi33DarwinGradient.o $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o Info.plist
 	@mkdir -p $(KEXT)/Contents/MacOS
-	$(CXX) $(LDFLAGS) $(BUILD)/Navi33DarwinClientGpu.o $(BUILD)/Navi33DarwinVmAlloc.o $(BUILD)/Navi33DarwinVmGradient.o $(BUILD)/Navi33DarwinVmid.o $(BUILD)/Navi33EmbeddedFirmware.o $(BUILD)/Navi33DarwinGradient.o $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o -o $(EXEC)
+	$(CXX) $(LDFLAGS) $(BUILD)/Navi33N48nClient.o $(BUILD)/Navi33DarwinClientGpu.o $(BUILD)/Navi33DarwinVmAlloc.o $(BUILD)/Navi33DarwinVmGradient.o $(BUILD)/Navi33DarwinVmid.o $(BUILD)/Navi33EmbeddedFirmware.o $(BUILD)/Navi33DarwinGradient.o $(BUILD)/Navi33DarwinMecQueue.o $(BUILD)/Navi33DarwinMes.o $(BUILD)/Navi33DarwinSmu.o $(BUILD)/Navi33Probe.o $(BUILD)/Navi33NativeClient.o $(BUILD)/Navi33DarwinDma.o $(BUILD)/Navi33DarwinStage.o $(BUILD)/Navi33DarwinPspLoad.o $(BUILD)/Navi33DarwinPspRing.o $(BUILD)/Navi33DarwinPspFw.o $(BUILD)/Navi33DarwinPciOwner.o $(BUILD)/kmod_info.o -o $(EXEC)
 	cp Info.plist $(KEXT)/Contents/Info.plist
 	xattr -cr $(KEXT)
 	codesign --force --sign - $(KEXT)
@@ -409,7 +413,7 @@ $(BUILD)/test-gfx11-vm-alloc: tests/test_gfx11_vm_alloc.cpp src/Navi33Gfx11VmAll
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 
-$(BUILD)/test-client-gpu: tests/test_client_gpu.cpp src/Navi33ClientGpu.h src/Navi33Gmc11Vm.h src/Navi33VramHeap.h src/Navi33Gfx11VmGradient.h src/Navi33Gfx11Vmid.h src/Navi33Gfx11Gradient.h src/Navi33Gfx11MecQueue.h src/Navi33NativeABI.h tests/rx7600_ipd_fixture.h
+$(BUILD)/test-client-gpu: tests/test_client_gpu.cpp src/Navi33N48nFront.h src/Navi33N48nAbi.h src/Navi33ClientGpu.h src/Navi33Gmc11Vm.h src/Navi33VramHeap.h src/Navi33Gfx11VmGradient.h src/Navi33Gfx11Vmid.h src/Navi33Gfx11Gradient.h src/Navi33Gfx11MecQueue.h src/Navi33NativeABI.h tests/rx7600_ipd_fixture.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 

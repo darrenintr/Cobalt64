@@ -4,6 +4,7 @@
 #include "Navi33Probe.hpp"
 #include "Navi33DarwinPspLoad.h"
 #include "Navi33NativeClient.hpp"
+#include "Navi33N48nClient.hpp"
 #include "Navi33NativePolicy.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOPlatformExpert.h>
@@ -38,6 +39,7 @@
 #include <libkern/c++/OSData.h>
 static bool bootArgOn(const char *name);
 #include <libkern/libkern.h>
+#include <libkern/OSKextLib.h>
 
 
 
@@ -1142,6 +1144,17 @@ IOReturn Navi33Probe::newUserClient(task_t owningTask, void *securityID,
                          &enabled, sizeof(enabled)) && enabled == 1u;
     const bool kill = PE_parse_boot_argn("navi33-client-off",
                          &off, sizeof(off)) && off != 0u;
+    // The N48N front end (RADV's Darwin backend): only with the client GPU gate.
+    if (type == N48N_UC_TYPE) {
+        if (!probeOn || !clientOn || kill || !clientGpuGate_) return kIOReturnUnsupported;
+        auto *n48n = OSTypeAlloc(Navi33N48nClient);
+        if (!n48n) return kIOReturnNoMemory;
+        if (!n48n->initWithTask(owningTask, securityID, type, properties)) { n48n->release(); return kIOReturnNotPrivileged; }
+        if (!n48n->attach(this)) { n48n->release(); return kIOReturnInternalError; }
+        if (!n48n->start(this)) { n48n->detach(this); n48n->release(); return kIOReturnInternalError; }
+        *handler = n48n;
+        return kIOReturnSuccess;
+    }
     if (navi33::native_policy::openAllowed(type, probeOn, clientOn, kill, true)
             != navi33::native_policy::Access::Allow)
         return kIOReturnUnsupported;
@@ -1286,5 +1299,107 @@ void Navi33Probe::gpuCpuUnmapped(const void *client,uint32_t handle) {
     IOLockLock(pspLock_);
     if(gpuHost_.dev.slotOf(client,slot))gpuHost_.dev.clearCpuMapped(slot,handle);
     IOLockUnlock(pspLock_);
+}
+IOReturn Navi33Probe::n48nAttach(const void *client,navi33::n48n_front::Session &s) {
+    if(!clientGpuGate_ || !pspLock_)return kIOReturnUnsupported;
+    IOLockLock(pspLock_);
+    s.open=gpuHost_.dev.slotOf(client,s.slot);
+    IOLockUnlock(pspLock_);
+    return s.open ? kIOReturnSuccess : kIOReturnNotReady;
+}
+uint32_t Navi33Probe::kextBuild() const {
+    // CFBundleVersion 0.0.N -> N, as the results files name the build.
+    const char *v=OSKextGetCurrentVersionString();
+    uint32_t n=0u;
+    for(;v && *v;++v)n=(*v>='0' && *v<='9') ? n*10u+uint32_t(*v-'0') : 0u;   // the last number
+    return n;
+}
+namespace {
+IOReturn n48nReturn(navi33::n48n_front::R r) {
+    using R=navi33::n48n_front::R;
+    switch(r) {
+    case R::Ok: return kIOReturnSuccess;
+    case R::BadArgument: return kIOReturnBadArgument;
+    case R::Unsupported: return kIOReturnUnsupported;
+    case R::NoMemory: return kIOReturnNoMemory;
+    case R::NotReady: return kIOReturnNotReady;
+    case R::Busy: return kIOReturnBusy;
+    case R::Timeout: return kIOReturnTimeout;
+    case R::NotFound: return kIOReturnNotFound;
+    case R::NoResources: return kIOReturnNoResources;
+    default: return kIOReturnAborted;
+    }
+}
+}
+IOReturn Navi33Probe::n48nCall(const void *client,navi33::n48n_front::Session &s,uint32_t selector,
+                               IOExternalMethodArguments *a) {
+    namespace nf=navi33::n48n_front;
+    if(!clientGpuGate_ || !pspLock_)return kIOReturnUnsupported;
+    IOLockLock(pspLock_);
+    uint32_t slot=0;
+    if(!s.open || !gpuHost_.dev.slotOf(client,slot) || slot!=s.slot){IOLockUnlock(pspLock_);return kIOReturnNotReady;}
+    navi33::client_gpu::Device &d=gpuHost_.dev;
+    uint32_t gb=0;
+    const bool gbOk=gpuHost_.regs && navi33::darwin_client::hw(gpuHost_).read(&gpuHost_,gpuHost_.r.gbAddrConfig,&gb);
+    nf::R r=nf::R::BadArgument;
+    switch(selector) {
+    case N48N_SEL_QUERYINFO: {
+        n48n_info info{};nf::info(d,s,vramHeap_,gbOk ? gb : 0u,kextBuild(),info);
+        bcopy(&info,a->structureOutput,sizeof(info));a->structureOutputSize=sizeof(info);r=nf::R::Ok;
+        break;
+    }
+    case N48N_SEL_READREGS: {
+        const uint64_t *in=a->scalarInput;
+        if(in[0]>0xffffffffull || in[1]!=a->structureOutputSize/4u || in[1]>16u)break;
+        r=gbOk ? nf::readRegs(static_cast<uint32_t>(in[0]),static_cast<uint32_t>(in[1]),gb,
+                              static_cast<uint32_t *>(a->structureOutput)) : nf::R::NotReady;
+        break;
+    }
+    case N48N_SEL_BOCREATE: {
+        n48n_gem_create_in in{};bcopy(a->structureInput,&in,sizeof(in));
+        r=nf::boCreate(d,s,in,a->scalarOutput);
+        break;
+    }
+    case N48N_SEL_BOFREE:
+        r=nf::from(d.boFree(s.slot,static_cast<uint32_t>(a->scalarInput[0])));
+        break;
+    case N48N_SEL_GEMVA: {
+        n48n_gem_va in{};bcopy(a->structureInput,&in,sizeof(in));
+        r=nf::gemVa(d,s,in);
+        break;
+    }
+    case N48N_SEL_CTX: {
+        n48n_ctx in{},out{};bcopy(a->structureInput,&in,sizeof(in));
+        r=nf::ctx(d,s,in,out);
+        if(r==nf::R::Ok){bcopy(&out,a->structureOutput,sizeof(out));a->structureOutputSize=sizeof(out);}
+        break;
+    }
+    case N48N_SEL_SUBMIT: {
+        n48n_cs_in h{};bcopy(a->structureInput,&h,sizeof(h));
+        const uint32_t n=static_cast<uint32_t>((a->structureInputSize-sizeof(h))/sizeof(n48n_cs_ib));
+        n48n_cs_ib ibs[navi33::client_gpu::kMaxIbs];
+        if(h.num_ibs!=n)break;
+        bcopy(static_cast<const uint8_t *>(a->structureInput)+sizeof(h),ibs,n*sizeof(n48n_cs_ib));
+        uint64_t seq=0;
+        r=nf::submit(d,s,h,ibs,seq);
+        if(r==nf::R::Ok)a->scalarOutput[0]=seq;
+        break;
+    }
+    case N48N_SEL_WAITSEQ: {
+        const uint64_t seq=a->scalarInput[0], timeoutNs=a->scalarInput[1];
+        if(timeoutNs>N48N_WAIT_CAP_NS)break;
+        // Short slices with the lock dropped, so other clients keep going.
+        for(uint64_t spent=0;;spent+=1000000u) {
+            r=nf::waitOnce(d,s,seq,a->scalarOutput);
+            if(r!=nf::R::Ok || !a->scalarOutput[0] || spent>=timeoutNs)break;
+            IOLockUnlock(pspLock_);IOSleep(1);IOLockLock(pspLock_);
+            if(!gpuHost_.dev.slotOf(client,slot) || slot!=s.slot){IOLockUnlock(pspLock_);return kIOReturnNotReady;}
+        }
+        break;
+    }
+    default: r=nf::R::Unsupported;
+    }
+    IOLockUnlock(pspLock_);
+    return n48nReturn(r);
 }
 #undef N33_GPU_SLOT

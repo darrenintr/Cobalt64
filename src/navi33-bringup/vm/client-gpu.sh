@@ -3,11 +3,12 @@
 # navi33-client-gpu=1 (plus --autostart unless NO_AUTOSTART=1: a fresh card is
 # brought up at boot, an already-up card is refused by the autostart with zero
 # writes and simply stays up), boots the VM, copies the tools, runs n33gpu (a user
-# program on its own GPU context) twice, saves everything and shuts down.
+# program on its own GPU context) twice and n33n48n (the same through the N48N ABI
+# RADV uses), saves everything and shuts down.
 # ARTIFACT=DIR overrides the cached kext artifact. The user runs it with `!`.
 set -euo pipefail
 VM="/home/darren/macos tahoe"; N="$VM/navi33"
-ART="${ARTIFACT:-$N/cache/artifact-0.0.29}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
+ART="${ARTIFACT:-$N/cache/artifact-0.0.30}"; OC="$N/cache/OpenCore-1.0.8-RELEASE"
 V=/home/darren/Cobalt64/src/navi33-bringup/vm
 GATES="--client-gpu"; [ "${NO_AUTOSTART:-0}" = 1 ] || GATES="--autostart --client-gpu"
 pgrep -f "^qemu-system-x86_64" >/dev/null && { echo "a VM is already running" >&2; exit 1; }
@@ -22,7 +23,7 @@ for i in $(seq 1 60); do
 done
 "$V/guest-run.sh" "$ART" > "$R/guest-run-before.txt" 2>&1 || true
 ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|VramHeap)"' > "$R/client-ioreg-before.txt" 2>&1 || true
-ssh macos-vm 'cd ~/navi33 && sudo ./n33gpu --fw gradient.co --frame 11 && sudo ./n33gpu --fw gradient.co --frame 200 --repeat 200' \
+ssh macos-vm 'cd ~/navi33 && sudo ./n33gpu --fw gradient.co --frame 11 && sudo ./n33gpu --fw gradient.co --frame 200 --repeat 200 && sudo ./n33n48n --fw gradient.co' \
   > "$R/client-gpu.txt" 2>&1 || true
 cat "$R/client-gpu.txt"
 ssh macos-vm 'ioreg -l -w0 -c Navi33Probe | grep -E "Navi33,(Autostart|ClientGpu|VramHeap)"; sudo dmesg | grep -E "Navi33Probe: client GPU" | tail -8' \

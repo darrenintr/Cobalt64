@@ -56,7 +56,7 @@ enum n33_selector {
 #define N33_VM_OP_UNMAP 2u
 #define N33_CTX_OP_OPEN 1u
 #define N33_CTX_OP_CLOSE 2u
-#define N33_SUBMIT_MAX_IBS 4u
+#define N33_SUBMIT_MAX_IBS 4u      /* N33N's scalar form; the core takes up to 16 (N48N) */
 #define N33_WAIT_MAX_US 2000000u
 #define N33_GPU_OK 0u
 #define N33_GPU_TIMEOUT 1u

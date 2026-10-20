@@ -13,7 +13,7 @@
 #include <stdint.h>
 namespace navi33 { namespace vram_heap {
 constexpr uint64_t kPage=4096u;
-constexpr size_t kMaxBlocks=1024u;
+constexpr size_t kMaxBlocks=4096u;
 // Free extents are separated by live blocks, so there are at most live + 1 of
 // them: with this capacity carve() and insert() can never run out of room.
 constexpr size_t kMaxExtents=kMaxBlocks+1u;
