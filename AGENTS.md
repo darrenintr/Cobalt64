@@ -139,6 +139,12 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      and clears them at start if found set (they kept the hub L2 busy, findings 13:58); TLBs are
      flushed per VMID with engine 17 (MMIO REQ, wait for ACK, fail closed) at open and unmap.
      (0.0.42..0.0.46 tried engine ranges, CP flushes on engines 7..12, and L2_CNTL2 alone.)
+     Since 0.0.49 (G40) service start also brings up the **gfx pipe**: CP_ME_CNTL (PFP/ME halt,
+     pipe resets), CP_PFP/ME_PRGRM_CNTR_START(_HI) per gfx pipe (GRBM select ME 0 pipe 0/1),
+     CP_RB_WPTR_DELAY, CP_RB_VMID, CP_RB0_CNTL/WPTR(_HI)/RPTR_ADDR(_HI)/BASE(_HI), CP_RB_WPTR_POLL_ADDR,
+     CP_RB_ACTIVE, CP_RB_DOORBELL_CONTROL (DOORBELL_EN cleared), CP_MAX_CONTEXT, CP_DEVICE_ID, and
+     RB0 in a 20 KiB kernel heap buffer ('GFXR', VMID 0): upstream's clear-state preamble and a
+     RELEASE_MEM ring test. Report in ioreg `Navi33,ClientGfx`; a failure leaves compute running.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing

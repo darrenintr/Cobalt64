@@ -1228,6 +1228,13 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
              st.db.pqBefore,st.db.pq,st.db.reclaimed,st.miss.misses,st.miss.vmid,st.miss.req,st.miss.reqBack,st.miss.ack,
              st.l2.cntl2Before,st.l2.cntl2,st.l2.statusBefore,st.l2.status);
     setProperty("Navi33,ClientGpu",line);
+    {   // G40: the kernel's gfx ring (state 7 = ring test fence landed)
+        char gl[192];
+        snprintf(gl,sizeof(gl),"state %u CP_ME_CNTL %x->%x CP_STAT %x RB0 MC %llx WPTR %x RPTR %x fence %x",
+                 static_cast<unsigned>(st.gfx.state),st.gfx.meBefore,st.gfx.me,st.gfx.stat,
+                 static_cast<unsigned long long>(st.gfx.ringMc),st.gfx.wptr,st.gfx.rptr,st.gfx.fence);
+        setProperty("Navi33,ClientGfx",gl);
+    }
     // Every client-capable HQD, at service start and now (diagnostics, reads only).
     {   char hq[16+cg::Device::kHqdDumpCount*9u];uint32_t w[cg::Device::kHqdDumpCount];char key[48];
         for(uint32_t i=1;i<cg::Device::kHqdDumpQueues;++i)for(int now=0;now<2;++now) {

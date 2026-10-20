@@ -22,6 +22,10 @@ namespace mq=mec_queue;
 namespace gd=gfx11_dispatch;
 namespace kiq=gfx11_kiq;
 constexpr uint64_t kFb=0x8000000000ull;
+// G40's register writes on a fresh pipe: PFP counters (pipe 0 is select 0, already current: 2; pipe 1:
+// select + 2), select 0, reset and release; the same for ME; RB0 (9, then 5 after the delay, with the
+// doorbell control); MAX_CONTEXT, DEVICE_ID, unhalt; WPTR lo/hi.
+constexpr size_t kGfxStartWrites=(2u+3u+1u+2u)*2u+9u+5u+3u+2u;
 // The HQD of the client with VMID k (queue 0/1 of MEC pipe 1..3).
 constexpr uint32_t qsOf(uint32_t k){return mq::grbmSelect(1,cg::pipeOf(k-cg::kFirstVmid),cg::queueOf(k-cg::kFirstVmid));}
 // A fake GC after the autostart: banked HQDs (GRBM select), contexts 2..7 that walk
@@ -48,6 +52,11 @@ struct Fake {
              {v.l2c4,v1::kL2Cntl4Default},{v.l2c5,v1::kL2Cntl5Default},{v.faultStatus,0},{v.faultAddr,0},
              {r.invReq,0x02f80000u},{r.invAck,0},{r.l2Status,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u}};
         for(auto o:v.ident)mem[o]=0;
+        const navi33::gfx_ring::Regs &g=r.gfx;
+        for(uint64_t o:{g.pfpStart,g.pfpStartHi,g.meStart,g.meStartHi,g.cpStat,g.maxContext,g.deviceId,g.wptrDelay,g.rbVmid,
+                        g.rb0Cntl,g.rb0Wptr,g.rb0WptrHi,g.rb0Rptr,g.rb0RptrAddr,g.rb0RptrAddrHi,g.wptrPollLo,g.wptrPollHi,
+                        g.rb0Base,g.rb0BaseHi,g.rbActive,g.rbDoorbellCntl})mem[o]=0;
+        mem[g.meCntl]=navi33::gfx_ring::kMeCntlDefault;
         for(auto &c:r.ctx){mem[c[0]]=v1::kCtxDefault;for(int j=1;j<7;++j)mem[c[j]]=0;}
         assert(heap.configure(8176ull<<20,256ull<<20)==vh::Code::Ok && heap.reserve(0,16ull<<20,0x424f4f54u)==vh::Code::Ok &&
                heap.reserve(240ull<<20,16ull<<20,0x53544753u)==vh::Code::Ok);
@@ -127,6 +136,27 @@ struct Fake {
             i+=1u+n;
         }
     }
+    // The gfx pipe (G40): runs RB0 in VMID 0 from its RPTR to the WPTR just written, once PFP/ME are
+    // unhalted, RB_ACTIVE is set and both pipes got their program counters.
+    unsigned gfxCsb=0, gfxPcs=0; bool gfxBroken=false;
+    void runGfx() {
+        namespace gr=navi33::gfx_ring;
+        const gr::Regs &g=r.gfx;
+        if(gfxBroken || (mem[g.meCntl]&(gr::kPfpHalt|gr::kMeHalt)) || !mem[g.rbActive] || gfxPcs<4u)return;
+        const uint64_t ring=((uint64_t(mem[g.rb0BaseHi])<<32)|mem[g.rb0Base])<<8;
+        assert(ring>=kFb && mem[g.rb0Cntl]==gr::kRb0CntlValue);
+        for(uint32_t i=mem[g.rb0Rptr];i<mem[g.rb0Wptr];) {
+            const uint32_t h=get(ring-kFb+4u*i);
+            if(h==mq::kNop){++i;continue;}
+            const uint32_t op=(h>>8)&0xffu,n=((h>>16)&0x3fffu)+1u;
+            std::vector<uint32_t> b(n);for(uint32_t j=0;j<n;++j)b[j]=get(ring-kFb+4u*(i+1u+j));
+            if(op==gr::kSetContextReg || op==gr::kPreambleCntl || op==gr::kContextControl || op==gr::kClearState)++gfxCsb;
+            else if(op==gd::kReleaseMem){const uint64_t to=b[2]|(uint64_t(b[3])<<32);vram[to-kFb]=b[4];}
+            else assert(!"unexpected gfx packet");
+            i+=1u+n;
+        }
+        mem[g.rb0Rptr]=mem[g.rb0Wptr];
+    }
     void runQueue(uint32_t k) {
         const uint32_t qs=qsOf(k);
         if(stuck || paused.count(k) || !(bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]&1u))return;
@@ -170,8 +200,16 @@ struct Fake {
                 if(f.eopRan.count(k))f.eopStale.insert(k);
             }
         }
-        // GRBM select: 0, a VMID (SH_MEM), or a client HQD: never MES's queues 2+, never pipe 0 queue 0 (G34's).
-        if(off==f.r.g.v.q.grbm && v && !(v&0xf0u))assert(((v>>2)&3u)==1u && ((v>>8)&7u)<=1u && ((v&3u) || ((v>>8)&7u)==1u));
+        // GRBM select: 0, a VMID (SH_MEM), a gfx pipe (ME 0, pipe 0/1, queue 0) or a client HQD: never MES's
+        // queues 2+, never pipe 0 queue 0 (G34's).
+        if(off==f.r.g.v.q.grbm && v && !(v&0xf0u)) {
+            if(!((v>>2)&3u))assert((v&3u)<=1u && !((v>>8)&7u));
+            else assert(((v>>2)&3u)==1u && ((v>>8)&7u)<=1u && ((v&3u) || ((v>>8)&7u)==1u));
+        }
+        {   namespace gr=navi33::gfx_ring;
+            if((off==f.r.gfx.pfpStart || off==f.r.gfx.meStart) && v==gr::kPcStart)++f.gfxPcs;
+            if(off==f.r.gfx.rb0Wptr)f.runGfx();
+        }
         if(off==mq::hqd(f.r.g.v.q,mq::kEopRptr) && (v&0x80000000u))
             for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.eopStale.erase(k);
         // Activation fetches the ring (G36): only once ACTIVE is set.
@@ -273,7 +311,8 @@ int main() {
     // 1. Two clients, each its own VMID, queue, buffers and image.
     {   Fake f(r);
         {uint32_t none=0;assert(f.dev.open(&f,none)==cg::Code::NotReady);}
-        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok && f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u+14u);   // hub, HQD ACTIVE checks, HQD dumps (selects)
+        assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        assert(f.mem[r.g.v.l1]==0x1859u && f.writes.size()==15u+12u+14u+kGfxStartWrites);   // hub, HQD ACTIVE checks, HQD dumps (selects), G40
         // Doorbells: MEC range 0..0x450 bytes, NBIO aperture bit 0 set, the rest of the word kept.
         assert(f.mem[r.mecDbLower]==0u && f.mem[r.mecDbUpper]==0x450u && f.mem[r.nbioAperEn]==0x101u);
         {   const cg::DoorbellSetup db=f.dev.stats().db;
@@ -480,6 +519,21 @@ int main() {
         u.dev.setTlbUnsafe(true);
         assert(u.dev.open(&u,slot)==cg::Code::Ok && u.dev.stats().miss.misses==1u && u.dev.stats().tlbFlushes==0u);
     }
+    // 5e. The gfx pipe (G40): PFP/ME program counters on both gfx pipes, RB0 in VMID 0, unhalt, the
+    //     clear-state preamble and a ring-test fence that lands.
+    {   namespace gr=navi33::gfx_ring;
+        Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
+        const cg::GfxReport g=f.dev.stats().gfx;
+        assert(g.state==cg::GfxState::Ok && g.fence==gr::kFenceValue && g.meBefore==gr::kMeCntlDefault);
+        assert(!(g.me&(gr::kPfpHalt|gr::kMeHalt)) && g.rptr==g.wptr && g.wptr>=navi33::gfx11_clear_state::kCsbDwords && !(g.wptr%8u));
+        assert(f.gfxCsb==1u+1u+navi33::gfx11_clear_state::kExtentCount+1u+1u+1u && f.gfxPcs==4u);   // preamble, context control, extents, steering, preamble end, clear state
+        assert(f.mem[r.gfx.maxContext]==7u && f.mem[r.gfx.deviceId]==1u && f.mem[r.gfx.rbActive]==1u && f.mem[r.g.v.q.grbm]==0u);
+        assert(f.heap.usedBytes(cg::kTagGfxRing)==gr::kMemBytes);
+        // A pipe that never runs leaves the state at Timeout and compute untouched.
+        Fake h(r);h.gfxBroken=true;assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.dev.stats().gfx.state==cg::GfxState::Timeout);
+        App a=setup(h,co,k,7,0x100000000ull);uint64_t s=0,ret=0;const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
+        assert(h.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok && h.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok && imageOk(h,a,7));
+    }
     // 5b. A queue left active by an earlier boot is skipped and never reused.
     {   Fake f(r);assert(f.dev.start(r,f.hw(),f.heap,kFb)==cg::Code::Ok);
         f.bank[{qsOf(cg::kFirstVmid),mq::hqd(r.g.v.q,kiq::kCpHqdActive)}]=1u;
@@ -518,8 +572,8 @@ int main() {
         assert(g.dev.start(r,g.hw(),g.heap,kFb)==cg::Code::NotReady && g.writes.empty());
         Fake h(r);h.mem[r.g.v.l1]=0x1859u;h.mem[r.g.v.l2]=0x00080e01u;     // G36-G39 already set the hub
         h.mem[r.mecDbLower]=0x110u;h.mem[r.mecDbUpper]=0xffcu;h.mem[r.nbioAperEn]=1u;   // MES's range covers ours
-        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==14u+12u);
-        for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm);          // only the HQD ACTIVE checks
+        assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.writes.size()==14u+12u+kGfxStartWrites);
+        for(auto &w:h.writes)assert(w.first==r.g.v.q.grbm || navi33::gfx_ring::allowed(r.gfx,w.first));          // only the HQD ACTIVE checks
     }
     // 7. The N48N front end (what RADV's Darwin backend calls), on the same fake GC.
     {   namespace nf=n48n_front;

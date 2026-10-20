@@ -27,6 +27,7 @@
 // confirmed (a TLB flush without ACK, a queue that will not dequeue, a hub fault in
 // the client's VMID) quarantines the client: its memory is never freed again.
 #pragma once
+#include "Navi33Gfx11GfxRing.h"
 #include "Navi33Gfx11VmGradient.h"
 #include "Navi33Gmc11Vm.h"
 #include "Navi33Nbio43Capacity.h"
@@ -59,7 +60,7 @@ constexpr uint64_t kUserVaMin=0x10000u, kUserVaMax=gv::kVaLimit;   // [min, max)
 // on the card a VMID >= 2 queue never re-read its WPTR after activation (2026-10-20
 // 09:30..10:08), while VMID 0 (MC addresses) did (G35). That range is closed to user maps.
 constexpr uint64_t kMaxBoBytes=64ull<<20;
-constexpr uint32_t kTagClient=0x434c4e54u;
+constexpr uint32_t kTagClient=0x434c4e54u, kTagGfxRing=0x47465852u;   // 'CLNT', 'GFXR'
 // gc_11_0_0_offset.h (GC segment 0): context k registers,
 // CP_HQD_DEQUEUE_REQUEST (in the HQD block, banked by GRBM select).
 constexpr uint32_t ctxCntl(uint32_t k) { return 0x1688u+k; }
@@ -114,6 +115,7 @@ struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
     uint64_t dequeue=0, invReq=0, invAck=0, l2Status=0;
+    gfx_ring::Regs gfx{};           // the kernel's gfx ring 0 (G40)
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
     uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0, pqStatus=0;
     bool valid=false;
@@ -131,7 +133,8 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         const uint32_t dws[7]={ctxCntl(k),ctxBaseLo(k),ctxBaseLo(k)+1u,ctxStartLo(k),ctxStartLo(k)+1u,ctxEndLo(k),ctxEndLo(k)+1u};
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
-    if(!one(kDequeueRequest,r.dequeue) || !one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) ||
+    r.gfx=gfx_ring::resolve(d,bytes);
+    if(!r.gfx.valid || !one(kDequeueRequest,r.dequeue) || !one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) ||
        !one(kL2Status,r.l2Status) ||
        !one(kGbAddrConfig,r.gbAddrConfig) || !one(kMecDbLower,r.mecDbLower) || !one(kMecDbUpper,r.mecDbUpper) ||
        !one(kCpPqStatus,r.pqStatus))return r;
@@ -141,12 +144,13 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
     r.nbioAperEn=(nbif.bases[2]+kNbioAperEn)*4u;
     r.valid=true;return r;
 }
-// Writable registers: the GFXHUB words, invalidation engine 17's request, contexts 8..13, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
+// Writable registers: the GFXHUB words, invalidation engine 17's request, the gfx ring's CP registers, contexts 8..13, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
 // (CP_HQD_DEQUEUE_REQUEST lies inside it). Never the MEC program counters/control,
 // SCRATCH_REG0, context 0/1, the fault registers or anything outside GC.
 inline bool allowed(const Regs &r,uint64_t off) {
     if(!r.valid || off==r.g.v.q.scratch || off==r.g.v.ctx || off==r.g.v.baseLo || off==r.g.v.baseHi ||
        off==r.g.v.startLo || off==r.g.v.startHi || off==r.g.v.endLo || off==r.g.v.endHi)return false;
+    if(gfx_ring::allowed(r.gfx,off))return true;
     if(off==r.invReq || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
@@ -188,8 +192,12 @@ struct DoorbellSetup { uint32_t aperBefore=0, lowerBefore=0, upperBefore=0, aper
 struct FlushMiss { uint32_t vmid=0, req=0, reqBack=0, ack=0, misses=0; };
 // GCVM_L2_CNTL2 and GCVM_L2_STATUS at start, and after the invalidate bits were cleared.
 struct HubL2 { uint32_t cntl2Before=0, statusBefore=0, cntl2=0, status=0; };
+// The kernel's gfx ring at start: CP_ME_CNTL before and after, CP_STAT after the unhalt, the
+// ring's RPTR and the ring-test fence, and how far it got (GfxState).
+enum class GfxState : uint8_t { Off=0, NoMemory, Halt, Config, Resume, Unhalt, Timeout, Ok };
+struct GfxReport { GfxState state=GfxState::Off; uint32_t meBefore=0, me=0, stat=0, rptr=0, fence=0, wptr=0; uint64_t ringMc=0; };
 struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
-               FlushMiss miss{}; HubL2 l2{};
+               FlushMiss miss{}; HubL2 l2{}; GfxReport gfx{};
                DoorbellSetup db{}; };
 
 class Device {
@@ -239,6 +247,7 @@ public:
         if(!rd(r.nbioAperEn,db_.aper) || !rd(r.mecDbLower,db_.lower) || !rd(r.mecDbUpper,db_.upper))return Code::HwFailed;
         if(!(db_.aper&1u) || db_.lower>doorbellByte(0) || db_.upper<doorbellByte(kClients-1u)+8u)return Code::HwFailed;
         for(uint32_t i=0;i<kHqdDumpQueues;++i)hqdStartOk_[i]=hqdDump(i,hqdStart_[i]);
+        gfxStart();                       // the gfx pipe: compute does not depend on it
         // Client queues an earlier boot of the kext left active (stuck work) are drained
         // and dequeued now, as close() would have; one that will not go is retired.
         for(uint32_t i=0;i<kClients;++i) {
@@ -485,7 +494,7 @@ public:
             ++s.clients;s.emitted+=c.emitted;s.retired+=c.retired;
             for(const Bo &b:c.bo)if(b.live)++s.bos;
         }
-        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.db=db_;s.miss=miss_;s.l2=l2_;return s;
+        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.db=db_;s.miss=miss_;s.l2=l2_;s.gfx=gfx_;return s;
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
@@ -516,6 +525,71 @@ private:
     static bool putEntry(void *c,uint64_t off,uint64_t value) {
         const uint32_t dw[2]={static_cast<uint32_t>(value),static_cast<uint32_t>(value>>32)};
         return static_cast<TableIo *>(c)->dev->vramPut(off,dw,2u);
+    }
+    bool waitCpIdle() {
+        for(uint32_t us=0;;us+=10u) {
+            if(!rd(r_->gfx.cpStat,gfx_.stat))return false;
+            if(!gfx_.stat)return true;
+            if(us>=gfx_ring::kStatTimeoutUs)return false;
+            h_.delayUs(h_.ctx,10u);
+        }
+    }
+    // G40: gfx_v11_0_config_gfx_rs64 (PFP/ME), cp_gfx_resume (RB0, VMID 0), cp_gfx_start and a
+    // RELEASE_MEM ring test, in that order; gfx_.state says how far it got.
+    void gfxStart() {
+        namespace gr=gfx_ring;
+        const gr::Regs &g=r_->gfx;
+        gfx_={};
+        if(!rd(g.meCntl,gfx_.meBefore))return;
+        const vh::Alloc a=heap_->alloc(gr::kMemBytes,4096u,vh::Place::Visible,kTagGfxRing);
+        if(a.code!=vh::Code::Ok){gfx_.state=GfxState::NoMemory;return;}
+        gfxMem_=a.h;gfxMemVram_=a.offset;
+        const Bo m{a.h,a.offset,gr::kMemBytes,0,0,true,false};
+        if(!zero(m)){gfx_.state=GfxState::NoMemory;return;}
+        const uint64_t mc=fbBase_+a.offset;gfx_.ringMc=mc+gr::kRingOff;
+        // A gfx pipe an earlier kext boot left running is halted first (gfx_v11_0_cp_gfx_enable(false)).
+        gfx_.state=GfxState::Halt;
+        uint32_t me=gfx_.meBefore;
+        if((me&(gr::kPfpHalt|gr::kMeHalt))!=(gr::kPfpHalt|gr::kMeHalt)) {
+            me|=gr::kPfpHalt|gr::kMeHalt;
+            if(!wr(g.meCntl,me) || !waitCpIdle())return;
+        }
+        gfx_.state=GfxState::Config;
+        for(uint32_t pipe=0;pipe<gr::kGfxPipes;++pipe)
+            if(!sel(mq::grbmSelect(0u,pipe,0u)) || !wr(g.pfpStart,gr::kPcStart) || !wr(g.pfpStartHi,gr::kPcStartHi))return;
+        if(!sel(0u) || !wr(g.meCntl,me|gr::kPfpReset) || !wr(g.meCntl,me))return;
+        for(uint32_t pipe=0;pipe<gr::kGfxPipes;++pipe)
+            if(!sel(mq::grbmSelect(0u,pipe,0u)) || !wr(g.meStart,gr::kPcStart) || !wr(g.meStartHi,gr::kPcStartHi))return;
+        if(!sel(0u) || !wr(g.meCntl,me|gr::kMeReset) || !wr(g.meCntl,me))return;
+        gfx_.state=GfxState::Resume;
+        const uint64_t rptr=mc+gr::kRptrOff, wptr=mc+gr::kWptrOff, base=gfx_.ringMc>>8;
+        uint32_t dbc=0;
+        if(!wr(g.wptrDelay,0u) || !wr(g.rbVmid,0u) || !wr(g.rb0Cntl,gr::kRb0CntlValue) || !wr(g.rb0Wptr,0u) ||
+           !wr(g.rb0WptrHi,0u) || !wr(g.rb0RptrAddr,static_cast<uint32_t>(rptr)) ||
+           !wr(g.rb0RptrAddrHi,static_cast<uint32_t>(rptr>>32)&gr::kRptrAddrHiMask) ||
+           !wr(g.wptrPollLo,static_cast<uint32_t>(wptr)) || !wr(g.wptrPollHi,static_cast<uint32_t>(wptr>>32)))return;
+        h_.delayUs(h_.ctx,1000u);
+        if(!wr(g.rb0Cntl,gr::kRb0CntlValue) || !wr(g.rb0Base,static_cast<uint32_t>(base)) ||
+           !wr(g.rb0BaseHi,static_cast<uint32_t>(base>>32)) || !wr(g.rbActive,1u) || !rd(g.rbDoorbellCntl,dbc) ||
+           !wr(g.rbDoorbellCntl,dbc&~gr::kDoorbellEn))return;
+        gfx_.state=GfxState::Unhalt;
+        if(!wr(g.maxContext,gr::kMaxHwContexts-1u) || !wr(g.deviceId,1u) ||
+           !wr(g.meCntl,me&~(gr::kPfpHalt|gr::kMeHalt)))return;
+        if(!waitCpIdle()){gfx_.state=GfxState::Timeout;return;}
+        rd(g.meCntl,gfx_.me);
+        // The clear-state preamble and the ring test, then WPTR by register.
+        static uint32_t p[gfx11_clear_state::kCsbDwords+16u];
+        uint32_t k=gr::buildCsb(p);
+        k+=gr::buildFence(p+k,mc+gr::kFenceOff,gr::kFenceValue);
+        while(k%8u)p[k++]=mq::kNop;
+        if(!vramPut(gfxMemVram_+gr::kRingOff,p,k) || !wr(g.rb0Wptr,k) || !wr(g.rb0WptrHi,0u))return;
+        gfx_.wptr=k;gfx_.state=GfxState::Timeout;
+        for(uint32_t us=0;us<gr::kFenceTimeoutUs;us+=100u) {
+            h_.vramRead(h_.ctx,gfxMemVram_+gr::kFenceOff,&gfx_.fence,1u);
+            if(gfx_.fence==gr::kFenceValue){gfx_.state=GfxState::Ok;break;}
+            h_.delayUs(h_.ctx,100u);
+        }
+        rd(g.rb0Rptr,gfx_.rptr);
     }
     // Write p (whole packets, a multiple of 8 dwords, ending in the fence of seq emitted+1)
     // to the ring, publish the WPTR and start the queue.
@@ -683,6 +757,7 @@ private:
     uint64_t retiredBytes_=0;
     DoorbellSetup db_{};
     FlushMiss miss_{}; HubL2 l2_{}; bool tlbUnsafe_=false;
+    GfxReport gfx_{}; vh::Handle gfxMem_{}; uint64_t gfxMemVram_=0;
     uint32_t hqdStart_[kHqdDumpQueues][kHqdDumpCount]{}; bool hqdStartOk_[kHqdDumpQueues]{};
     bool started_=false;
 };
