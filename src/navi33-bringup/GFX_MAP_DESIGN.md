@@ -1,11 +1,13 @@
 # G42: map one gfx11 graphics queue through G34
 
 The user requested continuing graphics queue mapping/activation on 2026-10-20
-("please go"). G42 was attempted once on kext 0.0.57. It timed out and its
-one-shot latch was consumed. The VM is still running on that artifact. No
-retry, reboot, shutdown, artifact operation, or hardware action is authorized
-by this design update. A retry needs another full power-off and renewed
-explicit approval. This work does not enable Metal publication.
+("please go"). G42 ran once with kext 0.0.57 and once with 0.0.58 after the
+user explicitly requested a warm host restart for the latter. Both attempts
+timed out before the graphics queue mapped. The 0.0.58 one-shot latch is
+consumed; the VM remains running on that artifact in
+`runs/20261020-172609`. This was not a verified full power-off. Any further
+GPU write attempt needs a full power-off and renewed explicit approval. This
+work does not enable Metal publication.
 
 The 0.0.56 run `20261020-155810` has live PFP/ME firmware, a programmed RB0,
 and GFX_HQD_ACTIVE=1, but MAPPED=0 and no WPTR/RPTR movement through either
@@ -24,18 +26,24 @@ and the GFX HQD remained inactive. `Navi33,ClientGfx` ended in state 5
 (Unhalt). The graphics ring was never kicked, so this says nothing about
 whether a graphics ring submission or rendered output works.
 
-The current 0.0.58 offline candidate tests a source-supported ordering
-hypothesis: Linux marks the KIQ in RLC_CP_SCHEDULERS before loading and
-activating its HQD, while our G34 queue had been activated as an ordinary
-compute queue and was marked HIQ later by G42. When the existing
-`navi33-gfx-map` gate and client-GPU gate are both open, the candidate now
-sets the G34 scheduler selector to HIQ during G34 initialization, before
-CP_HQD_ACTIVE, then G42 requires the low scheduler byte to be 0xa0 and no
-longer writes the scheduler itself. This ordering mismatch is a plausible
-hypothesis only; the G42 timeout does not establish its cause. The scheduler
-write remains inside the existing exact register allowlist and is gated by
-`navi33-gfx-map=1`, with `navi33-gfx-map-off`, `navi33-mec-off`, and
-`navi33-psp-off` closing the path.
+The 0.0.58 candidate moved the G34 scheduler HIQ write before HQD activation.
+The live run confirmed `RLC_CP_SCHEDULERS` changed `0x3038->0x30a0`. The G34
+snapshot began with RPTR/WPTR=16; after the staged WPTR advanced to 32, the
+reported final RPTR readback was 0 rather than 32. The new map fence and
+graphics MAPPED bit remained zero. Thus the ordering change did not resolve
+the failure, and the cause remains unknown. The captured
+16-dword MAP_QUEUES plus WRITE_DATA fence matches upstream packet encoding.
+The post-stage BAR5-only `n33peek` capture is
+`runs/20261020-172609/gfxmap-post-n33peek.txt`; it reports no GPU writes and
+does not include the G34 HQD block.
+
+Read-only comparison with upstream exposed two additional path elements that
+G42 does not model: `amdgpu_gfx_enable_kcq()` sends `SET_RESOURCES` before its
+map operations, and `amdgpu_gfx_enable_kgq()` calls `amdgpu_device_flush_hdp()`
+before committing the GFX MAP_QUEUES ring. These are plausible follow-up
+investigation points, not proven causes. The host fake does not model their
+hardware effects. Do not add those operations or enlarge a stage-write span
+without a new bounded design and renewed approval.
 
 ## Gate and plan
 

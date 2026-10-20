@@ -168,13 +168,14 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      after it, gfx MAPPED0; own latch before first stage-window write.
      Fixed MAP_QUEUES + confirmed WRITE_DATA fence only, no user-controlled stream.
      Further attempts after a stage write require full power-off. Recovery remains
-     guest/host SSH and host full power-off. Design: `GFX_MAP_DESIGN.md`. Not yet run.
-     G42 did run once (see findings below) and timed out. The 0.0.58 offline
-     candidate, gated by the same `navi33-gfx-map=1`, moves the existing
+     guest/host SSH and host full power-off. Design: `GFX_MAP_DESIGN.md`.
+     G42 ran once with 0.0.57 and once with 0.0.58; both timed out before the
+     graphics queue mapped. The 0.0.58 candidate moved the existing
      RLC_CP_SCHEDULERS HIQ designation into G34 initialization before
-     CP_HQD_ACTIVE; G42 then requires scheduler low byte 0xa0 and does not write
-     it. This is a plausible ordering hypothesis, not a proven cause. The
-     candidate keeps the same register/window/MQD allowlists and latches.
+     CP_HQD_ACTIVE, but this ordering change did not resolve the timeout. The
+     0.0.58 run's G34 RPTR readback ended at 0 (pre-run value 16), not the
+     expected 32, so MAP_QUEUES completion was not confirmed. Further attempts after
+     a stage write need full power-off and renewed explicit approval.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
@@ -435,11 +436,11 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (2026-10-20 16:12; updated 2026-10-20): G42 follow-up candidate
+## Resume here (2026-10-20 17:33 HKT; updated 2026-10-20): G42 follow-up
 
-- User confirmed full power-off and requested continued work toward a **GPU-rendered
-  macOS desktop, wallpaper and apps**. Framebuffer output is not the goal.
-- Fresh headless host boot ID `e04d7ebd-c5ad-4739-be64-daedfc247494`, GPU on VFIO;
+- Prior 0.0.54 baseline: the user confirmed full power-off and requested continued work
+  toward a **GPU-rendered macOS desktop, wallpaper and apps**. Framebuffer output is not
+  the goal. Fresh headless host boot ID `e04d7ebd-c5ad-4739-be64-daedfc247494`, GPU on VFIO;
   `vm/cold-run.sh` booted artifact 0.0.54 in `runs/20261020-154411`. Loaded UUID
   `68CA4571-9F94-3AC6-90ED-861FA0B060C7` matches the artifact. VM left running.
 - Autostart DONE 8/8; L2_CNTL2 and L2_STATUS both 0->0, engine 17 ACKs, no misses.
@@ -485,25 +486,41 @@ output survives a hang and Linux can inspect a stuck guest.
   `g42-qmp-readonly.jsonl` and `summary.txt`: scheduler changed 0x3038->0x30a0,
   G34 memory WPTR reached 32, KIQ fence stayed 0, MAPPED stayed 0, and the GFX
   HQD was inactive. `ClientGfx` state 5 is Unhalt. The GFX ring was not kicked.
-- The 0.0.58 offline candidate moves the scheduler HIQ write into the gated G34
-  init before HQD activation, based on Linux's ordering. This is a hypothesis,
-  not a diagnosed cause. `navi33-gfx-map=1` and client GPU gate remain required;
-  `navi33-gfx-map-off`, `navi33-mec-off`, and `navi33-psp-off` close it. Register
-  and VRAM spans, latch semantics, and Metal behavior are unchanged. No build or
-  hardware run is included in this source change; CI is required for the kext.
-- This run's autostart stopped at `sOS=8/0w`; client 1 timed out, but clients
-  2..9, the 200-repeat client, N48N and RADV Vulkan fill all passed with exact
-  pixels/words. Guest SSH and WindowServer survived. No GPU-rendered desktop,
-  wallpaper/apps, or Metal output is established. VM remains running in tmux
-  `n33-cold`, artifact 0.0.57. No Metal nub/accelerator installed or enabled.
-  Follow-up commit `4d448f1` builds kext 0.0.58; CI run `39395217038` passed
-  host GCC/Clang/ASan/UBSan, bootstrap, and both macOS compile jobs. The
-  macos-26-intel CI artifact is cached at
-  `~/macos tahoe/navi33/cache/artifact-0.0.58-ci/navi33-usb-macos-26-intel/`;
-  its kext Mach-O UUID is `e777d011-ebb0-3fe7-81d8-f1597cc4728d`. It has not
-  been installed or run. The G42 attempt needs another full power-off and
-  renewed explicit approval before any further GPU writes. Keep the VM on
-  artifact 0.0.57 until then; do not reboot, shut it down, or touch hardware.
+- User explicitly approved one 0.0.58 G42 run after a warm host restart with
+  GRUB selecting the headless VFIO boot. Host boot ID changed to
+  `10ce1af7-f9c2-444e-9388-ca13750bb4c4`, also recorded in
+  `/var/lib/cobalt64-navi33/hostfb.txt`. This was not a verified full power-off.
+  Run directory: `~/macos tahoe/navi33/runs/20261020-172609`; the VM remains
+  running in tmux `n33-cold` on kext 0.0.58. Loaded UUID
+  `E777D011-EBB0-3FE7-81D8-F1597CC4728D` matches the CI artifact from commit
+  `4d448f1` / run `39395217038`.
+- Autostart reached 8/8 with `gfx-scheduler 00003038->000030a0`. G42 timed out
+  again: G34 started ACTIVE=1, VMID=0, RPTR/WPTR=16 and fence `0x0c0b1601`;
+  staged WPTR advanced to 32, but its new fence remained zero,
+  `CP_GFX_HQD_MAPPED` remained zero, and the final G34 RPTR readback was 0
+  (pre-run value 16), not the expected 32.
+  See `g42-stage-memory-readonly.jsonl` and `g42-qmp-readonly.jsonl`. The
+  appended 16-dword MAP_QUEUES plus WRITE_DATA fence matches upstream encoding.
+  `gfxmap-post-n33peek.txt` is an additional allowlisted BAR5-only snapshot and
+  ends `GPU writes: NONE`; it does not include the G34 HQD block.
+  `Navi33,ClientGfx` remained state 5 (Unhalt); `gfxStart` returned before
+  kicking the GFX ring. No graphics ring submission or rendered output was
+  attempted.
+- Client 1 timed out with zero retired submissions. Clients 2..9 and the
+  200-repeat test returned exact pixels; N48N returned exact pixels; RADV's
+  Vulkan fill wrote and verified 65,536 words. Guest SSH and WindowServer
+  survived. `Navi33GOPFB` still reports host-console scanout. No GPU-rendered
+  desktop, wallpaper/apps, or Metal output is established.
+- Read-only source comparison found upstream sends `SET_RESOURCES` before
+  mapping compute queues, and `amdgpu_gfx_enable_kgq()` flushes HDP before
+  submitting graphics MAP_QUEUES. G42 models neither. These are investigation
+  leads, not a diagnosed cause; host fake tests do not model KIQ scheduling or
+  HDP visibility. Do not expand packet or stage-window allowlists without a
+  new bounded design and renewed approval.
+- The G42 latch and stage-window attempt are consumed. Any further GPU write
+  attempt requires a full host power-off and renewed explicit approval. Keep
+  the current VM running on 0.0.58 until then; do not reboot, shut it down, or
+  touch the GPU. No Metal nub/accelerator is installed or enabled.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
   (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
   as a clean cold run. Preserve that memory until dequeue/recovery is verified.
@@ -2367,14 +2384,27 @@ parser got two of them wrong:
   full power-off and renewed authorization. No GPU-rendered desktop or Metal
   output is proven.
 
-- **G42 follow-up candidate (kext 0.0.58, offline source only):** moves the
-  scheduler HIQ write to the G34 initialization sequence before HQD activation,
-  because Linux sets KIQ state before loading/activating its HQD. This is a
-  hypothesis, not a proven explanation for the MAP timeout. G42 evidence remains
-  fence=0, MAPPED=0, GFX HQD inactive, and no graphics ring kick. The VM is left
-  running on 0.0.57. No GPU-rendered desktop, wallpaper/apps, or Metal output is
-  established. Any physical retry needs a full power-off and renewed explicit
-  approval.
+- **2026-10-20 17:26 HKT, kext 0.0.58 G42 follow-up**, run
+  `runs/20261020-172609`, after the user-approved warm host restart. Autostart
+  reached 8/8 and set scheduler `0x3038->0x30a0` before G34 activation. The G34
+  queue's staged WPTR advanced 16->32, but MAP fence stayed zero, MAPPED stayed
+  zero, and the final RPTR readback was 0 (pre-run value 16), not 32. The
+  read-only QMP dump confirms the appended 16 dwords match upstream's
+  MAP_QUEUES + confirmed WRITE_DATA fence
+  packet shape. `ClientGfx` remained state5; no GFX ring kick followed. Client
+  1 timed out; clients 2..9, repeat 200, N48N, and RADV Vulkan fill all returned
+  exact results. VM remains running on 0.0.58; host-console scanout only. No
+  GPU-rendered desktop or Metal output is proven. A further physical attempt
+  requires full power-off and renewed explicit approval.
+
+- **G42 follow-up diagnosis (offline):** the 0.0.58 scheduler-order hypothesis
+  did not resolve the failure. The run's G34 consumer RPTR readback ended at 0
+  from pre-run value 16, rather than the expected 32. Upstream
+  `amdgpu_gfx_enable_kcq()` emits
+  `SET_RESOURCES` before KIQ queue mapping; `amdgpu_gfx_enable_kgq()` flushes
+  HDP before committing graphics MAP_QUEUES. G42 models neither step. This is a
+  source-backed lead only: the final RPTR, zero fence and unmapped bit do not
+  establish whether the packet was fetched, so no cause is yet proven.
 
 ## Adding a register read
 
