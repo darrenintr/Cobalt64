@@ -444,7 +444,7 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (2026-10-20 18:14 HKT; updated 2026-10-20): G42 follow-up
+## Resume here (2026-10-20 18:17 HKT; updated 2026-10-20): G42 follow-up
 
 - Prior 0.0.54 baseline: the user confirmed full power-off and requested continued work
   toward a **GPU-rendered macOS desktop, wallpaper and apps**. Framebuffer output is not
@@ -561,11 +561,13 @@ output survives a hang and Linux can inspect a stuck guest.
 - Safe gfx reads: PFP/ME RS64 instruction pointers nonzero, RB0 base correct,
   CP_RB0_WPTR/RPTR 0, GFX_HQD_ACTIVE 1 but MAPPED 0 (`gfx-safe-reads.txt`). No new
   gfx-HQD configuration writes or accelerator installation performed. Metal not proven.
-- **0.0.59 local candidate:** the HDP prelude is implemented and documented;
-  GCC host-test, Clang ASan/UBSan host-test (with a 32 MiB stack for the large
-  existing client-GPU test frame), 43 bootstrap tests and `git diff --check`
-  pass. The CI artifact has not been built yet. The current VM remains on 0.0.58;
-  no GPU read/write, reboot or power-off was made during this offline work.
+- **0.0.59 HDP candidate:** CI run `39406581881` passed all jobs, including
+  GCC/Clang/ASan/UBSan host tests and both macOS Intel kext builds. The
+  macos-26-intel artifact is cached at
+  `~/macos tahoe/navi33/cache/artifact-0.0.59-ci`; its plist version is 0.0.59
+  and Mach-O `LC_UUID` is `21868249-AAFB-3ACA-A72F-9E20F0557E70`. The current
+  VM remains on 0.0.58; no GPU read/write, reboot or power-off was made during
+  this offline work. This candidate has not run on the card.
 - Guest auxiliary build staging remains `/Users/darren/auxbuild`; preserve it. Previous
   handoff found no built accelerator kext, only Navi33GOPFB installed.
 

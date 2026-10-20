@@ -87,10 +87,14 @@ of successful HDP writes, aperture, and capacity readback.
 Host coverage verifies the RX 7600 offsets, exact values, reset and already-set
 remaps, unexpected remap refusal, partial remap write failure, remap readback
 failure, flush write/readback failure, strict operation order, and that all
-failure cases stop before the poll trigger. `make host-test` and the manifest
-checks pass. This is still only host evidence: no 0.0.59 kext has run on the
-card. Any physical attempt still needs a full host power-off and renewed
-explicit approval; the current 0.0.58 VM must remain untouched until then.
+failure cases stop before the poll trigger. CI run `39406581881` passed all
+jobs, including both macOS Intel kext builds and GCC/Clang/ASan/UBSan tests.
+The macos-26-intel artifact is cached at
+`~/macos tahoe/navi33/cache/artifact-0.0.59-ci` (Mach-O UUID
+`21868249-AAFB-3ACA-A72F-9E20F0557E70`). This is still only build and host
+evidence: no 0.0.59 kext has run on the card. Any physical attempt still needs
+a full host power-off and renewed explicit approval; the current 0.0.58 VM must
+remain untouched until then.
 
 `SET_RESOURCES` belongs to the separate `amdgpu_gfx_enable_kcq()` compute-queue
 path; `amdgpu_gfx_enable_kgq()` does not emit it. Keep it as an indirect KIQ
