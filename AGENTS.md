@@ -414,7 +414,7 @@ output survives a hang and Linux can inspect a stuck guest.
   - Every run is read-only (`navi33-psp-off=1`) unless the user approves
     a write stage. The PSP load was approved and done on 2026-10-18.
 
-## Resume here (2026-10-20 15:50): cold run completed, graphics still blocked
+## Resume here (2026-10-20 16:01): compute reuse fixed, graphics queue still blocked
 
 - User confirmed full power-off and requested continued work toward a **GPU-rendered
   macOS desktop, wallpaper and apps**. Framebuffer output is not the goal.
@@ -427,18 +427,30 @@ output survives a hang and Linux can inspect a stuck guest.
 - **RADV Vulkan compute proven twice:** `cold-vkfill-retry.txt` and
   `cold-vkfill-repeat.txt`: 65,536 words, zero wrong, VKFILL OK. The original script
   omitted `vk_video` headers and silently skipped compilation; fixed in this change.
-- Read-only QMP register capture `inv17-range.txt`: engine 17 address range **0/0**.
-  Current 0.0.54 code dropped upstream's full-range programming; an ACK alone therefore
-  does not establish client-address invalidation. 0.0.55 restores only engine 17's
+- **Diagnostic correction:** the first `inv17-range.txt` read used 0x8000c544,
+  not engine17 LO at 0x8000a544. Its zeros are invalid evidence (file annotated).
+  Source review established that 0.0.54 dropped upstream's full-range programming;
+  the old live range was not correctly measured. An ACK alone did not prove reuse. 0.0.55 restores only engine 17's
   LO/HI range (0xffffffff/0x1f), as previously exercised in 0.0.42, with host regression
   coverage. CI run `39389411010` passed all jobs; artifact cached. Warm follow-up
-  with 0.0.55 started at 15:55 (UUID `C0EA529C-9E93-3863-AA04-2B888E1136EE`).
+  `runs/20261020-155532` with 0.0.55 (UUID `C0EA529C-9E93-3863-AA04-2B888E1136EE`):
+  **all nine reused clients exact, all 200 repeated submissions exact, N48N exact,
+  RADV 65,536 words exact**. 21 flushes, zero misses, reclaimed one prior HQD.
+  Correct client reuse after full-range setup is now live-proven. Gfx still state 6, RPTR/fence 0.
 - 0.0.56 adds a bounded G40 fallback using existing authorized registers only: after
   a doorbell timeout with both hardware WPTR and RPTR zero, clear DOORBELL_EN and
   write CP_RB0_WPTR_HI/LO for the same ring. Partial progress is never replayed.
   Later gfx submissions keep the selected kick method; ioreg reports `kick MMIO`
   or `kick doorbell`. Host tests cover a dropped doorbell and refusal to replay
-  partial progress. CI/live retest pending.
+  partial progress. CI `39389843473` passed all jobs. Warm run `20261020-155810`
+  loaded UUID `2F21DA66-117A-30BB-839B-82027A18A4CD` matching the artifact.
+  All nine clients, repeat 200, N48N and RADV pass again; 21 flushes, zero misses.
+  Gfx still state 6 with `kick MMIO`; actual hardware WPTR/RPTR both 0, ACTIVE 1,
+  MAPPED 0. Correct engine17 range readback is 0xffffffff/0x1f.
+- Current guest is left running in tmux `n33-cold`, artifact 0.0.56. No Metal
+  nub/accelerator installed or enabled. Next graphics investigation is upstream
+  gfx11 queue mapping/activation (MES/KIQ-mapped GFX HQD), with a bounded design
+  before any expansion of the current G40 register/packet allowlist.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
   (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
   as a clean cold run. Preserve that memory until dequeue/recovery is verified.
@@ -2257,11 +2269,33 @@ parser got two of them wrong:
   wrong); N48N gradient exact. RADV compiled and ran the Vulkan shader twice, each
   65,536 words exact. Gfx ring state 6, RPTR/fence zero even on the cold hub, so the
   earlier busy-L2 state is not a sufficient explanation for G40's failure.
-  Engine17 ADDR_RANGE_LO/HI read **0/0**, unlike Linux's 0xffffffff/0x1f; range setup
-  was dropped from the current driver. ACK count is insufficient evidence for VMID
+  Source review found that engine17 range setup was dropped from the current driver.
+  Correction at 16:01: the initial claimed 0/0 capture used the wrong address
+  (0x8000c544 instead of 0x8000a544); it is not range evidence. Linux programs
+  0xffffffff/0x1f; the corrected 0.0.56 live read matches those values. ACK count is insufficient evidence for VMID
   reuse with that range. A temporary ACQUIRE_MEM-in-IB experiment timed out on VMID8
   and was reverted; no acceleration or Metal publication was enabled. Guest SSH and
   WindowServer survived; framebuffer output remains separate from GPU rendering.
+
+- **2026-10-20 15:55-15:57, kext 0.0.55 warm follow-up** on the same host power cycle,
+  `runs/20261020-155532`, UUID `C0EA529C-9E93-3863-AA04-2B888E1136EE`, CI `39389411010`
+  all green. Restoring engine17's full invalidation range fixes reuse: nine successive
+  clients on VMID8 exact, 200 submissions exact (sequence 200, 41.234 ms/submit), all
+  closes 0; N48N exact, RADV VKFILL 65,536 words exact. 21 flushes, zero misses,
+  one earlier HQD reclaimed. Autostart correctly refuses sOS-already-alive (0 writes).
+  G40 still state 6, RPTR/fence 0; no GPU desktop or Metal output is established.
+
+- **2026-10-20 15:58-16:01, kext 0.0.56 warm follow-up**, `runs/20261020-155810`,
+  UUID `2F21DA66-117A-30BB-839B-82027A18A4CD`, CI `39389843473` all green.
+  Nine reused clients exact, repeat200 exact (sequence200, 41.525 ms/submit), N48N
+  exact, RADV 65,536 words exact; 21 flushes, zero misses. G40 tries the bounded
+  MMIO fallback after a zero-progress doorbell timeout: state6, RPTR/fence0.
+  Safe reads (`gfx-safe-reads.txt`, upstream exact offsets) show RB0 and GFX_HQD
+  base 0x80010000, CNTL 0x2000098b, both WPTRs/RPTRs 0, ACTIVE1, MAPPED0, RS64
+  instruction pointers 0x2836/0xf63. Correct engine17 range LO/HI at guest
+  0x8000a544/a548 is 0xffffffff/0x1f. The early cold-run 0/0 claim was an address
+  error, annotated in its raw file and corrected above. No GPU desktop or Metal
+  rendering is proven. VM left running; guest SSH and WindowServer survived.
 
 ## Adding a register read
 

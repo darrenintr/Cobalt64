@@ -1,13 +1,19 @@
 # Navi33 gfx1102 → RADV → Metal development contract
 
-## Current evidence (2026-10-20 15:50)
+## Current evidence (2026-10-20 16:01)
 
 Cold VM run `runs/20261020-154411`, Navi33Probe 0.0.54: autostart 8/8,
 L2 idle, engine17 invalidation ACKs, first N33N gradient and N48N gradient exact.
 RADV Vulkan compute ran twice: 65,536 words correct each time. Reused N33N
 clients still returned zero images, and the graphics ring timed out with RPTR 0.
-Engine17's address range read 0/0; 0.0.55 restores upstream's full range, pending
-CI and live retest. No Metal-rendered output or GPU desktop composition is proven.
+The 0.0.54 source omitted engine17 range setup (the early 0/0 capture used
+the wrong address and is invalid evidence). With upstream's full range restored in
+0.0.55 (CI `39389411010`), warm run `20261020-155532` passed all nine reused
+clients, 200 repeated submissions, N48N and RADV; 21 flushes, zero misses.
+0.0.56 (CI `39389843473`, run `20261020-155810`) repeats all compute passes,
+with correct engine17 range readback 0xffffffff/0x1f. G40 still has WPTR/RPTR/fence
+0 after doorbell and bounded MMIO kicks; GFX_HQD_ACTIVE 1, MAPPED 0. The next
+graphics investigation is queue mapping/activation. No Metal-rendered output or GPU desktop composition is proven.
 The goal is the GPU-rendered desktop, wallpaper and apps. GOP framebuffer output
 is only the existing display/recovery path. The earlier milestone notes below are
 historical and do not describe the current compute backend.
