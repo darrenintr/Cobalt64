@@ -400,13 +400,25 @@ output survives a hang and Linux can inspect a stuck guest.
   `GCVM_L2_CNTL2` invalidate bits; no engine ACKs, and clearing the bits did not release it
   in that boot (0.0.47, 14:1x: `L2_STATUS 1->1`, 5 flush misses, opens fail closed).
 - **Next, after the user's full power-off** (`sudo grub-reboot cobalt64-navi33-vm && sudo
-  poweroff`, power button): run `src/navi33-bringup/vm/cold-run.sh` (artifact-0.0.47 cached;
+  poweroff`, power button): run `src/navi33-bringup/vm/cold-run.sh` (artifact-0.0.48 cached;
   autostart + client GPU + GOPFB in one boot, nine clients with slot reuse, repeat 200, N48N,
   screen dump). Expect `L2_STATUS 0->0`, flushes > 0, misses 0, every client exact. If the
   engine still never ACKs on a fresh hub, next suspects: CONTEXT0 not enabled (upstream
   `enable_system_domain`), protection-fault default address, halted SDMA.
-- **Then:** native DCN modeset (`src/dcn321`), then RADV/Metal for gfx1102 (Navi48 stack:
-  `tools/native/navi48accel`, `navi48metal`, `mesa-patches/`, N48N canned device table).
+- **RADV on the card (2026-10-20 14:2x-14:48):** `.github/workflows/navi33-mesa.yml` builds Mesa
+  f5cb8ee + `mesa-patches/0001..0011` into `libvulkan_radeon.dylib` (x86_64, system libraries
+  only; cached `navi33/cache/radv-0011`). Patch 0010 picks Mesa's canned `navi33` table from
+  QueryInfo's GC 11.0.2 (device 0x7480, rev 0xcf, `GB_ADDR_CONFIG` 0x343 = the card's) and falls
+  back to the `Navi33Probe` service; 0011 serves a kernel with no high VA range from the low range.
+  `vm/vk-run.sh` (VKINC=Mesa's include dir) runs `tools/vkfill` (Vulkan compute, no loader) in the
+  guest as root: **RADV created a Vulkan 1.4 device "RADV NAVI33" on the RX 7600 and compiled the
+  gfx1102 pipeline**; the submit was accepted but never retired (VK_ERROR_DEVICE_LOST): RADV opens
+  and closes the context several times with the same VAs on VMID 8, and with no working flush the
+  GPU still translates them to the freed pages. Retest after the power-off with the flush working.
+  Cosmetic: the device name still says "RX 9070 XT" (`acd_get_marketing_name`).
+- **Then:** the gfx pipe (ME/PFP RS64 start, RB0 ring in VMID 0, clear state; N48N GFX IBs) for
+  Metal rendering; native DCN modeset (`src/dcn321`); the Metal bundle and IOAccelerator from the
+  Navi48 stack (`tools/native/navi48accel`, `navi48metal`, `third-party/metal2vulkan-n48`).
 
 ## Earlier resume notes (state at 2026-10-19 22:30): PROJECT PAUSED
 
