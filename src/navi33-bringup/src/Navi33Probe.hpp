@@ -76,6 +76,7 @@ private:
     bool mecAttempted_ = false;   // MEC queue: its own one-shot latch
     bool gradAttempted_ = false;  // gradient: its own one-shot latch
     bool vmAttempted_ = false;    // VMID1 queue: its own one-shot latch
+    bool vmgAttempted_ = false;   // VMID1 gradient: its own one-shot latch
     bool pspFwAttempted_ = false;   // same for the IP firmware stage
     // Held PCI owner (navi33-owner-hold=1 only). The ticket is nonzero while
     // IOService::open is held; stop() releases it.

@@ -987,3 +987,34 @@ and translates VMID 1 only once the hub is set up as Linux does). Upstream
   `make-opencore.sh --vm-queue`; `n33psp --vm-plan` / `--vm-queue`. Four mutants caught
   (identity page map, L2 untouched, empty range, VMID 0 queue). The test also caught two
   wrong hand-computed hub words before any run.
+
+## Stage G38: the gradient from VMID 1 through a four-level page table (kext 0.0.27, ABI 19, Phase B2)
+
+`src/Navi33Gfx11VmGradient.h` (runner), `src/Navi33DarwinVmGradient.cpp` (writer),
+`tests/test_gfx11_vm_gradient.cpp` (a fake GFXHUB that walks PDB2 -> PDB1 -> PDB0 -> PTB
+in fake VRAM and a fake CP that runs the ring test and G35's PM4 through that walk).
+Upstream, torvalds master 2026-10-20: `gmc_v11_0.c` (`amdgpu_vm_adjust_size(adev, 256 *
+1024, 9, 3, 48)`, apertures), `amdgpu_vm.c` (max_pfn 1 << 36, num_level 3, block_size 9),
+`gfxhub_v3_0_setup_vmid_config()`, `gmc_v11_0_get_vm_pde()` (no translate_further on
+GMC11: a PDE is VRAM offset | VALID), `gfx_v11_0_constants_init()` (SH_MEM_CONFIG and
+SH_MEM_BASES `0x20001000` for VMID != 0).
+
+- Same preconditions and hub words as G36 (autostart state, GFXHUB untouched, queue 1
+  idle). Run either G36 or G38 in one power cycle, not both.
+- Context 1 as Linux: `CNTL` `0x01fffe07` (depth 3, block size 0), START 0, END
+  `0xF_FFFFFFFF` (max_pfn - 1), base = PDB2 VRAM offset | VALID.
+- Window: 1 MiB at VRAM 252 MiB. Pages 0-3 PDB2/PDB1/PDB0/work PTB, 4-11 up to eight
+  screen PTBs, 12 the MQD (fetched in VMID 0). VA base `0x55d5_5e00_0000` (indices
+  `0xab`/`0x155`/`0xf0`, all non-zero); work VA page v (1..63) -> window page 255 - v.
+  The console (3 MiB in the VM) is mapped at VA base + 2 MiB, two PTBs.
+- SH_MEM_CONFIG `0xc00c` and SH_MEM_BASES for VMID 1 under GRBM select VMID 1; VMID 0 is
+  left alone.
+- Queue me 1 pipe 0 queue 1 in VMID 1 as G36, ring test fence `0x0c0b1638`; then the
+  64x64 test image (fence `0x0c0b1639`, frame 7) and the screen (fence `0x0c0b163a`,
+  frame 128: blue shifted from G35's frame 0), with the shader, kernargs, image and
+  screen all at VMID 1 addresses. A hub fault ends the run (state 64). 97 register
+  writes on success, 128 at most.
+- Gate `navi33-vm-gradient=1`, kill `navi33-vm-off`/`navi33-psp-off`, own latch;
+  `make-opencore.sh --vm-gradient`; `n33psp --vm-gradient-plan` / `--vm-gradient`
+  with `--fw gradient.co`. Mutants caught: depth 0, SH_MEM for VMID 0 only, an invalid
+  PDE, screen PTEs off by one page, END too small, a VMID 0 queue.

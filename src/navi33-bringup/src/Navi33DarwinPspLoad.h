@@ -41,4 +41,6 @@ n33_psp_load_result executeMec(IOPCIDevice *pci,const Request &req);
 n33_psp_load_result executeGradient(IOPCIDevice *pci,const Request &req);
 // VMID1 queue (modes VM_QUEUE_PLAN / VM_QUEUE_RUN), Navi33DarwinVmid.cpp.
 n33_psp_load_result executeVm(IOPCIDevice *pci,const Request &req);
+// VMID1 gradient (modes VM_GRADIENT_PLAN / VM_GRADIENT_RUN), Navi33DarwinVmGradient.cpp.
+n33_psp_load_result executeVmGradient(IOPCIDevice *pci,const Request &req);
 } } // namespace navi33::darwin_psp

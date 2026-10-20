@@ -92,6 +92,8 @@ n33_psp_load_result execute(IOPCIDevice *pci,const Request &req) {
         return executeGradient(pci,req);
     if(req.mode==N33_VM_QUEUE_PLAN || req.mode==N33_VM_QUEUE_RUN)
         return executeVm(pci,req);
+    if(req.mode==N33_VM_GRADIENT_PLAN || req.mode==N33_VM_GRADIENT_RUN)
+        return executeVmGradient(pci,req);
     if(!pci || (req.mode!=N33_PSP_LOAD_PLAN && req.mode!=N33_PSP_LOAD_RUN) ||
        !req.attempted)
         return pl::blank(N33_PSPL_BAD_REQUEST);

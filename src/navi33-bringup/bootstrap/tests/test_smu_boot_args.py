@@ -11,7 +11,7 @@ SCRIPT = pathlib.Path(__file__).resolve().parents[2] / 'vm/make-opencore.sh'
 
 class SmuBootArgsTests(unittest.TestCase):
     def generate(self, load=False, ring=False, fw=False, autoload=False,
-                 smu=False, scpm=False, dma_preflight=False, mes=False, mec=False, grad=False, auto=False, vmq=False):
+                 smu=False, scpm=False, dma_preflight=False, mes=False, mec=False, grad=False, auto=False, vmq=False, vmg=False):
         code = SCRIPT.read_text().split("<<'EOF'\n", 1)[1].split('\nEOF', 1)[0]
         guid = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
         with tempfile.TemporaryDirectory() as directory:
@@ -28,7 +28,7 @@ class SmuBootArgsTests(unittest.TestCase):
             args = [str(config), str(int(load)), str(binary), str(tmp / 'manifest'),
                     'test-OC', '', str(int(ring)), str(int(fw)), str(int(autoload)),
                     str(int(smu or scpm)), str(int(scpm)), str(int(dma_preflight)),
-                    '0', '0', '0', '0', str(int(mes)), str(int(mec)), str(int(grad)), str(int(auto)), str(int(vmq))]
+                    '0', '0', '0', '0', str(int(mes)), str(int(mec)), str(int(grad)), str(int(auto)), str(int(vmq)), '0', str(int(vmg))]
             subprocess.run([sys.executable, '-I', '-', *args], input=code,
                            text=True, capture_output=True, check=True)
             result = plistlib.loads(config.read_bytes())
@@ -120,12 +120,22 @@ class SmuBootArgsTests(unittest.TestCase):
         for closed in (self.generate(), self.generate(auto=True), self.generate(grad=True)):
             self.assertIn('navi33-vm-off=1', closed)
 
+    def test_vm_gradient_opens_only_vm_gradient(self):
+        args = self.generate(vmg=True)
+        self.assertIn('navi33-vm-gradient=1', args)
+        for flag in ('navi33-vm-off=1', 'navi33-psp-off=1', 'navi33-autostart=1', 'navi33-vm-queue=1'):
+            self.assertNotIn(flag, args)
+        for flag in ('navi33-mec-off=1', 'navi33-smu-off=1', 'navi33-gradient-off=1'):
+            self.assertIn(flag, args)
+        for closed in (self.generate(), self.generate(vmq=True), self.generate(grad=True)):
+            self.assertNotIn('navi33-vm-gradient=1', closed)
+
     def test_mes_refuses_combined_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             for gate, other in (('--psp-load', '--mes-start'), ('--psp-ring', '--mes-start'),
                                 ('--psp-fw', '--mes-start'), ('--smu-scpm', '--mes-start'),
                                 ('--mes-start', '--mec-queue'), ('--psp-fw', '--mec-queue'),
-                                ('--mec-queue', '--gradient'), ('--autostart', '--psp-load'), ('--vm-queue', '--autostart')):
+                                ('--mec-queue', '--gradient'), ('--autostart', '--psp-load'), ('--vm-queue', '--autostart'), ('--vm-gradient', '--vm-queue')):
                 result = subprocess.run(['bash', str(SCRIPT), directory,
                                          gate, other], capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)

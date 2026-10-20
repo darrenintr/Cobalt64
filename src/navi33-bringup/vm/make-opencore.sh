@@ -27,7 +27,7 @@ VM_DIR="${VM_DIR:-$HOME/macos tahoe}"
 die() { echo "make-opencore: $*" >&2; exit 1; }
 [ $# -ge 1 ] || die "usage: $0 ARTIFACT_DIR [--oc OPENCORE_RELEASE_DIR] [--hostfb FILE] [--dma-preflight] [--output FILE.qcow2] [--psp-load]"
 ART="$(cd -- "$1" && pwd)"; shift
-PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; SMU_SCPM=0; MES_START=0; MEC_QUEUE=0; GRADIENT=0; AUTOSTART=0; VM_QUEUE=0
+PSP_LOAD=0; PSP_RING=0; PSP_FW=0; PSP_AUTOLOAD=0; SMU_ENABLE=0; SMU_SCPM=0; MES_START=0; MEC_QUEUE=0; GRADIENT=0; AUTOSTART=0; VM_QUEUE=0; VM_GRADIENT=0
 FB=0; OWNER_PROBE=0; OWNER_RECOVERY=0; OWNER_HOLD=0; OWNER_PHYSICAL=0; DMA_PREFLIGHT=0; OCREL=""; HOSTFB=""; OUT_NAME="OpenCore-navi33.qcow2"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,6 +37,7 @@ while [ $# -gt 0 ]; do
     --mec-queue) MEC_QUEUE=1 ;;
     --gradient) GRADIENT=1 ;;
     --vm-queue) VM_QUEUE=1 ;;   # kext 0.0.26+: VMID1 translated queue (G36)
+    --vm-gradient) VM_GRADIENT=1 ;;   # kext 0.0.27+: gradient from VMID 1, 4-level table (G38)
     --autostart) AUTOSTART=1 ;;   # kext 0.0.25+: the whole bring-up from start()
     --fb) FB=1 ;;   # G37: Navi33GOPFB (Aux KC) adopts the host console; needs --hostfb
     --psp-load) PSP_LOAD=1 ;;
@@ -61,7 +62,7 @@ done
 [ -z "$OCREL" ] || [ -f "$OCREL/X64/EFI/OC/OpenCore.efi" ] || die "no X64/EFI/OC/OpenCore.efi in $OCREL"
 [ -z "$HOSTFB" ] || [ -r "$HOSTFB" ] || die "cannot read $HOSTFB"
 [ "$FB" = 0 ] || [ -n "$HOSTFB" ] || die "--fb needs --hostfb (the guest has no GOP console)"
-[ $((PSP_LOAD + PSP_RING + PSP_FW + SMU_ENABLE + MES_START + MEC_QUEUE + GRADIENT + AUTOSTART + VM_QUEUE)) -le 1 ] || die "open one write gate at a time: --psp-load, --psp-ring, --psp-fw, --smu-enable, --mes-start, --mec-queue, --gradient, --autostart or --vm-queue"
+[ $((PSP_LOAD + PSP_RING + PSP_FW + SMU_ENABLE + MES_START + MEC_QUEUE + GRADIENT + AUTOSTART + VM_QUEUE + VM_GRADIENT)) -le 1 ] || die "open one write gate at a time: --psp-load, --psp-ring, --psp-fw, --smu-enable, --mes-start, --mec-queue, --gradient, --autostart, --vm-queue or --vm-gradient"
 [ "$PSP_AUTOLOAD" = 0 ] || [ "$PSP_FW" = 1 ] || die "--psp-autoload (AUTOLOAD_RLC) only together with --psp-fw"
 KEXT="$ART/EFI/OC/Kexts/Navi33Probe.kext"
 SRC="$VM_DIR/boot/OpenCore.qcow2"
@@ -94,7 +95,7 @@ if [ -n "$OCREL" ]; then
   OCVER="$(basename "$OCREL"), OpenCore.efi sha256 $(sha256sum "$OCREL/X64/EFI/OC/OpenCore.efi" | cut -c1-16)…"
 fi
 python3 -I - "$WORK/config.plist" "$PSP_LOAD" "$KEXT/Contents/MacOS/Navi33Probe" \
-  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" "$OWNER_HOLD" "$OWNER_PHYSICAL" "$MES_START" "$MEC_QUEUE" "$GRADIENT" "$AUTOSTART" "$VM_QUEUE" "$FB" <<'EOF'
+  "$OUT_DIR/OpenCore-navi33.txt" "$OCVER" "$HOSTFB" "$PSP_RING" "$PSP_FW" "$PSP_AUTOLOAD" "$SMU_ENABLE" "$SMU_SCPM" "$DMA_PREFLIGHT" "$OWNER_PROBE" "$OWNER_RECOVERY" "$OWNER_HOLD" "$OWNER_PHYSICAL" "$MES_START" "$MEC_QUEUE" "$GRADIENT" "$AUTOSTART" "$VM_QUEUE" "$FB" "$VM_GRADIENT" <<'EOF'
 import plistlib,struct,sys,uuid
 path,psp_load,binary,manifest,ocver,hostfb=sys.argv[1],sys.argv[2]=="1",sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6]
 psp_ring=sys.argv[7]=="1"
@@ -113,6 +114,7 @@ gradient=len(sys.argv)>19 and sys.argv[19]=="1"
 autostart=len(sys.argv)>20 and sys.argv[20]=="1"
 vm_queue=len(sys.argv)>21 and sys.argv[21]=="1"
 fbon=len(sys.argv)>22 and sys.argv[22]=="1"
+vm_gradient=len(sys.argv)>23 and sys.argv[23]=="1"
 c=plistlib.load(open(path,"rb"))
 add=[k for k in c["Kernel"]["Add"] if k.get("BundlePath")!="Navi33Probe.kext"]
 add.append({"Arch":"x86_64","BundlePath":"Navi33Probe.kext",
@@ -134,7 +136,8 @@ args+=["-v","debug=0x108","serial=3","msgbuf=1048576",
        "navi33-mes-start=1" if mes_start else "navi33-mec-queue=1" if mec_queue else
        "navi33-gradient=1" if gradient else
        "navi33-autostart=1" if autostart else
-       "navi33-vm-queue=1" if vm_queue else "navi33-psp-off=1"]
+       "navi33-vm-queue=1" if vm_queue else
+       "navi33-vm-gradient=1" if vm_gradient else "navi33-psp-off=1"]
 args.append("navi33-dma-preflight=1" if dma_preflight else "navi33-dma-off=1")
 if owner_probe: args.append("navi33-owner-probe=1")
 if owner_recovery: args.append("navi33-owner-recovery=1")
@@ -145,7 +148,7 @@ if not smu_enable and not autostart: args.append("navi33-smu-off=1")
 if not mes_start and not autostart: args.append("navi33-mes-off=1")
 if not mec_queue and not autostart: args.append("navi33-mec-off=1")
 if not gradient: args.append("navi33-gradient-off=1")
-if not vm_queue: args.append("navi33-vm-off=1")
+if not vm_queue and not vm_gradient: args.append("navi33-vm-off=1")
 if smu_scpm: args.append("navi33-smu-scpm=1")
 if psp_autoload: args.append("navi33-psp-autoload=1")   # AUTOLOAD_RLC: its own gate
 fb={}

@@ -568,3 +568,24 @@ for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
     code=(root/unattended).read_text()
     assert '--vm-queue' not in code and 'N33_VM_QUEUE_RUN' not in code
 print('Navi33 VMID1 queue allowlist (GFXHUB only), independent gate and plan boundary: passed')
+
+# VMID1 gradient (G38): own gate and latch; GFXHUB and SH_MEM only, never MMHUB.
+vgw=(root/'src/Navi33DarwinVmGradient.cpp').read_text()
+vgh=(root/'src/Navi33Gfx11VmGradient.h').read_text()
+assert 'if(vmgMode)req.attempted=&vmgAttempted_;' in load_fn
+assert 'if(vmgMode)req.writeGate=!killed && !vmKilled &&' in load_fn
+assert 'PE_parse_boot_argn("navi33-vm-gradient"' in load_fn
+assert 'return executeVmGradient(pci,req);' in writer
+assert 'if(!vg::allowed(io->r,off)' in vgw
+assert 'kIOMapInhibitCache|kIOMapReadOnly' in vgw          # the screen is only read by the CPU
+assert 'vg::Hw hw{&io,read32,nullptr,nullptr,vramRead,nullptr,sleepMs};' in vgw
+assert 'mmhub' not in vgh.lower()
+assert 'Navi33DarwinVmGradient.o' in makefile
+for forbidden in ('->configWrite','setMemoryEnable','setBusMasterEnable','setPowerState','WREG32('):
+    assert forbidden not in vgw, f'VMID1 gradient stage gained {forbidden}'
+for forbidden in ('<IOKit/','IOLog(','WREG32(','RREG32(','mapDeviceMemory'):
+    assert forbidden not in vgh
+for unattended in ('usb/run.sh','usb/navi33-autorun.sh','tools/n33autorun.c'):
+    code=(root/unattended).read_text()
+    assert '--vm-gradient' not in code and 'N33_VM_GRADIENT_RUN' not in code
+print('Navi33 VMID1 gradient allowlist (GFXHUB + SH_MEM only), independent gate and plan boundary: passed')

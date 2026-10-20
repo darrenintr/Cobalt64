@@ -105,6 +105,14 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      (`navi33-psp-off`, `-smu-off`, `-mes-off`, `-mec-off`, `navi33-hw-off`) close
      it. VM first (`make-opencore.sh --autostart`); not on the stick unless the
      user asks. Result in ioreg `Navi33,Autostart`.
+   - **VMID 1 stages (Phase B2):** G36 (kext 0.0.26, `navi33-vm-queue=1`, run 2026-10-19
+     after the user's "Continue" for B2) and G38 (kext 0.0.27, ABI 19,
+     `navi33-vm-gradient=1`, built 2026-10-20 after the user asked to push toward a
+     functional driver) write only GFXHUB TLB/L2/identity/context-1 registers, GRBM
+     select, SCRATCH_REG0, the poll trigger, the queue-1 HQD block (G38 also
+     SH_MEM_CONFIG/SH_MEM_BASES under VMID 1) and a 1 MiB VRAM window (251 / 252 MiB).
+     Never MMHUB. Both need the autostart state with an untouched hub, so only one of
+     them per power cycle; `navi33-vm-off` or `navi33-psp-off` kills both; own latches.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing
