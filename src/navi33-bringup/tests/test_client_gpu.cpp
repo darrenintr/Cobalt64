@@ -36,6 +36,10 @@ struct Fake {
     std::map<uint32_t,uint64_t> rptr;                               // per queue, dwords consumed
     std::vector<std::pair<uint64_t,uint32_t>> writes;
     std::set<uint32_t> paused;                                      // queues that do not run
+    // An HQD that processed an EOP event and was dequeued keeps its EOP fetcher state until a
+    // load writes CP_HQD_EOP_RPTR.INIT_FETCHER (bit 31); until then RELEASE_MEM never lands
+    // (the card, 2026-10-20 13:19-13:58, with bit 30 written instead).
+    std::set<uint32_t> eopRan, eopStale;
     unsigned dispatches=0,flushes=0; bool noAck=false,stuck=false,noFlushModel=false;
     explicit Fake(cg::Regs regs):r(regs) {
         const v1::Regs &v=r.g.v;
@@ -114,6 +118,8 @@ struct Fake {
                 }
                 masks=0;
             } else if(op==gd::kReleaseMem) {
+                if(eopStale.count(k)){i+=1u+n;continue;}
+                eopRan.insert(k);
                 const uint64_t to=b[2]|(uint64_t(b[3])<<32);wr(k,to,b[4]);
                 if((b[1]>>29)==2u)wr(k,to+4u,b[5]);
             }
@@ -150,10 +156,18 @@ struct Fake {
         if(off==f.r.g.v.l2c2 && (v&3u)==3u){++f.flushes;if(!f.noFlushModel)f.tlb.clear();}
         if(off==f.r.dequeue && v==cg::kDrainPipe && !f.stuck) {
             f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdActive)}]=0u;
-            for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.rptr[k]=0;   // a reload starts the ring at 0
+            for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel()) {
+                f.rptr[k]=0;                                                     // a reload starts the ring at 0
+                if(f.eopRan.count(k))f.eopStale.insert(k);
+            }
         }
         // GRBM select: 0, a VMID (SH_MEM), or a client HQD: never MES's queues 2+, never pipe 0 queue 0 (G34's).
         if(off==f.r.g.v.q.grbm && v && !(v&0xf0u))assert(((v>>2)&3u)==1u && ((v>>8)&7u)<=1u && ((v&3u) || ((v>>8)&7u)==1u));
+        if(off==mq::hqd(f.r.g.v.q,mq::kEopRptr) && (v&0x80000000u))
+            for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.eopStale.erase(k);
+        // Activation fetches the ring (G36): only once ACTIVE is set.
+        if(off==mq::hqd(f.r.g.v.q,kiq::kCpHqdActive) && (v&1u))
+            for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.runQueue(k);
         if(off==f.r.g.v.q.poll1)for(uint32_t i=0;i<cg::kClients;++i)if(v&cg::pollBit(i))f.runQueue(cg::kFirstVmid+i);
 
         return true;

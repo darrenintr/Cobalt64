@@ -28,7 +28,12 @@ constexpr uint32_t kGrbmGfxCntl=0x0900u, kPrgrmCntrStart=0x2900u, kPrgrmCntrStar
 constexpr uint32_t kScratchReg0=0x2040u, kRlcBootload=0x4e82u, kSosAlive=0x91u;
 constexpr uint32_t kHqdFirst=0x1fa9u, kHqdLast=0x1fe0u, kHqdHole=0x1fb9u; // CP_MQD_BASE_ADDR..CP_HQD_PQ_WPTR_HI
 constexpr uint32_t kPollCntl1=0x1e24u, kEopRptr=0x1fd1u;
-constexpr uint32_t kEopInitFetcher=1u<<30;      // CP_HQD_EOP_RPTR.INIT_FETCHER
+// CP_HQD_EOP_RPTR.INIT_FETCHER is bit 31 (gc_11_0_0_sh_mask.h; bit 30 is the status bit
+// RPTR_EQ_CSMD_WPTR). Until kext 0.0.46 this was bit 30, so the EOP fetcher was never
+// restarted: a fresh HQD still worked (power-on fetcher state), but a reloaded one queued its
+// end-of-pipe events and never processed them (client stalls, 2026-10-20 13:19-13:58).
+constexpr uint32_t kEopInitFetcher=1u<<31;
+static_assert(kEopInitFetcher==0x80000000u,"CP_HQD_EOP_RPTR__INIT_FETCHER_MASK");
 constexpr uint32_t kDoorbellEn=1u<<30;          // CP_HQD_PQ_DOORBELL_CONTROL.DOORBELL_EN
 // gc_11_0_2_mec.bin (pinned, SHA-256 19bf080d…): gfx_firmware_header_v2_0
 // ucode_start_addr_lo 0x3000, _hi 0x70000. Upstream writes lo>>2 | hi<<30 (u32)

@@ -541,9 +541,13 @@ private:
         if(!sel(qsel(index(c))))return Code::HwFailed;
         uint32_t active=0;
         if(!rd(mq::hqd(q,kiq::kCpHqdActive),active) || (active&1u)){sel(0u);return Code::HwFailed;}
-        for(uint32_t dw=mq::kHqdFirst;dw<=mq::kHqdLast;++dw)
-            if(dw!=mq::kHqdHole && !wr(mq::hqd(q,dw),img.dw[gfx11_mqd::kCpMqdBaseAddrLo+(dw-mq::kHqdFirst)]))
-                {sel(0u);return Code::HwFailed;}
+        // As hqd_load_v11: the block with ACTIVE still 0 (KFD's MQD leaves cp_hqd_active 0; ours,
+        // from gfx_v11_0_compute_mqd_init, has 1, which made a reused HQD live while the rest of
+        // its block still held the previous client's values), then the EOP fetcher, then ACTIVE.
+        for(uint32_t dw=mq::kHqdFirst;dw<=mq::kHqdLast;++dw) {
+            const uint32_t v=img.dw[gfx11_mqd::kCpMqdBaseAddrLo+(dw-mq::kHqdFirst)];
+            if(dw!=mq::kHqdHole && !wr(mq::hqd(q,dw),dw==kiq::kCpHqdActive ? (v&~1u) : v)){sel(0u);return Code::HwFailed;}
+        }
         const uint64_t poll=c.queue.va+mq::kWptrOff;
         const struct { uint32_t dw; uint32_t val; } tail[]={
             {kiq::kCpHqdPqDoorbellControl,(img.dw[gfx11_mqd::kCpHqdPqDoorbellControl]&~(kDbOffsetMask|kDbEn))|
