@@ -465,6 +465,11 @@ output survives a hang and Linux can inspect a stuck guest.
   sources (`boot_args->Video`, `PE_state.video`) with their classification
   (`src/Navi33ConsoleSources.h`). No resolver yet; the plan is unchanged. Needs
   one kill-switch-closed bare-metal stick boot to collect the values.
+  CI `39426832847` green; artifact `cache/artifact-0.0.63-ci`, UUID
+  `1F45175E-BFF8-3E5D-909C-A8245B3BCBF7`. **Staged on the stick 2026-10-20**
+  (kext and tools `diff`/`cmp`-identical to the artifact; boot-args unchanged,
+  all write kill switches set; old files in `navi33/backup-0.0.20-pre-0.0.63/`).
+  Next: the user's bare-metal boot, then read the newest `results-*-boot.txt`.
 - **Latest evidence:** 0.0.61, `runs/20261020-200423`, loaded/cached UUID
   `7CE1D94A-FD2C-39B0-9285-163AA3578AF5`: remap/flush written (3 HDP writes),
   FlushReadbackFailed because `0x1ff0` (8176 MiB) failed the old 256 MiB
