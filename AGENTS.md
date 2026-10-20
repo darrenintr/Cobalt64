@@ -467,7 +467,9 @@ output survives a hang and Linux can inspect a stuck guest.
   BAR0 (inside BAR0, same geometry only); the plan's HUBP check still proves the
   offset. `Navi33,ConsolePick` reports the choice. **Confirmed on bare metal
   2026-10-20 21:29: PLAN_OK (state 14), nothing written**, then **21:43: the first
-  bare-metal PSP sOS load succeeded** (state 20, 8 writes; findings log). Kill switch
+  bare-metal PSP sOS load succeeded** (state 20, 8 writes), and **22:01: the bare-metal
+  ring stage succeeded** (state 28, 6 writes, TMR 19,922,944 B; findings log). A restart
+  resets the PSP, so later stages must redo sOS + ring in the same boot. Kill switch
   restored on the stick. Later bare-metal stages need their own approval.
   CI `39429401671` green; artifact `cache/artifact-0.0.64-ci`, UUID
   `994B713D-5C15-3C05-88A7-2E4FD73E9D44`. **Staged on the stick 2026-10-20** (kext
@@ -2685,6 +2687,23 @@ parser got two of them wrong:
   - The agent restored the pre-load config afterwards (`navi33-psp-off=1` back; the used
     one is `config.plist.used-20261020-psp-load`). The sOS stays loaded until a full
     power-off. Further bare-metal stages need their own approval.
+
+- **2026-10-20 22:00-22:01, kext 0.0.64 on bare-metal macOS: sOS reload and the PSP ring
+  stage.** User-approved; gates `navi33-psp-load=1 navi33-psp-ring=1` in place of
+  `navi33-psp-off=1` (backup `config.plist.bak-20261020-pre-ring`), run by hand in Terminal.
+  - The restart after 21:43 had reset the PSP (`C2PMSG_35` `80000000`, `C2PMSG_81` 0), so
+    the sOS was loaded again: state 20, 8 writes, 26 ms, `C2PMSG_81` `162417c0`, sOS
+    `00330024` (`psp-load-20261020-220057.txt`).
+  - `--ring-plan 3`: state 14, fresh ring registers, ring MC `0x800f100000`, TMR MC
+    `0x81fc000000` (`ring-plan-20261020-220111.txt`).
+  - `--ring 3`: **state 28, 6 register writes, cmd status 0, fence 2, TOC 2304 B, TMR
+    19,922,944 B, 26 ms**; `C2PMSG_64` `80020000`, `C2PMSG_67` `0x20`
+    (`ring-20261020-220123.txt`). Identical to the VM runs.
+  - No post-write `run.sh` results file was saved (only the 21:58 autorun, before the writes).
+  - Kill switch restored afterwards (used config saved as `config.plist.used-20261020-ring`).
+    The PSP state lasts until the PC restarts or powers off. Next bare-metal stages (SMU image,
+    IP firmware, AUTOLOAD_RLC, SCPM) need their own approval and must run in the same boot as
+    a fresh sOS + ring.
 
 ## Adding a register read
 
