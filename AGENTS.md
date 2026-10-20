@@ -145,6 +145,8 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      CP_RB_ACTIVE, CP_RB_DOORBELL_CONTROL (offset 0x116, EN) and CP_RB_DOORBELL_RANGE_LOWER/UPPER (0x458/0x7f8;
      since 0.0.51 the MEC range is moved to 0..0x450 if it covers 0x458), CP_MAX_CONTEXT, CP_DEVICE_ID,
      the gfx doorbell at BAR2 0x458 (64-bit), and
+     since 0.0.56 a zero-progress doorbell timeout can use CP_RB0_WPTR(_HI)
+     after clearing DOORBELL_EN (same ring, no replay of partial progress), and
      RB0 in a 20 KiB kernel heap buffer ('GFXR', VMID 0): upstream's clear-state preamble and a
      RELEASE_MEM ring test. Report in ioreg `Navi33,ClientGfx`; a failure leaves compute running.
      Since 0.0.53 N48N accepts GFX IBs (one ring per submission) once that ring is up: the kernel
@@ -429,7 +431,14 @@ output survives a hang and Linux can inspect a stuck guest.
   Current 0.0.54 code dropped upstream's full-range programming; an ACK alone therefore
   does not establish client-address invalidation. 0.0.55 restores only engine 17's
   LO/HI range (0xffffffff/0x1f), as previously exercised in 0.0.42, with host regression
-  coverage. Build/live retest pending at this note.
+  coverage. CI run `39389411010` passed all jobs; artifact cached. Warm follow-up
+  with 0.0.55 started at 15:55 (UUID `C0EA529C-9E93-3863-AA04-2B888E1136EE`).
+- 0.0.56 adds a bounded G40 fallback using existing authorized registers only: after
+  a doorbell timeout with both hardware WPTR and RPTR zero, clear DOORBELL_EN and
+  write CP_RB0_WPTR_HI/LO for the same ring. Partial progress is never replayed.
+  Later gfx submissions keep the selected kick method; ioreg reports `kick MMIO`
+  or `kick doorbell`. Host tests cover a dropped doorbell and refusal to replay
+  partial progress. CI/live retest pending.
 - A temporary user-space ACQUIRE_MEM prefix experiment timed out and quarantined VMID 8
   (`cold-cache-sync.txt`); it is reverted, not a fix. Do not interpret later observations
   as a clean cold run. Preserve that memory until dequeue/recovery is verified.

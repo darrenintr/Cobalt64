@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -138,7 +139,7 @@ struct Fake {
     }
     // The gfx pipe (G40): runs RB0 in VMID 0 from its RPTR to the WPTR just written, once PFP/ME are
     // unhalted, RB_ACTIVE is set and both pipes got their program counters.
-    unsigned gfxCsb=0, gfxPcs=0, gfxCntx=0, gfxFrames=0, gfxIbs=0; bool gfxBroken=false, gfxHold=false;
+    unsigned gfxCsb=0, gfxPcs=0, gfxCntx=0, gfxFrames=0, gfxIbs=0; bool gfxBroken=false, gfxHold=false, gfxDoorbellLost=false;
     void runGfx() {
         namespace gr=navi33::gfx_ring;
         const gr::Regs &g=r.gfx;
@@ -146,7 +147,7 @@ struct Fake {
         const uint64_t ring=((uint64_t(mem[g.rb0BaseHi])<<32)|mem[g.rb0Base])<<8;
         assert(ring>=kFb && mem[g.rb0Cntl]==gr::kRb0CntlValue);
         // Kicked by its doorbell (DOORBELL_EN, offset 0x116, the RB range covering it, the MEC range below it).
-        assert((mem[g.rbDoorbellCntl]&gr::kDoorbellEn) && ((mem[g.rbDoorbellCntl]&gr::kDoorbellOffsetMask)>>2)==gr::kDoorbellDword);
+        assert(!(mem[g.rbDoorbellCntl]&gr::kDoorbellEn) || ((mem[g.rbDoorbellCntl]&gr::kDoorbellOffsetMask)>>2)==gr::kDoorbellDword);
         assert(mem[g.rbDbLower]<=gr::kDoorbellByte && mem[g.rbDbUpper]>=gr::kDoorbellByte && mem[r.mecDbUpper]<gr::kDoorbellByte);
         auto at=[&](uint64_t d){return ring-kFb+4u*(d%gr::kRingDwords);};
         for(uint64_t i=gfxRptr;i<gfxWptr;) {
@@ -197,6 +198,9 @@ struct Fake {
         if(f.banked(off))f.bank[{f.sel(),off}]=v; else f.mem[off]=v;
         // GCVM_L2_CNTL2 with the invalidate bits latched keeps the hub L2 busy (the card,
         // 2026-10-20 13:58), and a busy L2 serves no invalidation engine.
+        if(off==f.r.gfx.rb0Wptr && !(f.mem[f.r.gfx.rbDoorbellCntl]&navi33::gfx_ring::kDoorbellEn)) {
+            f.gfxWptr=v|(uint64_t(f.mem[f.r.gfx.rb0WptrHi])<<32);f.runGfx();
+        }
         if(off==f.r.g.v.l2c2)f.mem[f.r.l2Status]=(v&3u) ? 1u : 0u;
         if(off==f.r.invReq) {
             uint32_t ack=0;
@@ -250,7 +254,7 @@ struct Fake {
     static bool doorbell(void *c,uint32_t byteOff,uint64_t v) {
         auto &f=*static_cast<Fake *>(c);
         if(byteOff==navi33::gfx_ring::kDoorbellByte) {           // the gfx ring (RB range, not MEC's)
-            if((f.mem[f.r.nbioAperEn]&1u) && byteOff>=f.mem[f.r.gfx.rbDbLower] && byteOff<=f.mem[f.r.gfx.rbDbUpper]){f.gfxWptr=v;f.runGfx();}
+            if(!f.gfxDoorbellLost && (f.mem[f.r.nbioAperEn]&1u) && byteOff>=f.mem[f.r.gfx.rbDbLower] && byteOff<=f.mem[f.r.gfx.rbDbUpper]){f.gfxWptr=v;f.runGfx();}
             return true;
         }
         ++f.rings;                                                  // client queue doorbells
@@ -553,6 +557,12 @@ int main() {
         Fake c(r);c.mem[r.gfx.meCntl]=0x153c0000u;assert(c.dev.start(r,c.hw(),c.heap,kFb)==cg::Code::Ok);
         assert(c.dev.stats().gfx.state==cg::GfxState::Ok && !(c.mem[r.gfx.meCntl]&(gr::kPfpReset|gr::kMeReset|gr::kPfpHalt|gr::kMeHalt)));
         // A pipe that never runs leaves the state at Timeout and compute untouched.
+        auto lost=std::make_unique<Fake>(r);lost->gfxDoorbellLost=true;
+        assert(lost->dev.start(r,lost->hw(),lost->heap,kFb)==cg::Code::Ok);
+        assert(lost->dev.gfxReady() && lost->dev.stats().gfx.mmioKick && lost->gfxCsb>0u);
+        lost=std::make_unique<Fake>(r);lost->gfxBroken=true;lost->mem[r.gfx.rb0Rptr]=4u;
+        assert(lost->dev.start(r,lost->hw(),lost->heap,kFb)==cg::Code::Ok);
+        assert(lost->dev.stats().gfx.state==cg::GfxState::Timeout && !lost->dev.stats().gfx.mmioKick);
         Fake h(r);h.gfxBroken=true;assert(h.dev.start(r,h.hw(),h.heap,kFb)==cg::Code::Ok && h.dev.stats().gfx.state==cg::GfxState::Timeout);
         App a=setup(h,co,k,7,0x100000000ull);uint64_t s=0,ret=0;const cg::Device::Ib ia{0x100030000ull,ibDwords(k)};
         assert(h.dev.submit(a.slot,&ia,1,s)==cg::Code::Ok && h.dev.wait(a.slot,s,1000,ret)==cg::Code::Ok && imageOk(h,a,7));

@@ -201,7 +201,7 @@ struct HubL2 { uint32_t cntl2Before=0, statusBefore=0, cntl2=0, status=0; };
 // The kernel's gfx ring at start: CP_ME_CNTL before and after, CP_STAT after the unhalt, the
 // ring's RPTR and the ring-test fence, and how far it got (GfxState).
 enum class GfxState : uint8_t { Off=0, NoMemory, Halt, Config, Resume, Unhalt, Timeout, Ok };
-struct GfxReport { GfxState state=GfxState::Off; uint32_t meBefore=0, me=0, stat=0, rptr=0, fence=0, wptr=0; uint64_t ringMc=0; };
+struct GfxReport { GfxState state=GfxState::Off; uint32_t meBefore=0, me=0, stat=0, rptr=0, fence=0, wptr=0; uint64_t ringMc=0; bool mmioKick=false; };
 struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
                FlushMiss miss{}; HubL2 l2{}; GfxReport gfx{};
                uint64_t computeRetiredEver=0, gfxRetiredEver=0; uint32_t quarantinedEver=0; bool tlbUnsafe=false;
@@ -499,7 +499,7 @@ public:
         }
         const uint64_t end=gfxWptr_+k;
         const uint32_t wp[2]={static_cast<uint32_t>(end),static_cast<uint32_t>(end>>32)};
-        if(!vramPut(gfxMemVram_+gr::kWptrOff,wp,2u) || !h_.doorbell(h_.ctx,gr::kDoorbellByte,end))return Code::HwFailed;
+        if(!vramPut(gfxMemVram_+gr::kWptrOff,wp,2u) || !gfxKick(end))return Code::HwFailed;
         gfxWptr_=end;gfxSeq_=ks;gfxEnd_[ks%64u]=end;
         c->seqEnd[s%64u]=c->wptr;c->gfxMask|=1ull<<(s%64u);c->emitted=s;
         seq=s;return Code::Ok;
@@ -669,6 +669,27 @@ private:
             h_.delayUs(h_.ctx,100u);
         }
         rd(g.rb0Rptr,gfx_.rptr);
+        // If the doorbell delivered no WPTR and fetched nothing, try the same
+        // ring through upstream's non-doorbell WPTR path. Never restart a ring
+        // that made partial progress: its packet boundary is unknown here.
+        uint32_t seenWptr=0;
+        if(gfx_.state==GfxState::Timeout && !gfx_.rptr && rd(g.rb0Wptr,seenWptr) && !seenWptr) {
+            uint32_t control=0;
+            if(!rd(g.rbDoorbellCntl,control) || !wr(g.rbDoorbellCntl,control&~gr::kDoorbellEn))return;
+            gfx_.mmioKick=true;
+            if(!gfxKick(k))return;
+            for(uint32_t us=0;us<gr::kFenceTimeoutUs;us+=100u) {
+                h_.vramRead(h_.ctx,gfxMemVram_+gr::kFenceOff,&gfx_.fence,1u);
+                if(gfx_.fence==gr::kFenceValue){gfx_.state=GfxState::Ok;break;}
+                h_.delayUs(h_.ctx,100u);
+            }
+            rd(g.rb0Rptr,gfx_.rptr);
+        }
+    }
+    bool gfxKick(uint64_t end) {
+        if(!gfx_.mmioKick)return h_.doorbell(h_.ctx,gfx_ring::kDoorbellByte,end);
+        return sel(0u) && wr(r_->gfx.rb0WptrHi,static_cast<uint32_t>(end>>32)) &&
+               wr(r_->gfx.rb0Wptr,static_cast<uint32_t>(end));
     }
     // Write p (whole packets, a multiple of 8 dwords, ending in the fence of seq emitted+1)
     // to the ring, publish the WPTR and start the queue.

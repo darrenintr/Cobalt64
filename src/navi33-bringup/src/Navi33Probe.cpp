@@ -1232,9 +1232,9 @@ IOReturn Navi33Probe::gpuContext(const void *client,uint32_t op,uint64_t *vmid) 
     setProperty("Navi33,ClientGpu",line);
     {   // G40: the kernel's gfx ring (state 7 = ring test fence landed)
         char gl[192];
-        snprintf(gl,sizeof(gl),"state %u CP_ME_CNTL %x->%x CP_STAT %x RB0 MC %llx WPTR %x RPTR %x fence %x",
+        snprintf(gl,sizeof(gl),"state %u CP_ME_CNTL %x->%x CP_STAT %x RB0 MC %llx WPTR %x RPTR %x fence %x kick %s",
                  static_cast<unsigned>(st.gfx.state),st.gfx.meBefore,st.gfx.me,st.gfx.stat,
-                 static_cast<unsigned long long>(st.gfx.ringMc),st.gfx.wptr,st.gfx.rptr,st.gfx.fence);
+                 static_cast<unsigned long long>(st.gfx.ringMc),st.gfx.wptr,st.gfx.rptr,st.gfx.fence,st.gfx.mmioKick ? "MMIO" : "doorbell");
         setProperty("Navi33,ClientGfx",gl);
     }
     // Every client-capable HQD, at service start and now (diagnostics, reads only).
