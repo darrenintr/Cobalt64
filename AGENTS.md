@@ -134,6 +134,9 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      (read-modify-write, only if clear), and 64-bit writes into BAR2 at the six client
      doorbells (byte 0x200 + 8 k); before-values in ioreg. Since 0.0.37 device start also
      drain-dequeues client HQDs an earlier boot left active (CP_HQD_DEQUEUE_REQUEST).
+     Since 0.0.42 device start also sets invalidation engine 17's address range
+     (`GCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32/HI32` = `0xffffffff`/`0x1f`, as upstream
+     `gfxhub_v3_0_program_invalidation`) if it differs; before-values in ioreg.
    No other register write, firmware load or command submission.
 5. **Never modify the VBIOS, permanently (user's rule, 2026-10-18).** No
    flashing, no writing, no firmware-update or vBIOS-flash tools, nothing

@@ -67,6 +67,11 @@ constexpr uint32_t ctxEndLo(uint32_t k) { return 0x1733u+2u*k; }
 static_assert(ctxCntl(1)==0x1689u && ctxBaseLo(2)==0x16f7u && ctxStartLo(2)==0x1717u && ctxEndLo(7)+1u==0x1742u,
               "context register strides (gfxhub_v3_0 ctx_distance 1, ctx_addr_distance 2)");
 constexpr uint32_t kInvReq17=0x16bcu, kInvAck17=0x16ceu, kDequeueRequest=0x1fc1u;
+// GCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32/HI32, set by gfxhub_v3_0_program_invalidation at
+// GART enable (all 18 engines, 0xffffffff / 0x1f), which no stage of ours did: engine 17
+// kept the request and never ACKed on the card (2026-10-20 10:26, REQ f80020, ACK 0).
+constexpr uint32_t kInvRangeLo17=0x16f1u, kInvRangeHi17=0x16f2u, kInvRangeLoValue=0xffffffffu, kInvRangeHiValue=0x1fu;
+static_assert(kInvRangeLo17==0x16cfu+2u*17u && kInvRangeHi17==kInvRangeLo17+1u,"eng_addr_distance 2");
 constexpr uint32_t kDrainPipe=1u;
 constexpr uint32_t kGbAddrConfig=0x13deu;                       // regGB_ADDR_CONFIG, read only
 // Doorbells (the only way upstream gfx11 kicks a compute queue): gc_11_0_0_offset.h
@@ -101,7 +106,7 @@ enum class Code : uint8_t {
 struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
-    uint64_t invReq=0, invAck=0, dequeue=0;
+    uint64_t invReq=0, invAck=0, invRangeLo=0, invRangeHi=0, dequeue=0;
     uint64_t gbAddrConfig=0;        // read only (QueryInfo)
     uint64_t mecDbLower=0, mecDbUpper=0, nbioAperEn=0, pqStatus=0;
     bool valid=false;
@@ -119,7 +124,8 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
         const uint32_t dws[7]={ctxCntl(k),ctxBaseLo(k),ctxBaseLo(k)+1u,ctxStartLo(k),ctxStartLo(k)+1u,ctxEndLo(k),ctxEndLo(k)+1u};
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
-    if(!one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) || !one(kDequeueRequest,r.dequeue) ||
+    if(!one(kInvReq17,r.invReq) || !one(kInvAck17,r.invAck) || !one(kInvRangeLo17,r.invRangeLo) ||
+       !one(kInvRangeHi17,r.invRangeHi) || !one(kDequeueRequest,r.dequeue) ||
        !one(kGbAddrConfig,r.gbAddrConfig) || !one(kMecDbLower,r.mecDbLower) || !one(kMecDbUpper,r.mecDbUpper) ||
        !one(kCpPqStatus,r.pqStatus))return r;
     IPEntry nbif{};
@@ -129,13 +135,13 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes) {
     r.valid=true;return r;
 }
 // Writable registers: the GFXHUB words, contexts 2..7, invalidation engine 17's
-// request, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
+// request and address range, SH_MEM_CONFIG/BASES, GRBM select, the poll trigger and the HQD block
 // (CP_HQD_DEQUEUE_REQUEST lies inside it). Never the MEC program counters/control,
 // SCRATCH_REG0, context 0/1, the fault registers or anything outside GC.
 inline bool allowed(const Regs &r,uint64_t off) {
     if(!r.valid || off==r.g.v.q.scratch || off==r.g.v.ctx || off==r.g.v.baseLo || off==r.g.v.baseHi ||
        off==r.g.v.startLo || off==r.g.v.startHi || off==r.g.v.endLo || off==r.g.v.endHi)return false;
-    if(off==r.invReq || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
+    if(off==r.invReq || off==r.invRangeLo || off==r.invRangeHi || off==r.mecDbLower || off==r.mecDbUpper || off==r.nbioAperEn || off==r.pqStatus)return true;
     for(const auto &c:r.ctx)for(uint64_t o:c)if(off==o)return true;
     return vg::allowed(r.g,off);
 }
@@ -174,8 +180,9 @@ struct FlushMiss { uint32_t vmid=0, req=0, reqBack=0, ack=0, misses=0; };
 // The doorbell setup found at start (before any write) and after it.
 struct DoorbellSetup { uint32_t aperBefore=0, lowerBefore=0, upperBefore=0, aper=0, lower=0, upper=0;
                        uint32_t pqBefore=0, pq=0, reclaimed=0; };
+struct InvRange { uint32_t loBefore=0, hiBefore=0, lo=0, hi=0; };
 struct Stats { uint32_t clients=0, bos=0; uint64_t emitted=0, retired=0, retiredBytes=0; uint32_t writes=0, tlbFlushes=0;
-               FlushMiss miss{}; DoorbellSetup db{}; };
+               FlushMiss miss{}; DoorbellSetup db{}; InvRange inv{}; };
 
 class Device {
 public:
@@ -204,6 +211,12 @@ public:
             return Code::Hub;                // a hub we do not recognise: touch nothing
         }
         if(fault)faultSeen_=fault;
+        // Engine 17's address range as gfxhub_v3_0_program_invalidation (LO32 is all-ones, so raw reads).
+        if(!h.read(h.ctx,r.invRangeLo,&inv_.loBefore) || !h.read(h.ctx,r.invRangeHi,&inv_.hiBefore))return Code::HwFailed;
+        if(inv_.loBefore!=kInvRangeLoValue && !wr(r.invRangeLo,kInvRangeLoValue))return Code::HwFailed;
+        if(inv_.hiBefore!=kInvRangeHiValue && !wr(r.invRangeHi,kInvRangeHiValue))return Code::HwFailed;
+        if(!h.read(h.ctx,r.invRangeLo,&inv_.lo) || !h.read(h.ctx,r.invRangeHi,&inv_.hi) ||
+           inv_.lo!=kInvRangeLoValue || inv_.hi!=kInvRangeHiValue)return Code::HwFailed;
         // Doorbells: the MEC range as gfx_v11_0_kiq_init_register, the NBIO aperture as
         // nbio_v4_3_enable_doorbell_aperture; only what is not already so is written.
         uint32_t aper=0,lower=0,upper=0,pq=0;
@@ -465,7 +478,7 @@ public:
             ++s.clients;s.emitted+=c.emitted;s.retired+=c.retired;
             for(const Bo &b:c.bo)if(b.live)++s.bos;
         }
-        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.miss=miss_;s.db=db_;return s;
+        s.writes=writes_;s.tlbFlushes=flushes_;s.retiredBytes=retiredBytes_;s.miss=miss_;s.db=db_;s.inv=inv_;return s;
     }
 private:
     static constexpr uint32_t kIndirectBuffer=0x3fu, kIbValid=1u<<23;   // nvd.h
@@ -635,6 +648,7 @@ private:
     uint32_t select_=0, writes_=0, flushes_=0, faultSeen_=0;
     uint64_t retiredBytes_=0;
     FlushMiss miss_{};
+    InvRange inv_{};
     DoorbellSetup db_{};
     bool started_=false;
 };
