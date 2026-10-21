@@ -478,8 +478,10 @@ output survives a hang and Linux can inspect a stuck guest.
   restored on the stick. Later bare-metal stages need their own approval.
 - **Kext 0.0.66 built 2026-10-21** (CI `39555047350` green, UUID
   `07980E84-9171-31D1-8465-BCEA8F8F8E45`, cache `artifact-0.0.66-ci`): AUTOLOAD-only latch so the
-  whole sOS -> SCPM sequence fits one bare-metal boot. Not yet on the stick; the new
-  `instruction.txt` (steps a-f plus `run.sh`) is drafted for it.
+  whole sOS -> SCPM sequence fits one bare-metal boot. **Staged on the stick 2026-10-21** (the user ran
+  the staging script; copy verified; 0.0.65 in `navi33/backup-0.0.65-pre-0.0.66/`). Gates open:
+  psp-load/ring/fw/autoload, smu-enable, smu-scpm (backup `config.plist.bak-20261021-pre-scpm`).
+  `instruction.txt` runs sOS, ring, SMU, records 0..25, AUTOLOAD_RLC, SCPM, `run.sh` in one boot.
 - **Kext 0.0.65 staged on the stick 2026-10-20** (CI `39436374207`, UUID
   `708E0DED-0AC0-3658-A9D1-B091DB60295E`, cache `artifact-0.0.65-ci`; 0.0.64 files in
   `navi33/backup-0.0.64-pre-0.0.65/`), plus the nine pinned firmware files in `navi33/fw/`
