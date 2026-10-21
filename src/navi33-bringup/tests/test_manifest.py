@@ -537,6 +537,7 @@ assert 'bool gradAttempted_ = false;' in (root/'src/Navi33Probe.hpp').read_text(
 assert 'return executeGradient(pci,req);' in writer
 assert 'if(!gr::allowed(io->r,off)' in grad
 assert 'kIOMapInhibitCache|kIOMapReadOnly' in grad          # the screen is only read by the CPU
+assert 'screen=gr::consoleScreen(win.fbBaseMc+win.consoleOffset,console.bytes,req.consoleWidth,' in grad
 assert 'gr::Hw hw{&io,read32,nullptr,nullptr,vramRead,nullptr,sleepMs};' in grad
 assert 'sha256::equal(sha256::hash(co,bytes),kCodeObjectSha256)' in gradh
 assert 'Navi33DarwinGradient.o' in makefile

@@ -756,6 +756,8 @@ static void fillConsole(navi33::darwin_psp::Request &req,IOService *self) {
         const navi33::psp13load::Range c=navi33::psp13load::bootConsole(
             ba->Video.v_baseAddr,ba->Video.v_rowBytes,ba->Video.v_height);
         req.consolePhys=c.phys;req.consoleBytes=c.bytes;
+        req.consoleWidth=ba->Video.v_width;req.consoleHeight=ba->Video.v_height;
+        req.consoleRow=ba->Video.v_rowBytes;req.consoleDepth=ba->Video.v_depth;
     }
     uint64_t bar0=0u,bar0Bytes=0u;
     bar0Of(self ? OSDynamicCast(IOPCIDevice,self->getProvider()) : nullptr,bar0,bar0Bytes);

@@ -17,6 +17,7 @@ struct Request {
     const uint8_t *fw=nullptr;    // psp_13_0_7_sos.bin
     size_t fwBytes=0u;
     uint64_t consolePhys=0u, consoleBytes=0u; // boot_args->Video, physical
+    uint32_t consoleWidth=0u, consoleHeight=0u, consoleRow=0u, consoleDepth=0u; // its geometry
     // navi33-hostfb-offset/-bytes: the host's view, used only without the above.
     bool hostConsole=false;
     uint64_t hostConsoleOffset=0u, hostConsoleBytes=0u;

@@ -52,6 +52,15 @@ inline bool allowed(const Regs &r,uint64_t off) {
         off==mq::hqd(r.q,kiq::kCpHqdPqWptrLo) || off==mq::hqd(r.q,kiq::kCpHqdPqWptrHi));
 }
 struct Screen { uint64_t mc=0; uint32_t width=0, height=0, pitch=0; };  // width 0: no screen pass
+// The boot console's own geometry (bare metal: 1920x1080, 7680-byte rows,
+// 2026-10-20). Only a 32-bpp console whose rows exactly fill the range it was
+// mapped with; anything else gets no screen pass.
+inline Screen consoleScreen(uint64_t mc,uint64_t bytes,uint32_t width,uint32_t height,
+                            uint32_t rowBytes,uint32_t depth) {
+    if(depth!=32u || !width || !height || (rowBytes&3u) || rowBytes/4u<width ||
+       static_cast<uint64_t>(rowBytes)*height!=bytes || (width%8u) || (height%8u))return Screen{};
+    return Screen{mc,width,height,rowBytes/4u};
+}
 struct Hw {
     void *ctx=nullptr;
     bool (*read)(void *,uint64_t,uint32_t *)=nullptr;

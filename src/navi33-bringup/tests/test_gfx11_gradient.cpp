@@ -191,5 +191,14 @@ int main() {
         auto o=gr::execute(r,f.l,f.s,co.data(),co.size(),f.hw(),true,true,attempted);
         assert(o.state==N33_PSPL_GRAD_WRITE_FAILED && f.mem[r.q.grbm]==0u && o.register_writes==f.writes.size());
     }
+    // Bare-metal console geometry (2026-10-20): 1920x1080, 7680-byte rows, 0x7e9000 bytes.
+    {const auto c=gr::consoleScreen(0x8000000000ull,0x7e9000u,1920u,1080u,7680u,32u);
+     assert(c.mc==0x8000000000ull && c.width==1920u && c.height==1080u && c.pitch==1920u);
+     assert(gr::consoleScreen(0x8000000000ull,1024u*768u*4u,1024u,768u,4096u,32u).pitch==1024u);
+     assert(!gr::consoleScreen(0x8000000000ull,0x7e9000u,1920u,1080u,7680u,16u).width);   // not 32 bpp
+     assert(!gr::consoleScreen(0x8000000000ull,0x7e8000u,1920u,1080u,7680u,32u).width);   // range != rows
+     assert(!gr::consoleScreen(0x8000000000ull,1366u*768u*4u,1366u,768u,5464u,32u).width);// width % 8
+     assert(!gr::consoleScreen(0x8000000000ull,0x7e9000u,1920u,1080u,7682u,32u).width);   // row not dwords
+     assert(!gr::consoleScreen(0x8000000000ull,4u*1000u*1080u,1920u,1080u,4000u,32u).width);}// row < width
     puts("GFX11 gradient: pinned shader, PM4 interpreted by a fake CP, test image and screen checks, fallback, gates: passed");
 }

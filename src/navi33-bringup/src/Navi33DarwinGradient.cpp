@@ -99,7 +99,10 @@ n33_psp_load_result executeGradient(IOPCIDevice *pci,const Request &req) {
     }
     const mq::Layout layout{win.fwPriMc+kWindowFromProof};
     gr::Screen screen{};
-    if(console.bytes==kVmConsoleBytes)
+    if(boot.phys)  // a relocated console has the same geometry (console::resolve)
+        screen=gr::consoleScreen(win.fbBaseMc+win.consoleOffset,console.bytes,req.consoleWidth,
+                                 req.consoleHeight,req.consoleRow,req.consoleDepth);
+    else if(console.bytes==kVmConsoleBytes)
         screen={win.fbBaseMc+win.consoleOffset,1024u,768u,1024u};
     // The window is read in the plan too (G34's fence and WPTR), never written there.
     IODeviceMemory *sub=IODeviceMemory::withSubRange(bar0,win.fwPriOffset+kWindowFromProof,mq::kWindowBytes);
