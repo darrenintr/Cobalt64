@@ -22,6 +22,18 @@ it does not forge the legacy N33N hardware capability bits. The bridge artifact
 is not automatically installed or registered. A successful offscreen draw is
 not desktop evidence. No new physical card run has occurred in this work yet.
 
+**CI gap (2026-10-21):** the `experimental-metal-bridge` job in
+`navi33-mesa.yml` builds `tools/native/navi48accel`, which needs the
+reverse-engineered IOAcceleratorFamily2 layout under
+`tools/native/ioaccel-layout/generated` (`model.json`, `forwarded.json`,
+`slots.json`, `IOAccelFamily2_decl.h`). That directory was never committed to
+this repo, so the aux-accelerator build cannot run and the job was red from the
+commit that added it (`f32505c`). The job now skips the aux accelerator (with a
+CI warning) when the layout is absent, so the independent Metal bridge still
+gets a real signal. To restore the aux accelerator, commit the layout data
+(regenerated from the macOS IOAcceleratorFamily2 binary) — it is not something
+to fabricate.
+
 At inspection the host runs Linux with the RX 7600 owned by `amdgpu`; do not
 detach that live display GPU. A fresh macOS or headless VFIO boot, working SSH
 recovery and matching CI artifact are still physical prerequisites. The last
