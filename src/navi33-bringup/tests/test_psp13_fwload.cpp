@@ -330,7 +330,11 @@ int main() {
      static_assert(fl::kSmuRecord==26u,"SMU image is record 26");
      assert(fl::smuOnlyRange(26u,27u));
      assert(!fl::smuOnlyRange(26u,28u) && !fl::smuOnlyRange(0u,27u) && !fl::smuOnlyRange(25u,27u) &&
-            !fl::smuOnlyRange(0u,26u) && !fl::smuOnlyRange(27u,28u));}
+            !fl::smuOnlyRange(0u,26u) && !fl::smuOnlyRange(27u,28u));
+     assert(fl::autoloadOnlyRange(27u,28u));
+     assert(!fl::autoloadOnlyRange(26u,28u) && !fl::autoloadOnlyRange(0u,28u) &&
+            !fl::autoloadOnlyRange(26u,27u) && !fl::autoloadOnlyRange(27u,27u) &&
+            !fl::autoloadOnlyRange(0u,26u));}
     std::puts("PSP13 IP firmware stage planner and runner tests passed");
     return 0;
 }

@@ -51,7 +51,9 @@ change. `CLAUDE.md` imports this file, so there is one source of truth.
      once per boot; since kext 0.0.65 the exact SMU-only range `[26,27)` has its own
      once-per-boot latch (`pspFwSmuAttempted_`), because on bare metal a restart resets
      the PSP and sOS, ring, SMU image and the other records must fit in one boot
-     (2026-10-20). It sends `LOAD_IP_FW` for records of the 27-record list
+     (2026-10-20); since 0.0.66 the AUTOLOAD-only range `[27,28)` has a third latch
+     (`pspFwAutoloadAttempted_`), so AUTOLOAD_RLC can follow records 0..25 in that boot
+     (2026-10-21). It sends `LOAD_IP_FW` for records of the 27-record list
      (record 26 is the SMU image, added in kext 0.0.11 at the user's choice
      on 2026-10-18; Linux sends it first, so it goes alone as range 26..27
      before the others). `AUTOLOAD_RLC` (stop value 28) is refused

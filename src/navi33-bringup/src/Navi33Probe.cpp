@@ -973,6 +973,7 @@ n33_psp_load_result Navi33Probe::pspLoad(uint32_t mode,const uint8_t *romBytes,
                              &pspLoadAttempted_;
     // One boot must hold SMU image then the other records on bare metal.
     if(fwMode && navi33::psp13fwload::smuOnlyRange(startAt,stopAfter))req.attempted=&pspFwSmuAttempted_;
+    if(fwMode && navi33::psp13fwload::autoloadOnlyRange(startAt,stopAfter))req.attempted=&pspFwAutoloadAttempted_;
     if(smuMode)req.attempted=&smuAttempted_;
     if(mesMode)req.attempted=&mesAttempted_;
     if(mecMode)req.attempted=&mecAttempted_;

@@ -33,10 +33,14 @@ constexpr uint32_t kStopAutoload=N33_PSP_FW_STOP_AUTOLOAD;
 // others (2026-10-18). On bare metal a restart resets the PSP (2026-10-20), so
 // sOS, ring, SMU image and the other records must all fit in one boot: the
 // SMU-only range gets its own once-per-boot latch; every other range keeps the
-// stage's single latch.
+// stage's single latch. AUTOLOAD_RLC alone, [27,28), follows records 0..25 in
+// that same boot (2026-10-21), so it gets a third latch.
 constexpr uint32_t kSmuRecord=kStopAutoload-2u;
 constexpr bool smuOnlyRange(uint32_t start,uint32_t stop) {
     return start==kSmuRecord && stop==kSmuRecord+1u;
+}
+constexpr bool autoloadOnlyRange(uint32_t start,uint32_t stop) {
+    return start==kStopAutoload-1u && stop==kStopAutoload;
 }
 
 struct Plan {

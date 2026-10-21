@@ -396,6 +396,10 @@ assert "bool pspFwAttempted_ = false;" in (root/"src/Navi33Probe.hpp").read_text
 assert "bool pspFwSmuAttempted_ = false;" in (root/"src/Navi33Probe.hpp").read_text()
 assert "if(fwMode && navi33::psp13fwload::smuOnlyRange(startAt,stopAfter))req.attempted=&pspFwSmuAttempted_;" in load_fn
 assert source.count("pspFwSmuAttempted_")==1
+# 2026-10-21: AUTOLOAD_RLC alone [27,28) gets a third latch; its gate is unchanged.
+assert "bool pspFwAutoloadAttempted_ = false;" in (root/"src/Navi33Probe.hpp").read_text()
+assert "if(fwMode && navi33::psp13fwload::autoloadOnlyRange(startAt,stopAfter))req.attempted=&pspFwAutoloadAttempted_;" in load_fn
+assert source.count("pspFwAutoloadAttempted_")==1
 assert "return executeFw(pci,req);" in writer
 assert all(o in link_line for o in ("$(BUILD)/Navi33DarwinPspFw.o","$(BUILD)/kmod_info.o"))
 fwc=(root/"src/Navi33DarwinPspFw.cpp").read_text()
