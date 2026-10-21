@@ -476,6 +476,14 @@ output survives a hang and Linux can inspect a stuck guest.
   ring stage succeeded** (state 28, 6 writes, TMR 19,922,944 B; findings log). A restart
   resets the PSP, so later stages must redo sOS + ring in the same boot. Kill switch
   restored on the stick. Later bare-metal stages need their own approval.
+- **Kext 0.0.67 built and staged 2026-10-21** (CI `39557316779` green, UUID
+  `D7C0F921-A348-317C-B45B-26588AE0E528`, cache `artifact-0.0.67-ci`): the G35 gradient takes the
+  boot console's own geometry (`gradient::consoleScreen`), so it draws on the 1920x1080 bare-metal
+  console. At the user's request ("much aggressive", 2026-10-21) the stick runs **autostart** for the
+  first time on bare metal: boot-args `navi33-autostart=1 navi33-client-gpu=1 navi33-gradient=1` in
+  place of `navi33-psp-off=1 navi33-smu-off=1` (backup `config.plist.bak-20261021-pre-autostart`;
+  0.0.66 in `navi33/backup-0.0.66-pre-0.0.67/`; `gradient.co` copied). `instruction.txt`: check
+  `Navi33,Autostart` DONE 8/8, gradient on screen, 9 `n33gpu` clients, repeat 200, `n33n48n`, `run.sh`.
 - **Kext 0.0.66 built 2026-10-21** (CI `39555047350` green, UUID
   `07980E84-9171-31D1-8465-BCEA8F8F8E45`, cache `artifact-0.0.66-ci`): AUTOLOAD-only latch so the
   whole sOS -> SCPM sequence fits one bare-metal boot. **Staged on the stick 2026-10-21** (the user ran
