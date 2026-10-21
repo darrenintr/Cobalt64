@@ -1,6 +1,49 @@
 # Navi33 Metal plug-in scaffold
 
-This directory builds an x86_64 `Navi33Metal.bundle` with the macOS 26 SDK:
+## Experimental bridge artifact
+
+`build-bridge.sh` builds a separate experimental bundle using the shared
+Navi48Metal Objective-C bridge, the RADV Darwin backend, and the in-process
+AIR-to-SPIR-V translator. The bridge talks through N48N to the existing G41
+`Navi48MetalNub`/`Navi48Accelerator` path. RADV must include Mesa patches
+0001–0011: in particular, patch 10 selects the `navi33` device table from the
+live GC 11.0.2 QueryInfo response. The wrapper requires the RADV build's Mesa
+commit manifest to identify patch 10, checks the N48N service selector and
+Vulkan entry point, verifies x86_64 architecture, and rejects unbundled
+non-system dylib dependencies before packaging.
+
+On macOS 26 with Xcode, `vulkan-headers`, and Rust 1.87 or newer, build it with
+the RADV dylib from the `radv-darwin-x86_64` workflow artifact:
+
+```sh
+N33_RADV_LIB=/path/to/libvulkan_radeon.dylib \
+N33_VK_INC="-I$(brew --prefix vulkan-headers)/include" \
+tools/native/navi33metal/build-bridge.sh
+```
+
+The wrapper builds the vendored `n48xlate` adapter from its pinned upstream
+base when `N33_XLATE_LIB` is unset. It writes
+`build/experimental-bridge/Navi33ExperimentalMetal-x86_64.tar` (or the path in
+`N33_BRIDGE_OUTPUT_DIR`). The archive contains the loader-facing
+`Navi48Metal.bundle` name and class expected by the auxiliary accelerator,
+with a distinct experimental bundle identifier. It is an artifact only: the
+script does not install it, load a kext, register an accelerator, or set any
+readiness property. The G41 nub and accelerator still require their own live
+kernel evidence gate.
+
+This is a userspace packaging route, not proof of Navi33 feature parity. The
+Navi48 Metal implementation carries broad format, feature, and display logic;
+RADV's Navi33 table and hardware feature queries remain the authority for the
+actual gfx1102 device. Do not use Navi48's fixed-format evidence as a Navi33
+hardware result. The bundle still needs the separate rendered-output proof on
+the RX 7600 before it can be treated as usable acceleration.
+
+## Historical standalone Navi33 plug-in scaffold
+
+The `make` target below builds the original x86_64 `Navi33Metal.bundle` with
+the macOS 26 SDK. It is separate from the experimental bridge artifact above:
+the auxiliary accelerator does not select this bundle, and this target is not
+part of the Navi33 rendering path.
 
 ```sh
 make -C tools/native/navi33metal
@@ -10,10 +53,10 @@ The outputs are `build/Navi33Metal.bundle` and
 `build/Navi33Metal.bundle.tar`. The target only compiles and packages the
 bundle. It does not install it, register an `IOAccelerator` personality,
 publish `MetalPluginName`/`MetalPluginClassName`, or claim hardware readiness.
-`Info.plist` names `Navi33Device` as the bundle principal class, but no
-accelerator service points to this bundle. The Navi33 workflow runs the
-host-only admission tests and builds this bundle with the macOS 26 SDK; its
-artifact is explicitly unregistered and not boot-tested.
+`Info.plist` names `Navi33Device` as the principal class. Its provider lookup
+expects a `Navi33MetalNub`, while the active G41 path publishes
+`Navi48MetalNub` for the existing N48N accelerator and RADV bridge. This
+standalone bundle remains unregistered and untested on macOS hardware.
 
 The Makefile requires an Xcode-selected macOS 26 SDK and targets x86_64 with
 a macOS 26.0 deployment target. This Linux checkout has no `xcrun`, Apple
@@ -22,7 +65,7 @@ Run `make -C tools/native/navi33metal host-test` on Linux or macOS for the
 hardware-free C11 admission-policy tests; they do not instantiate a Metal
 device or establish hardware readiness.
 
-## Fail-closed state
+### Why the standalone scaffold is inert
 
 `Navi33Device.m` declares the private `MTLIOAccelDevice` superclass and its
 `initWithAcceleratorPort:` entry point. This is a private interface, inferred
@@ -30,56 +73,25 @@ from the local native plug-in pattern; Apple does not provide a public SDK
 contract for it, and this class has not been loaded or runtime-checked on
 macOS. The full Metal device protocol remains unknown here.
 
-Initialization accepts only a `Navi33MetalNub` associated with the supplied
-accelerator port and requires the kernel-published properties
-`Navi33,ABI`, `Navi33,VendorID`, `Navi33,DeviceID`, `Navi33,GfxIP`,
-`Navi33,Family`, `Navi33,Capabilities`, and `Navi33,Ready`. The capabilities
-must include `N33_CAP_HW_VM`, `N33_CAP_HW_SDMA`, `N33_CAP_HW_GFX`, and
-`N33_CAP_METAL`. The provider must copy this snapshot from the same live
-hardware owner; registry discovery by itself is not evidence. The plugin
-does not open N33N, which remains a root-only diagnostic interface.
+Initialization expects a `Navi33MetalNub` associated with the supplied
+accelerator port and requires kernel-published Navi33 capability properties.
+The active G41 route instead uses the existing Navi48 accelerator personality
+and its `Navi48MetalNub`, which forwards N48N calls to Navi33Probe after G41's
+live-evidence gate passes.
 
-Even if those properties pass, the literal `backendReady = NO` and
-unconditional `return nil` keep Metal from enumerating a Navi33 device. The
-class advertises no Metal features, creates no resources or queues, and
-submits no GPU work. No Metal plugin metadata is published by the kext.
+This standalone class keeps `backendReady = NO` and always returns `nil`.
+It advertises no Metal features, creates no resources or queues, and submits
+no GPU work.
 
-N33N ABI 14 currently supports HELLO, capability/status/preflight reads,
-system-memory DMA staging and release, and the separately gated PSP stage.
-Selectors 2–7 are reserved for BO create/free, VM map, context create,
-submit, and wait, but the native client refuses them. DMA staging is not
-VRAM allocation, GPU page-table ownership, a GFX queue, or GPU submission.
+The original scaffold documentation described N33N ABI 14 from October 2026.
+That ABI statement is historical; the active rendering bridge uses the
+versioned N48N ABI implemented by `Navi33N48nClient` and RADV's Darwin backend.
 
 ## Interfaces still required
 
-1. **Accelerator nub:** implement a Navi33-owned provider attached to the
-   same PCI owner as Navi33Probe. It must supply the private IOAccelFamily2
-   service interface, per-client user-client creation, and the registry
-   snapshot above. `Navi33,Ready` can be true only after the complete owner,
-   memory, VM, queue, submit, readback, recovery, and client-transport proof
-   is live for that device epoch.
-2. **Per-client submit ABI:** define a separate versioned user-client
-   contract for open/close, capability snapshot and epoch, resource handles,
-   VM/context/queue lifetime, command submission, fence wait, timeout/error
-   reporting, cancellation, and device-loss cleanup. It must bind every
-   handle to the owning task and provider. Do not route application submits
-   through the current root-only N33N diagnostic client.
-3. **Memory backend:** implement owned BO allocation/free, CPU mapping and
-   cache synchronization, GPU VA assignment, VM map/unmap, page-table-root
-   ownership, installed-root readback, and TLB invalidation/acknowledgement.
-   The provider must retain object ownership and never expose physical
-   addresses in its registry snapshot.
-4. **Queue backend:** prove and own the SDMA Queue1 COPY/FENCE/readback,
-   queue park and memory retention, plus a separate GFX context/queue and
-   GFX FENCE/readback path. Define ring/doorbell ownership, completion and
-   error handling, teardown, and independent recovery before publishing
-   readiness. Hardware writes remain subject to the project approval gates.
-5. **Metal lowering:** implement Metal buffers, textures, command queues,
-   command buffers, encoders and pipelines over a real gfx1102 backend, with
-   shader translation and an explicit feature/format policy. Keep feature
-   queries conservative until each advertised path has passed hardware
-   readback.
-
-The accelerator provider's readiness contract is tracked in
-`tools/native/navi33accel/README.md`. No Navi48 source is included, linked,
-copied, or edited by this scaffold.
+The old scaffold remains only as a fail-closed policy/build experiment. The
+active bridge's compile-time and runtime feature behavior comes from RADV's
+live gfx1102 device queries plus the shared Metal implementation. Its
+offscreen first-frame proof does not establish IOSurface composition or a
+usable macOS desktop. The separate Navi33 accelerator readiness contract is
+documented in `tools/native/navi33accel/README.md`.

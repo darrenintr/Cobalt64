@@ -7,6 +7,7 @@
 //        metal_frame_proof.m -o metal_frame_proof
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include <mach/mach.h>
 #include <stdint.h>
@@ -57,16 +58,71 @@ static BOOL nativeNavi33Capabilities(struct n33_capabilities *out) {
     return YES;
 }
 
+static BOOL readRegistryUInt64(io_registry_entry_t entry, CFStringRef key,
+                              uint64_t *out) {
+    CFTypeRef value=IORegistryEntryCreateCFProperty(entry,key,kCFAllocatorDefault,0);
+    if(!value)return NO;
+    int64_t number=0;
+    const BOOL valid=CFGetTypeID(value)==CFNumberGetTypeID() &&
+        CFNumberGetValue((CFNumberRef)value,kCFNumberSInt64Type,&number) && number>=0;
+    CFRelease(value);
+    if(valid)*out=(uint64_t)number;
+    return valid;
+}
+
+// G41 publishes this nub only after the live client-GPU service, a retired
+// compute submission, the GFX ring-test fence and a clean TLB-flush ACK.
+// Bind Metal's registryID to the IOAccelerator below that exact nub so this
+// experimental first-frame path cannot accidentally select Apple's GPU.
+static BOOL g41AcceleratorMatches(uint64_t registryID) {
+    io_iterator_t iterator=IO_OBJECT_NULL;
+    if(IOServiceGetMatchingServices(kIOMainPortDefault,
+        IOServiceMatching("IOAccelerator"),&iterator)!=KERN_SUCCESS)return NO;
+    BOOL matched=NO;
+    io_service_t service=IO_OBJECT_NULL;
+    while(!matched && (service=IOIteratorNext(iterator))!=IO_OBJECT_NULL) {
+        uint64_t serviceID=0,ready=0;
+        io_registry_entry_t nub=IO_OBJECT_NULL,owner=IO_OBJECT_NULL;
+        CFTypeRef plugin=IORegistryEntryCreateCFProperty(
+            service,CFSTR("MetalPluginName"),kCFAllocatorDefault,0);
+        const BOOL pluginOK=plugin && CFGetTypeID(plugin)==CFStringGetTypeID() &&
+            CFStringCompare((CFStringRef)plugin,CFSTR("Navi48Metal"),0)==kCFCompareEqualTo;
+        if(plugin)CFRelease(plugin);
+        const BOOL serviceBound=IORegistryEntryGetRegistryEntryID(service,&serviceID)==KERN_SUCCESS &&
+            serviceID==registryID && pluginOK &&
+            IORegistryEntryGetParentEntry(service,kIOServicePlane,&nub)==KERN_SUCCESS && nub;
+        CFTypeRef evidence=serviceBound ? IORegistryEntryCreateCFProperty(
+            nub,CFSTR("Navi33,Evidence"),kCFAllocatorDefault,0) : NULL;
+        const BOOL evidenceOK=evidence && CFGetTypeID(evidence)==CFStringGetTypeID() &&
+            CFStringCompare((CFStringRef)evidence,
+                CFSTR("compute, gfx ring, TLB flush (hard rule 6)"),0)==kCFCompareEqualTo;
+        const BOOL bound=serviceBound && IOObjectConformsTo(nub,"Navi48MetalNub") &&
+            evidenceOK &&
+            readRegistryUInt64(nub,CFSTR("Navi48,Ready"),&ready) && ready==1u &&
+            IORegistryEntryGetParentEntry(nub,kIOServicePlane,&owner)==KERN_SUCCESS && owner &&
+            IOObjectConformsTo(owner,"Navi33Probe");
+        matched=bound;
+        if(evidence)CFRelease(evidence);
+        if(owner)IOObjectRelease(owner);
+        if(nub)IOObjectRelease(nub);
+        IOObjectRelease(service);
+    }
+    IOObjectRelease(iterator);
+    return matched;
+}
+
 static int enumerateMetalDevices(void) {
     NSArray<id<MTLDevice>> *devices=MTLCopyAllDevices();
     printf("Metal device enumeration: %lu device(s)\n",
            (unsigned long)devices.count);
     NSUInteger index=0;
     for(id<MTLDevice> device in devices) {
-        printf("Metal device[%lu]: name=%s registryID=0x%016llx lowPower=%u headless=%u\n",
+        const uint64_t registryID=(uint64_t)device.registryID;
+        printf("Metal device[%lu]: name=%s registryID=0x%016llx lowPower=%u headless=%u G41-bound=%u\n",
                (unsigned long)index++,device.name.UTF8String,
-               (unsigned long long)device.registryID,
-               device.isLowPower ? 1u : 0u,device.isHeadless ? 1u : 0u);
+               (unsigned long long)registryID,
+               device.isLowPower ? 1u : 0u,device.isHeadless ? 1u : 0u,
+               g41AcceleratorMatches(registryID) ? 1u : 0u);
     }
     // Enumeration is a diagnostic only. Do not create a queue, compile a
     // device pipeline, allocate a texture, or submit any GPU work here.
@@ -123,11 +179,14 @@ static int enumerateAcceleratorServices(void) {
 int main(int argc,const char *argv[]) {
     @autoreleasepool {
         BOOL enumerateOnly=NO;
-        if(argc==2 && strcmp(argv[1],"--enumerate-only")==0) {
-            enumerateOnly=YES;
-        } else if(argc!=1) {
-            fprintf(stderr,"usage: metal_frame_proof [--enumerate-only]\n");
-            return 64;
+        BOOL experimentalG41=NO;
+        for(int i=1;i<argc;++i) {
+            if(strcmp(argv[i],"--enumerate-only")==0)enumerateOnly=YES;
+            else if(strcmp(argv[i],"--experimental-g41")==0)experimentalG41=YES;
+            else {
+                fprintf(stderr,"usage: metal_frame_proof [--enumerate-only] [--experimental-g41]\n");
+                return 64;
+            }
         }
         if(enumerateOnly) {
             struct n33_capabilities diagnosticCaps={0};
@@ -143,10 +202,9 @@ int main(int argc,const char *argv[]) {
         if(!nativeNavi33Capabilities(&caps)) return 2;
         printf("N33N RX7600 caps: 0x%08x\n",caps.capabilities);
         const uint32_t required=N33_CAP_HW_VM|N33_CAP_HW_GFX|N33_CAP_METAL;
-        if((caps.capabilities & required)!=required) {
-            fprintf(stderr,"RX7600 GPU/Metal hardware flags are NOT proven (caps 0x%08x)\n",
-                    caps.capabilities);
-            return 2;
+        if(!experimentalG41 && (caps.capabilities & required)!=required) {
+            fprintf(stderr,"RX7600 GPU/Metal hardware flags are NOT proven (caps 0x%08x); use --experimental-g41 only after G41 publishes its live-evidence-gated accelerator\n",
+                    caps.capabilities);return 2;
         }
         const Navi33Gfx11RenderTargetFormat *outputFormat=
             navi33Gfx11RenderTargetFormatForMetal(
@@ -170,16 +228,15 @@ int main(int argc,const char *argv[]) {
         NSArray<id<MTLDevice>> *devices=MTLCopyAllDevices();
         id<MTLDevice> dev=nil;
         for(id<MTLDevice> d in devices) {
-            NSString *name=d.name;
-            if ([name rangeOfString:@"RX 7600" options:NSCaseInsensitiveSearch].location!=NSNotFound ||
-                [name rangeOfString:@"Navi33" options:NSCaseInsensitiveSearch].location!=NSNotFound) {
-                dev=d;break;
-            }
+            if(g41AcceleratorMatches((uint64_t)d.registryID)){dev=d;break;}
         }
         if (!dev) {
-            fprintf(stderr,"No matching Navi33/RX7600 Metal device; refusing other GPUs\n");
+            fprintf(stderr,"No Metal device is registry-bound to the live Navi33 G41 IOAccelerator; refusing other GPUs\n");
             return 3;
         }
+        printf("Selected G41-bound Metal device: %s registryID=0x%016llx mode=%s\n",
+               dev.name.UTF8String,(unsigned long long)dev.registryID,
+               experimentalG41 ? "experimental core-evidence gate" : "capability gate");
         NSError *error=nil;
         NSString *shader=@"#include <metal_stdlib>\n"
             @"using namespace metal;\n"

@@ -4,4 +4,8 @@ Build (macOS, Rust >= 1.87):
     git apply /path/to/Navi48-MacOS/third-party/metal2vulkan-n48/patches/0001-metal2vulkan-changes-for-n48xlate.patch
     cp -R /path/to/Navi48-MacOS/third-party/metal2vulkan-n48/n48xlate .
     cargo build --release -p n48xlate     # target/release/libn48xlate.dylib
+
+The Navi33 experimental bridge build can perform the pinned clone, patch,
+vendored adapter copy and x86_64 dylib build with `build-macos.sh`. It writes
+only the translator dylib; it does not install or register a Metal plug-in.
 See NOTICE for the licence (LGPL-3.0-or-later; separate from the MIT code in this repository).

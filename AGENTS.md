@@ -4,6 +4,29 @@ Read this before working here. Keep it current: when a physical run,
 decision or rule changes something below, update this file in the same
 change. `CLAUDE.md` imports this file, so there is one source of truth.
 
+## Active work (2026-10-21): desktop rendering implementation
+
+The user explicitly requested aggressive implementation and testing toward a
+complete RX 7600 macOS desktop driver, using Luna subagents, and reaffirmed that
+partial code changes are not completion. This supersedes older analysis-only
+task scope; it does not establish hardware success. Preserve the permanent
+VBIOS prohibition, generation-correct register sources, bounded write gates,
+memory retention after uncertain completion, and independent recovery.
+
+Current work adds a source-backed KIQ transport correction, a direct-RADV
+graphics draw/readback executable (`n33-vkdraw`), an explicit submission script
+(`navi33/render-check.sh`), and CI packaging for the experimental shared Metal
+bridge and auxiliary accelerator. The normal `run.sh`/autorun stays read-only.
+The experimental Metal proof binds the device registry ID to the live G41 nub;
+it does not forge the legacy N33N hardware capability bits. The bridge artifact
+is not automatically installed or registered. A successful offscreen draw is
+not desktop evidence. No new physical card run has occurred in this work yet.
+
+At inspection the host runs Linux with the RX 7600 owned by `amdgpu`; do not
+detach that live display GPU. A fresh macOS or headless VFIO boot, working SSH
+recovery and matching CI artifact are still physical prerequisites. The last
+bare-metal evidence remains 0.0.67: exact compute, graphics ring state 6.
+
 ## Repository map
 
 - `src/navi48-bringup`: the working driver. RX 9070 XT (Navi 48, RDNA4,
