@@ -482,6 +482,8 @@ output survives a hang and Linux can inspect a stuck guest.
   the staging script; copy verified; 0.0.65 in `navi33/backup-0.0.65-pre-0.0.66/`). Gates open:
   psp-load/ring/fw/autoload, smu-enable, smu-scpm (backup `config.plist.bak-20261021-pre-scpm`).
   `instruction.txt` runs sOS, ring, SMU, records 0..25, AUTOLOAD_RLC, SCPM, `run.sh` in one boot.
+  **Ran 2026-10-21 14:37: SCPM state 39, RLC `0xc000001f` on bare metal** (findings log); kill
+  switches restored.
 - **Kext 0.0.65 staged on the stick 2026-10-20** (CI `39436374207`, UUID
   `708E0DED-0AC0-3658-A9D1-B091DB60295E`, cache `artifact-0.0.65-ci`; 0.0.64 files in
   `navi33/backup-0.0.64-pre-0.0.65/`), plus the nine pinned firmware files in `navi33/fw/`
@@ -2742,6 +2744,28 @@ parser got two of them wrong:
     The firmware is gone after the next restart/power-off, so AUTOLOAD_RLC and SCPM (still
     unapproved on bare metal) must follow a fresh sOS, ring, SMU image and records 0..25 in
     the same boot.
+
+- **2026-10-21 14:37-14:39, kext 0.0.66 on bare-metal macOS: THE GRAPHICS ENGINE POWERED UP
+  ON BARE METAL. The whole sOS -> SCPM sequence ran in one boot (14:33).** User-approved
+  ("now"); gates psp-load/ring/fw/autoload, smu-enable, smu-scpm (backup
+  `config.plist.bak-20261021-pre-scpm`), run by hand from `instruction.txt`. Loaded UUID
+  `07980E84-9171-31D1-8465-BCEA8F8F8E45` matches the artifact.
+  - sOS state 20 (8 writes, 26 ms), ring/TOC/TMR state 28 (6 writes, fence 2), SMU image
+    state 32 (1 write, fence 1), records 0..25 state 32 (26 writes, fence 26), AUTOLOAD_RLC
+    alone state 32 (1 write, fence 1, `C2PMSG_67` `0x1d0` -> `0x1e0`; the new 0.0.66 latch
+    worked), SCPM plan state 14 on the first try, then **state 39: 3 writes, 64 ms, message 6
+    arg 0 response 1, reset `0x10` -> `0x1f`, RLC `0` -> `0xc000001f`**. 44 register writes.
+  - `results-20261021-143900-manual.txt` vs the 14:33 boot autorun: GC now answers, matching
+    the VM after SCPM: `SDMA0_ID` 1/0x600, `UCODE_CHECKSUM` `0x7a75a926`, `GRBM_STATUS` `0x302c`,
+    `CP_STAT` 0, `RLC_CNTL` 1, `RLC_GPM_STAT` `0x00b40016`, `IMU_RLC_STATUS` 2, `IMU_CORE_STATUS`
+    2, IMU scratch `0b214700/babeface` (+[11] `0x80000043`), `CP_MES_CNTL` `0x40000000`,
+    `CP_ME_CNTL` `0x153c0000`, `CP_MEC_RS64_CNTL` `0x400f0000`, `SDMA0_F32_CNTL` `0x08084001`
+    (halted), GFXHUB contexts `0x01fffe00`, FB `0x8000-0x81ff`, L1 TLB `0x501`, L2 `0x00080602`.
+    SMU mailbox message reg = 6. Preflight reason 11. DCN kept scanning; macOS survived.
+  - Agent restored `navi33-psp-off=1 navi33-smu-off=1` (used config
+    `config.plist.used-20261021-scpm`). GC stays up only until the next restart/power-off.
+    Next bare-metal stages (MES start, MEC queue, gradient) need their own approval and must
+    follow the full sequence in the same boot.
 
 ## Adding a register read
 
