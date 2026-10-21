@@ -23,7 +23,14 @@ bool read32(void *ctx,uint64_t off,uint32_t *out) {
 }
 bool write32(void *ctx,uint64_t off,uint32_t value) {
     Host *h=static_cast<Host *>(ctx);
-    if(!cg::allowed(h->r,off) && !(h->gfxMapGate && cg::mapWriteAllowed(h->r,off,value)))return false;
+    uint32_t current=0;
+    const bool pollDisable=h->gfxMapGate && cg::mapPollDisableAllowed(h->r,off,
+        (h->regs && off==h->r.pollCntl && read32(ctx,off,&current)) ? current : 0u,value);
+    const bool pqEnable=off==h->r.pqStatus && h->regs && read32(ctx,off,&current) &&
+        value==(current|cg::kPqStatusDoorbellEnable);
+    if((off==h->r.pqStatus ? !pqEnable : !cg::allowed(h->r,off)) &&
+       !(h->gfxMapGate && cg::mapWriteAllowed(h->r,off,value)) &&
+       !(pollDisable) && !(pqEnable))return false;
     if(!h->regs || (off&3u) || off>h->regs->getLength() || h->regs->getLength()-off<4u)
         return false;
     *reinterpret_cast<volatile uint32_t *>(static_cast<uintptr_t>(h->regs->getVirtualAddress())+off)=value;
@@ -50,10 +57,12 @@ bool vramRead(void *ctx,uint64_t off,uint32_t *dst,uint32_t dwords) {
     for(uint32_t i=0;i<dwords;++i)dst[i]=w[i];
     return true;
 }
-// Only the six client queues' and the gfx ring's 64-bit doorbells, inside the mapped BAR2.
+// Only the six client queues, the gfx ring, and gated KIQ doorbell zero may write BAR2.
 bool doorbell(void *ctx,uint32_t off,uint64_t value) {
-    IOMemoryMap *m=static_cast<Host *>(ctx)->doorbells;
+    Host *h=static_cast<Host *>(ctx);IOMemoryMap *m=h->doorbells;
     bool client=off==navi33::gfx_ring::kDoorbellByte;
+    if(h->gfxMapGate && off==navi33::gfx_map::kKiqDoorbellByte &&
+       value==navi33::gfx_map::kEndWptr)client=true;
     for(uint32_t i=0;i<cg::kClients;++i)if(off==cg::doorbellByte(i))client=true;
     if(!m || !client || off>m->getLength() || m->getLength()-off<8u)return false;
     __asm__ __volatile__("mfence" ::: "memory");     // ring and WPTR in VRAM first

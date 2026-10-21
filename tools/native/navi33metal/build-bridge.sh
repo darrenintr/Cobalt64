@@ -69,7 +69,7 @@ if [ -z "$VK_INC" ]; then
 fi
 
 ditto "$N48_SRC" "$WORK/navi48metal"
-env N48_RADV_LIB="$RADV" N48_XLATE_LIB="$XLATE" N48_VK_INC="$VK_INC" \
+env N48_RADV_LIB="$RADV" N48_XLATE_LIB="$XLATE" N48_VK_INC="$VK_INC" N48_N33_PROFILE=1 \
   "$WORK/navi48metal/build.sh"
 
 tar --no-same-owner -xf "$WORK/navi48metal/build/Navi48Metal.bundle.tar" -C "$WORK"

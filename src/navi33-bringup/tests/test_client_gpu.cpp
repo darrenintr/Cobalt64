@@ -55,7 +55,7 @@ struct Fake {
         mem={{v.q.sos,42},{v.q.rlc,0xc000001fu},{v.q.grbm,0},{v.q.cntl,0x3c000000u},{v.q.scratch,0xdeadbeefu},
              {v.q.poll1,0},{v.l1,v1::kL1Default},{v.l2,v1::kL2Default},{v.l2c2,0},{v.l2c3,v1::kL2Cntl3Default},
              {v.l2c4,v1::kL2Cntl4Default},{v.l2c5,v1::kL2Cntl5Default},{v.faultStatus,0},{v.faultAddr,0},
-             {r.invReq,0x02f80000u},{r.invAck,0},{r.l2Status,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u},
+             {r.invReq,0x02f80000u},{r.invAck,0},{r.l2Status,0},{r.mecDbLower,0x1234u},{r.mecDbUpper,0u},{r.nbioAperEn,0x100u},{r.pqStatus,0x8u},{r.pollCntl,0x80000123u},
              {r.hdp.remapMem,0u},{r.hdp.remapReg,0u},{r.hdp.memsize,8192u}};
         for(auto o:v.ident)mem[o]=0;
         const navi33::gfx_ring::Regs &g=r.gfx;
@@ -205,7 +205,8 @@ struct Fake {
     }
     static bool write(void *c,uint64_t off,uint32_t v) {
         auto &f=*static_cast<Fake *>(c);
-        assert(cg::allowed(f.r,off) || (f.g42 && cg::mapWriteAllowed(f.r,off,v)));
+        assert(cg::allowed(f.r,off) || (f.g42 && cg::mapWriteAllowed(f.r,off,v)) ||
+               (f.g42 && cg::mapPollDisableAllowed(f.r,off,f.mem[off],v)));
         if((off==f.r.hdp.remapReg && f.failHdpRegWrite) || (off==f.r.hdp.flush && f.failHdpFlushWrite))return false;
         f.writes.emplace_back(off,v);
         if(f.banked(off))f.bank[{f.sel(),off}]=v; else f.mem[off]=v;
@@ -249,28 +250,6 @@ struct Fake {
         // Activation fetches the ring (G36): only once ACTIVE is set.
         if(off==mq::hqd(f.r.g.v.q,kiq::kCpHqdActive) && (v&1u))
             for(uint32_t k=cg::kFirstVmid;k<cg::kFirstVmid+cg::kClients;++k)if(qsOf(k)==f.sel())f.runQueue(k);
-        if(f.g42 && off==f.r.g.v.q.poll1 && f.sel()==mq::grbmSelect(1,0,0) && v==1u && !f.mapStuck) {
-            ++f.mapTriggers;f.hdpEvents.push_back(6u);
-            namespace gm=navi33::gfx_map;
-            const uint64_t p=gm::kG34Vram+gm::kAppendOff;
-            assert(f.mem[f.r.hdp.remapMem]==f.r.hdp.remapBytes && f.mem[f.r.hdp.remapReg]==f.r.hdp.remapBytes+4u &&
-                   f.hdpFlushSeen && f.hdpMemsizeReadAfterFlush);
-            assert(f.mem[f.r.scheduler]==0x30a0u && f.get(p)==0xc005a200u && f.get(p+4)==0x30000000u);
-            assert(f.get(p+28)==0xc0033700u && f.get(p+32)==0x100500u && f.get(p+44)==gm::kMapFence);
-            assert(f.q(p+36)==kFb+gm::kG34Vram+gm::kMapFenceOff);
-            const uint64_t mqd=f.q(p+12)-kFb;
-            assert(f.get(mqd+162u*4u)==0x100u && f.get(mqd+130u*4u)==1u);
-            const uint64_t base=f.q(mqd+136u*4u);
-            f.mem[f.r.gfxHqdActive]=f.get(mqd+130u*4u);f.mem[f.r.gfxHqdVmid]=f.get(mqd+131u*4u);
-            f.mem[f.r.gfxHqdBase]=f.get(mqd+136u*4u);f.mem[f.r.gfxHqdBaseHi]=f.get(mqd+137u*4u);
-            f.mem[f.r.gfxHqdRptr]=f.get(mqd+138u*4u);f.mem[f.r.gfxHqdCntl]=f.get(mqd+145u*4u);
-            f.mem[f.r.gfxHqdWptr]=f.get(mqd+149u*4u);f.mem[f.r.gfxHqdWptrHi]=f.get(mqd+150u*4u);
-            f.mem[f.r.gfx.rb0Base]=uint32_t(base);f.mem[f.r.gfx.rb0BaseHi]=uint32_t(base>>32);
-            f.mem[f.r.gfx.rb0Cntl]=f.get(mqd+145u*4u);f.mem[f.r.gfx.rbActive]=1u;f.mem[f.r.gfxMapped]=1u;
-            f.gfxWptr=f.q(f.q(p+20)-kFb);f.runGfx();
-            f.vram[gm::kG34Vram+gm::kMapFenceOff]=gm::kMapFence;
-            f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqRptr)}]=32u;
-        }
         if(off==f.r.g.v.q.poll1)for(uint32_t i=0;i<cg::kClients;++i)if(v&cg::pollBit(i))f.runQueue(cg::kFirstVmid+i);
 
         return true;
@@ -291,6 +270,36 @@ struct Fake {
     unsigned rings=0;
     static bool doorbell(void *c,uint32_t byteOff,uint64_t v) {
         auto &f=*static_cast<Fake *>(c);
+        if(f.g42 && byteOff==navi33::gfx_map::kKiqDoorbellByte) {
+            if(f.mapStuck)return true;               // the KIQ never fetches: no fence, no mapping
+            ++f.mapTriggers;f.hdpEvents.push_back(6u);
+            namespace gm=navi33::gfx_map;
+            const uint64_t p=gm::kG34Vram+gm::kAppendOff;
+            assert(v==gm::kEndWptr && !(f.mem[f.r.pollCntl]&gm::kPqWptrPollEn) &&
+                   (f.mem[f.r.pqStatus]&gm::kPqStatusDoorbellEnable));
+            assert((f.mem[f.r.nbioAperEn]&1u) && f.mem[f.r.mecDbLower]<=gm::kKiqDoorbellByte &&
+                   f.mem[f.r.mecDbUpper]>=gm::kKiqDoorbellByte+8u);
+            assert(f.mem[f.r.g.v.q.grbm]==0u && f.mem[f.r.hdp.remapMem]==f.r.hdp.remapBytes &&
+                   f.mem[f.r.hdp.remapReg]==f.r.hdp.remapBytes+4u && f.hdpFlushSeen && f.hdpMemsizeReadAfterFlush);
+            assert(f.mem[f.r.scheduler]==0x30a0u && f.get(p)==0xc005a200u && f.get(p+4)==0x30000000u);
+            assert(f.get(p+28)==0xc0033700u && f.get(p+32)==0x100500u && f.get(p+44)==gm::kMapFence);
+            for(uint32_t i=16u;i<gm::kAppendDwords;++i)assert(f.get(p+4u*i)==mq::kNop);
+            assert(f.q(p+36)==kFb+gm::kG34Vram+gm::kMapFenceOff);
+            const uint64_t mqd=f.q(p+12)-kFb;
+            assert(f.get(mqd+162u*4u)==0x100u && f.get(mqd+130u*4u)==1u &&
+                   f.get(mqd+143u*4u)==(navi33::gfx_ring::kDoorbellEn|(navi33::gfx_ring::kDoorbellDword<<2)));
+            const uint64_t base=f.q(mqd+136u*4u);
+            f.mem[f.r.gfxHqdActive]=f.get(mqd+130u*4u);f.mem[f.r.gfxHqdVmid]=f.get(mqd+131u*4u);
+            f.mem[f.r.gfxHqdBase]=f.get(mqd+136u*4u);f.mem[f.r.gfxHqdBaseHi]=f.get(mqd+137u*4u);
+            f.mem[f.r.gfxHqdRptr]=f.get(mqd+138u*4u);f.mem[f.r.gfxHqdCntl]=f.get(mqd+145u*4u);
+            f.mem[f.r.gfxHqdWptr]=f.get(mqd+149u*4u);f.mem[f.r.gfxHqdWptrHi]=f.get(mqd+150u*4u);
+            f.mem[f.r.gfx.rb0Base]=uint32_t(base);f.mem[f.r.gfx.rb0BaseHi]=uint32_t(base>>32);
+            f.mem[f.r.gfx.rb0Cntl]=f.get(mqd+145u*4u);f.mem[f.r.gfx.rbActive]=1u;f.mem[f.r.gfxMapped]=1u;
+            f.gfxWptr=f.q(f.q(p+20)-kFb);f.runGfx();
+            f.vram[gm::kG34Vram+gm::kMapFenceOff]=gm::kMapFence;
+            f.bank[{f.sel(),mq::hqd(f.r.g.v.q,kiq::kCpHqdPqRptr)}]=gm::kEndWptr;
+            return true;
+        }
         if(byteOff==navi33::gfx_ring::kDoorbellByte) {           // the gfx ring (RB range, not MEC's)
             if(!f.gfxDoorbellLost && (f.mem[f.r.nbioAperEn]&1u) && byteOff>=f.mem[f.r.gfx.rbDbLower] && byteOff<=f.mem[f.r.gfx.rbDbUpper]){f.gfxWptr=v;f.runGfx();}
             return true;
@@ -329,6 +338,8 @@ struct Fake {
         bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqBase)}]=uint32_t(base);
         bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqBaseHi)}]=uint32_t(base>>32);
         bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqControl)}]=0xd0308509u;
+        // G34's tail writes doorbell control = MQD (offset 0, EN) | EN; with the gate on that is EN alone.
+        bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqDoorbellControl)}]=kiq::kDoorbellEnMask;
         bank[{qs,mq::hqd(r.g.v.q,kiq::kCpHqdPqRptr)}]=16u;
         vram[gfx_map::kG34Vram+mq::kWptrOff]=16u;
         vram[gfx_map::kG34Vram+mq::kFenceOff]=mq::kFenceValue;
@@ -392,7 +403,8 @@ int main() {
            r.gfxHqdRptr==(0x1260u+gfx_map::kGfxRptrDw)*4u &&
            r.gfxHqdCntl==(0x1260u+gfx_map::kGfxCntlDw)*4u &&
            r.gfxHqdWptr==(0x1260u+gfx_map::kGfxWptrDw)*4u &&
-           r.gfxHqdWptrHi==(0x1260u+gfx_map::kGfxWptrHiDw)*4u);
+           r.gfxHqdWptrHi==(0x1260u+gfx_map::kGfxWptrHiDw)*4u &&
+           r.pollCntl==(0x1260u+gfx_map::kPqWptrPollCntlDw)*4u);
     for(uint64_t o:{r.gfxHqdActive,r.gfxHqdVmid,r.gfxHqdBase,r.gfxHqdBaseHi,r.gfxHqdRptr,
                     r.gfxHqdCntl,r.gfxHqdWptr,r.gfxHqdWptrHi})
         assert(!cg::allowed(r,o) && !cg::mapAllowed(r,o));
@@ -402,6 +414,10 @@ int main() {
            cg::mapWriteAllowed(r,r.hdp.remapMem,r.hdp.remapBytes) &&
            !cg::mapWriteAllowed(r,r.hdp.remapMem,r.hdp.remapBytes+4u) &&
            cg::mapWriteAllowed(r,r.hdp.flush,0u) && !cg::mapWriteAllowed(r,r.hdp.flush,1u));
+    assert(!cg::allowed(r,r.pollCntl) && cg::mapPollDisableAllowed(r,r.pollCntl,0x80000123u,0x123u) &&
+           !cg::mapPollDisableAllowed(r,r.pollCntl,0x123u,0x123u) &&
+           !cg::mapPollDisableAllowed(r,r.pollCntl,0x80000123u,0x80000123u) &&
+           !cg::mapPollDisableAllowed(r,r.pollCntl+4u,0x80000123u,0x123u));
     assert(!gfx_map::resolveHdp(d,rx7600_fixture::kBar5,8192u).valid());
     assert(!gfx_map::resolveHdp(d,0x7f000u,4096u).valid());
     {auto bad=rx7600_fixture::blob(2u,0u,1u);IPDiscovery x;assert(x.parse(bad.data(),bad.size()));
@@ -656,14 +672,18 @@ int main() {
     // ownership/pointers refuse before any stage-window or scheduler write.
     {
         assert(!gfx_map::stageRange(mq::kFenceOff,1u,true));
-        assert(!gfx_map::stageRange(gfx_map::kAppendOff,17u,true));
-        assert(!gfx_map::stageRange(gfx_map::kAppendOff-4u,16u,true));
+        assert(gfx_map::stageRange(gfx_map::kAppendOff,gfx_map::kAppendDwords,true));
+        assert(!gfx_map::stageRange(gfx_map::kAppendOff,16u,true));
+        assert(!gfx_map::stageRange(gfx_map::kAppendOff,gfx_map::kAppendDwords+1u,true));
+        assert(!gfx_map::stageRange(gfx_map::kAppendOff-4u,gfx_map::kAppendDwords,true));
         assert(!cg::allowed(r,r.scheduler) && !cg::mapAllowed(r,r.scheduler) && !cg::mapAllowed(r,r.gfxMapped));
         auto f=std::make_unique<Fake>(r);f->g34();
         assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && !f->dev.gfxReady() && !f->stageWrites);
         assert(f->mem[r.scheduler]==0x30a0u);
         f=std::make_unique<Fake>(r);f->g34();f->dev.setGfxMap(true);
-        assert(f->dev.start(r,f->hw(),f->heap,kFb)==cg::Code::Ok && f->dev.gfxReady());
+        const auto candidateStart=f->dev.start(r,f->hw(),f->heap,kFb);
+        if(candidateStart!=cg::Code::Ok || !f->dev.gfxReady())std::fprintf(stderr,"G42 debug start=%u state=%u poll=%x/%x pq=%x/%x hdp=%u map=%x fence=%x trigger=%u stages=%u\n",unsigned(candidateStart),unsigned(f->dev.gfxMapReport().state),f->dev.gfxMapReport().pollCntlBefore,f->dev.gfxMapReport().pollCntlAfter,f->dev.gfxMapReport().pqStatusBefore,f->dev.gfxMapReport().pqStatusAfter,unsigned(f->dev.gfxMapReport().hdp.state),f->dev.gfxMapReport().mapped,f->dev.gfxMapReport().fence,f->mapTriggers,f->stageWrites);
+        assert(candidateStart==cg::Code::Ok && f->dev.gfxReady());
         assert(f->dev.gfxMapReport().state==gfx_map::State::Mapped && f->stageWrites==3u && f->hdpWrites==3u);
         assert(f->dev.gfxMapReport().hdp.state==gfx_map::HdpState::Complete && f->dev.gfxMapReport().hdp.writes==3u &&
                f->dev.gfxMapReport().hdp.remapMemAfter==0x7f000u && f->dev.gfxMapReport().hdp.remapRegAfter==0x7f004u &&

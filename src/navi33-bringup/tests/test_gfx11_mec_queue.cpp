@@ -119,9 +119,13 @@ int main() {
         assert(w[16]==std::make_pair(r.scratch,0xcafedeadu) && w[17]==std::make_pair(r.grbm,0x4u));
         size_t i=18;
         for(uint32_t dw=mq::kHqdFirst;dw<=mq::kHqdLast;++dw)if(dw!=mq::kHqdHole)assert(w[i++].first==mq::hqd(r,dw));
+        const uint64_t activeReg=mq::hqd(r,kiq::kCpHqdActive);
+        const auto firstActive=std::find_if(w.begin()+18,w.begin()+static_cast<std::ptrdiff_t>(i),
+            [&](const auto &entry){return entry.first==activeReg;});
+        assert(firstActive!=w.begin()+static_cast<std::ptrdiff_t>(i) && firstActive->second==0u);
         assert(w[i].first==mq::hqd(r,kiq::kCpHqdPqDoorbellControl) && (w[i].second&mq::kDoorbellEn));
         assert(w[i+5]==std::make_pair(r.poll1,1u) && (w[i+6].second&mq::kEopInitFetcher));
-        assert(w[i+7].first==mq::hqd(r,kiq::kCpHqdActive) && w[i+8]==std::make_pair(r.grbm,0u));
+        assert(w[i+7]==std::make_pair(activeReg,1u) && w[i+8]==std::make_pair(r.grbm,0u));
         assert(o.register_writes==w.size() && w.size()==i+11);   // + RPTR readback select/deselect
         // The MQD in VRAM is the G19 image for this window.
         const auto img=gfx11_mqd::buildKiqMqd(mq::queueFor(f.l));

@@ -14,7 +14,11 @@ constexpr uint32_t kGfxActiveDw=0x1e80u,kGfxVmidDw=0x1e81u,kGfxBaseDw=0x1e86u,
                    kGfxWptrDw=0x1e91u,kGfxWptrHiDw=0x1e92u;
 constexpr uint64_t kG34Vram=250ull<<20;
 constexpr uint32_t kMqdOff=0x4200u,kMqdDwords=512u;       // struct v11_gfx_mqd
-constexpr uint32_t kAppendOff=mec_queue::kRingOff+64u,kEndWptr=32u;
+// gfx_v11_0_ring_funcs_kiq has align_mask=0xff; amdgpu_ring_commit pads
+// the producer to a 256-dword fetch boundary. G34's proven test ends at 16.
+constexpr uint32_t kKiqAlignMask=0xffu,kKiqDoorbellByte=0u,kKiqDoorbellDword=0u;
+constexpr uint32_t kAppendOff=mec_queue::kRingOff+64u,kAppendDwords=240u,kEndWptr=256u;
+constexpr uint32_t kPqWptrPollCntlDw=0x1e23u,kPqWptrPollEn=1u<<31,kPqStatusDoorbellEnable=1u<<1;
 constexpr uint32_t kMapFenceOff=mec_queue::kFenceOff+8u,kMapFence=0x0c0b1642u;
 // Linux nbio_v4_3_set_reg_remap() and KFD's MMIO hole. The RX 7600 guest is
 // x86_64 with the driver's 4 KiB GPU page contract; other page sizes refuse.
@@ -65,19 +69,20 @@ inline HdpPlan resolveHdp(const IPDiscovery &d,uint64_t bar5Bytes,uint32_t pageB
     p.code=HdpCode::Pass;return p;
 }
 static_assert(kMqdOff+4u*kMqdDwords<=gfx_ring::kMemBytes,"MQD inside the GFXR heap block");
+static_assert((16u+kAppendDwords)==kEndWptr && !(kEndWptr&(kKiqAlignMask)),"KIQ fetch alignment");
 // Extra CPU access is limited to these exact G34 words, not its whole pinned window.
 constexpr bool stageRange(uint32_t off,uint32_t n,bool write) {
-    return (off==kAppendOff && n==16u) || (off==mec_queue::kWptrOff && n==2u) ||
+    return (off==kAppendOff && n==kAppendDwords) || (off==mec_queue::kWptrOff && n==2u) ||
            (off==kMapFenceOff && n==1u) || (!write && off==mec_queue::kFenceOff && n==1u);
 }
 struct Snapshot {
-    uint32_t scheduler=0,active=0,vmid=0,pqLo=0,pqHi=0,pqControl=0,rptr=0,wptrLo=0,wptrHi=0,fence=0,mapped=0;
+    uint32_t scheduler=0,active=0,vmid=0,pqLo=0,pqHi=0,pqControl=0,pqDoorbell=0,rptr=0,wptrLo=0,wptrHi=0,fence=0,mapped=0;
 };
 inline bool ready(const Snapshot &s,uint64_t fb) {
     const uint64_t base=(uint64_t(s.pqHi)<<32)|s.pqLo;
     return (s.scheduler&0xffu)==0xa0u && s.active==1u && s.vmid==0u &&
         base==((fb+kG34Vram+mec_queue::kRingOff)>>8) &&
-        (s.pqControl&0xc0000000u)==0xc0000000u && s.rptr==16u &&
+        (s.pqControl&0xc0000000u)==0xc0000000u && s.pqDoorbell==gfx11_kiq::kDoorbellEnMask && s.rptr==16u &&
         s.wptrLo==16u && !s.wptrHi && s.fence==mec_queue::kFenceValue && !s.mapped;
 }
 inline uint32_t schedulerWord(uint32_t old) { return (old&0xffffff00u)|0xa0u; } // me1 pipe0 q0, HIQ
@@ -108,7 +113,7 @@ inline void packets(uint64_t gfxMc,uint64_t fb,uint32_t out[16]) {
     out[9]=static_cast<uint32_t>(fence);out[10]=static_cast<uint32_t>(fence>>32);out[11]=kMapFence;
     for(uint32_t i=12;i<16;++i)out[i]=mec_queue::kNop;
 }
-enum class State : uint32_t { Off=0,Refused,Attempted,MapTimeout,Mapped,HdpFailed };
+enum class State : uint32_t { Off=0,Refused,Attempted,MapTimeout,Mapped,HdpFailed,TransportFailed };
 enum class HdpState : uint32_t { NotTried=0,PlanUnavailable,PreflightFailed,UnexpectedRemap,
     RemapWriteFailed,RemapReadbackFailed,AlreadyConfigured,Remapped,FlushWriteFailed,
     FlushReadbackFailed,Complete };
@@ -125,6 +130,7 @@ struct GfxQueueSnapshot {
 struct Report {
     State state=State::Off; Snapshot before{}; HdpReport hdp{};
     GfxQueueSnapshot gfxAfter{};
-    uint32_t fence=0,mapped=0,kiqRptr=0;
+    uint32_t fence=0,mapped=0,kiqRptr=0,pollCntlBefore=0,pollCntlAfter=0,pqStatusBefore=0,pqStatusAfter=0;
+    uint32_t doorbellAperture=0,mecDbLower=0,mecDbUpper=0,kiqPqDoorbell=0;
 };
 } }

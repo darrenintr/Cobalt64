@@ -507,6 +507,19 @@ output survives a hang and Linux can inspect a stuck guest.
   place of `navi33-psp-off=1 navi33-smu-off=1` (backup `config.plist.bak-20261021-pre-autostart`;
   0.0.66 in `navi33/backup-0.0.66-pre-0.0.67/`; `gradient.co` copied). `instruction.txt`: check
   `Navi33,Autostart` DONE 8/8, gradient on screen, 9 `n33gpu` clients, repeat 200, `n33n48n`, `run.sh`.
+  **Ran 2026-10-21 15:14:** autostart DONE 8/8, gradient state 54 with 0 bad pixels, 9 clients,
+  repeat 200 and N48N all exact (findings log). The stick was then left with the autostart
+  boot-args and no PSP/SMU kill switches (findings log, 15:14-15:24): the next Mac boot writes to the card.
+- **Kext 0.0.68 candidate, uncommitted, not run on the card (2026-10-21).** G42 revision for the KIQ
+  transport: KIQ doorbell 0 submit (write gated by `navi33-gfx-map=1`), `CP_PQ_WPTR_POLL_CNTL` periodic-poll
+  disable, `CP_PQ_STATUS` doorbell enable (value-checked read-modify-write), a 240-dword append padded with
+  NOPs, and `gfx_map::ready()` now requires the KIQ doorbell control to read exactly `0x40000000` (what the
+  real G34 tail writes with the gate on). **Not yet covered by hard rule 4**: these writes are new, so that
+  rule's list must be extended before any card run. **Also not gated:** G34's bulk copy now defers ACTIVE to
+  the end (`Navi33Gfx11MecQueue.h`). That runs on every autostart, not only G42, so it needs a physical run
+  before it is trusted; it could be moved behind the gate if the user prefers. Host tests pass (g++, clang
+  ASan/UBSan, 43 bootstrap tests). The Navi48 Metal N33 profile (`tools/native/navi48metal`) is macOS-only and
+  was not compiled here. A card run needs the user's explicit approval and a full host power-off.
 - **Kext 0.0.66 built 2026-10-21** (CI `39555047350` green, UUID
   `07980E84-9171-31D1-8465-BCEA8F8F8E45`, cache `artifact-0.0.66-ci`): AUTOLOAD-only latch so the
   whole sOS -> SCPM sequence fits one bare-metal boot. **Staged on the stick 2026-10-21** (the user ran
@@ -2797,6 +2810,33 @@ parser got two of them wrong:
     `config.plist.used-20261021-scpm`). GC stays up only until the next restart/power-off.
     Next bare-metal stages (MES start, MEC queue, gradient) need their own approval and must
     follow the full sequence in the same boot.
+
+- **2026-10-21 15:14-15:24, kext 0.0.67 on bare-metal macOS: autostart on bare metal, then the
+  gradient and user programs.** Stick checked by the agent from the Linux host (boot-args
+  `navi33-autostart=1 navi33-client-gpu=1 navi33-gradient=1` in place of the PSP/SMU kill
+  switches, as staged). Loaded UUID `D7C0F921-A348-317C-B45B-26588AE0E528` matches the
+  artifact. Boot 15:14:31; results `results-20261021-151718-boot.txt` and
+  `results-20261021-152447-manual.txt`; ioreg `ioreg-after-20261021-152440.txt`.
+  - **Autostart DONE 8/8 on the first bare-metal boot** (`sOS=20/8w ring=28/6w smu-fw=32/1w
+    ip-fw=32/26w autoload=32/1w scpm=39/3w mes=43/12w mec=48/84w`), with no typed commands.
+  - **Gradient, state 54:** 9 writes, rptr 16->144, fences `c0b1602/c0b1603`, 0 bad pixels, pixel
+    (1,1) `00030307`, screen 1920x1080 (ioreg `Navi33,LastGradient`). The step-2b output file
+    (`gradient-*.txt`) is not on the stick. Whether the monitor showed the gradient is the user's
+    observation; it is not recorded here.
+  - **User programs (on the stick, `clients-20261021-152252.txt`, `repeat-20261021-152316.txt`,
+    `n48n-20261021-152340.txt`):** nine clients on VMID 8, one submission each, every pixel exact,
+    closes 0 (42-48 ms each); repeat 200 on VMID 8, last sequence 200, 0 wrong, 40.8 ms per submit;
+    N48N OK, build 67, 0 wrong pixels. `Navi33,ClientGpu`: flushes 11, misses 0, L2 0->0.
+  - Still not established: the gfx ring (`Navi33,ClientGfx` state 6, RPTR 0, kick MMIO), graphics
+    through RADV or Metal, GfxMap (G42 not run), and any rendered output beyond the compute
+    gradient. Preflight reason 11.
+  - The agent first restored the `pre-autostart` kill switches as the stick's `instruction.txt`
+    step 4 says, then reopened them at the user's request ("go aggressive", 2026-10-21): the stick
+    `config.plist` is the used config again (`navi33-autostart=1 navi33-client-gpu=1
+    navi33-gradient=1`, no PSP/SMU kill switches; cmp verified). Stick unmounted. The next Mac boot
+    runs autostart and writes to the card, per the standing on-card approval.
+  - Lesson: the stick's step 4 is not a standing instruction to close the gates; the user's
+    approval governs. Keep the gates open until the user says to close them.
 
 ## Adding a register read
 

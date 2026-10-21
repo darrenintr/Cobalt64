@@ -120,7 +120,7 @@ enum class Code : uint8_t {
 struct Regs {
     vg::Regs g{};          // G38's: hub, context 1, SH_MEM, GRBM, SCRATCH, poll trigger, HQD block
     uint64_t ctx[kClients][7]{};    // CNTL, BASE lo/hi, START lo/hi, END lo/hi
-    uint64_t dequeue=0, invReq=0, invAck=0, invRangeLo=0, invRangeHi=0, l2Status=0, scheduler=0, gfxMapped=0;
+    uint64_t dequeue=0, invReq=0, invAck=0, invRangeLo=0, invRangeHi=0, l2Status=0, scheduler=0, gfxMapped=0,pollCntl=0;
     uint64_t gfxHqdActive=0,gfxHqdVmid=0,gfxHqdBase=0,gfxHqdBaseHi=0,gfxHqdRptr=0,
              gfxHqdCntl=0,gfxHqdWptr=0,gfxHqdWptrHi=0; // raw G42 post-map diagnostics
     gfx_map::HdpPlan hdp{};            // only consumed by the opt-in G42 mapping stage
@@ -143,7 +143,7 @@ inline Regs resolve(const IPDiscovery &d,uint64_t bytes,uint32_t pageBytes=stati
         for(int j=0;j<7;++j)if(!one(dws[j],r.ctx[i][j]))return r;
     }
     const auto scheduler=resolveDword(d,Engine::GFX11,gfx_map::kSchedulerSeg,gfx_map::kSchedulerDw,bytes);
-    if(scheduler.code!=AddressCode::Pass || !one(gfx_map::kMappedDw,r.gfxMapped))return r;
+    if(scheduler.code!=AddressCode::Pass || !one(gfx_map::kMappedDw,r.gfxMapped) || !one(gfx_map::kPqWptrPollCntlDw,r.pollCntl))return r;
     r.scheduler=scheduler.bar5ByteOffset;
     const struct { uint32_t dw; uint64_t *out; } gfxQueueReads[]={
         {gfx_map::kGfxActiveDw,&r.gfxHqdActive},{gfx_map::kGfxVmidDw,&r.gfxHqdVmid},
@@ -184,6 +184,10 @@ inline bool mapWriteAllowed(const Regs &r,uint64_t off,uint32_t value) {
     if(off==r.hdp.remapReg)return value==r.hdp.remapBytes+4u;
     if(off==r.hdp.flush)return value==0u;
     return false;
+}
+inline bool mapPollDisableAllowed(const Regs &r,uint64_t off,uint32_t current,uint32_t value) {
+    return r.valid && off==r.pollCntl && (current&gfx_map::kPqWptrPollEn) &&
+        value==(current&~gfx_map::kPqWptrPollEn);
 }
 static_assert(gfx_map::kSupportedPageBytes==vh::kPage,"G42 HDP remap and the Navi33 GPU VM must use the same 4 KiB page size");
 struct Hw {
@@ -601,7 +605,8 @@ private:
     struct TableIo { Device *dev=nullptr; };
     bool rd(uint64_t off,uint32_t &v) { return h_.read(h_.ctx,off,&v) && v!=0xffffffffu; }
     bool wr(uint64_t off,uint32_t v) {
-        if((!allowed(*r_,off) && !(gfxMapGate_ && mapWriteAllowed(*r_,off,v))) || !h_.write(h_.ctx,off,v))return false;
+        if((!allowed(*r_,off) && !(gfxMapGate_ && mapWriteAllowed(*r_,off,v)) &&
+            !(gfxMapGate_ && gfxMapAttempted_ && mapPollDisableAllowed(*r_,off,gfxMap_.pollCntlBefore,v))) || !h_.write(h_.ctx,off,v))return false;
         ++writes_;if(off==r_->g.v.q.grbm)select_=v;
         return true;
     }
@@ -719,8 +724,8 @@ private:
     }
     // G42 consumes the known idle G34 ring exactly once. No client controls these packets.
     bool stagePut(uint32_t off,const uint32_t *p,uint32_t n) {
-        uint32_t back[16]{};
-        if(n>16u || !h_.stageWrite(h_.ctx,off,p,n) || !h_.stageRead(h_.ctx,off,back,n))return false;
+        uint32_t back[gfx_map::kAppendDwords]{};
+        if(n>gfx_map::kAppendDwords || !h_.stageWrite(h_.ctx,off,p,n) || !h_.stageRead(h_.ctx,off,back,n))return false;
         for(uint32_t i=0;i<n;++i)if(back[i]!=p[i])return false;
         return true;
     }
@@ -733,12 +738,14 @@ private:
         gfxMap_.hdp.remapBytes=r_->hdp.remapBytes;
         if(!r_->hdp.valid()) {gfxMap_.hdp.state=gm::HdpState::PlanUnavailable;return false;}
         gm::Snapshot &s=gfxMap_.before;
-        if(!rd(r_->scheduler,s.scheduler) || !rd(r_->gfxMapped,s.mapped) || !sel(mq::grbmSelect(1u,0u,0u)))return false;
+        if(!rd(r_->scheduler,s.scheduler) || !sel(mq::grbmSelect(0u,0u,0u)) || !rd(r_->gfxMapped,s.mapped) ||
+           !sel(mq::grbmSelect(1u,0u,0u)))return false;
         const mq::Regs &q=r_->g.v.q;
         const struct { uint32_t dw; uint32_t *out; } reads[]={
             {kiq::kCpHqdActive,&s.active},{kiq::kCpHqdVmid,&s.vmid},
             {kiq::kCpHqdPqBase,&s.pqLo},{kiq::kCpHqdPqBaseHi,&s.pqHi},
-            {kiq::kCpHqdPqControl,&s.pqControl},{kiq::kCpHqdPqRptr,&s.rptr}};
+            {kiq::kCpHqdPqControl,&s.pqControl},{kiq::kCpHqdPqDoorbellControl,&s.pqDoorbell},
+            {kiq::kCpHqdPqRptr,&s.rptr}};
         bool ok=true;for(const auto &x:reads)if(!rd(mq::hqd(q,x.dw),*x.out))ok=false;
         if(!sel(0u))return false;
         uint32_t wp[2]{};
@@ -746,6 +753,13 @@ private:
            !h_.stageRead(h_.ctx,mq::kFenceOff,&s.fence,1u))return false;
         s.wptrLo=wp[0];s.wptrHi=wp[1];
         if(!gm::ready(s,fbBase_))return false;
+        if(!rd(r_->pollCntl,gfxMap_.pollCntlBefore) || !rd(r_->pqStatus,gfxMap_.pqStatusBefore))return false;
+        // G40 may have relocated the MEC range since start() cached the shared
+        // doorbell snapshot. Validate the live aperture and exact range now.
+        if(!rd(r_->nbioAperEn,gfxMap_.doorbellAperture) ||
+           !rd(r_->mecDbLower,gfxMap_.mecDbLower) || !rd(r_->mecDbUpper,gfxMap_.mecDbUpper) ||
+           !(gfxMap_.doorbellAperture&1u) || gfxMap_.mecDbLower!=0u ||
+           gfxMap_.mecDbUpper!=kMecDbUpperValue)return false;
         if(!rd(r_->hdp.remapMem,gfxMap_.hdp.remapMemBefore) ||
            !rd(r_->hdp.remapReg,gfxMap_.hdp.remapRegBefore)) {
             gfxMap_.hdp.state=gm::HdpState::PreflightFailed;return false;
@@ -759,9 +773,23 @@ private:
             gfxMap_.hdp.state=gm::HdpState::UnexpectedRemap;return false;
         }
         uint32_t image[gm::kMqdDwords]{};gm::mqd(mc,image);
-        uint32_t packets[16]{};gm::packets(mc,fbBase_,packets);
+        uint32_t packet[16]{},packets[gm::kAppendDwords];gm::packets(mc,fbBase_,packet);
+        for(uint32_t i=0;i<gm::kAppendDwords;++i)packets[i]=mq::kNop;
+        for(uint32_t i=0;i<16u;++i)packets[i]=packet[i];
         const uint32_t zero=0, next[2]={gm::kEndWptr,0u};
         gfxMapAttempted_=true;gfxMap_.state=gm::State::Attempted; // latch before any new MMIO or VRAM write
+        // KIQ initialization disables periodic WPTR polling; it is distinct
+        // from the one-shot POLL_CNTL1 path used by the original G34 proof.
+        const uint32_t pollDisabled=gfxMap_.pollCntlBefore&~gm::kPqWptrPollEn;
+        if((gfxMap_.pollCntlBefore&gm::kPqWptrPollEn) &&
+           (!wr(r_->pollCntl,pollDisabled) || !rd(r_->pollCntl,gfxMap_.pollCntlAfter) ||
+            gfxMap_.pollCntlAfter!=pollDisabled)) {gfxMap_.state=gm::State::TransportFailed;return false;}
+        if(!(gfxMap_.pollCntlBefore&gm::kPqWptrPollEn))gfxMap_.pollCntlAfter=gfxMap_.pollCntlBefore;
+        const uint32_t pqDoorbell=gfxMap_.pqStatusBefore|gm::kPqStatusDoorbellEnable;
+        if(!(gfxMap_.pqStatusBefore&gm::kPqStatusDoorbellEnable) && !wr(r_->pqStatus,pqDoorbell))
+            {gfxMap_.state=gm::State::TransportFailed;return false;}
+        if(!rd(r_->pqStatus,gfxMap_.pqStatusAfter) || gfxMap_.pqStatusAfter!=pqDoorbell)
+            {gfxMap_.state=gm::State::TransportFailed;return false;}
         if(remapReset || remapPowerOn) {
             if(!wr(r_->hdp.remapMem,r_->hdp.remapBytes)) {
                 gfxMap_.hdp.state=gm::HdpState::RemapWriteFailed;gfxMap_.state=gm::State::HdpFailed;return false;
@@ -783,7 +811,7 @@ private:
             gfxMap_.hdp.state=gm::HdpState::AlreadyConfigured;
         }
         if(!vramPut(gfxMemVram_+gm::kMqdOff,image,gm::kMqdDwords) ||
-           !stagePut(gm::kMapFenceOff,&zero,1u) || !stagePut(gm::kAppendOff,packets,16u) ||
+           !stagePut(gm::kMapFenceOff,&zero,1u) || !stagePut(gm::kAppendOff,packets,gm::kAppendDwords) ||
            !stagePut(mq::kWptrOff,next,2u))return false;
         if(!wr(r_->hdp.flush,0u)) {
             gfxMap_.hdp.state=gm::HdpState::FlushWriteFailed;gfxMap_.state=gm::State::HdpFailed;return false;
@@ -795,14 +823,15 @@ private:
             gfxMap_.hdp.state=gm::HdpState::FlushReadbackFailed;gfxMap_.state=gm::State::HdpFailed;return false;
         }
         gfxMap_.hdp.memsize=capacity.capacityMiB;gfxMap_.hdp.state=gm::HdpState::Complete;
-        if(!sel(mq::grbmSelect(1u,0u,0u)) || !wr(q.poll1,1u) || !sel(0u))return false;
+        if(!sel(0u) || !h_.doorbell(h_.ctx,gm::kKiqDoorbellByte,gm::kEndWptr))
+            {gfxMap_.state=gm::State::TransportFailed;return false;}
         gfxMap_.state=gm::State::MapTimeout;
         for(uint32_t us=0;us<gfx_ring::kFenceTimeoutUs;us+=100u) {
             if(!h_.stageRead(h_.ctx,gm::kMapFenceOff,&gfxMap_.fence,1u))return false;
             if(gfxMap_.fence==gm::kMapFence)break;
             h_.delayUs(h_.ctx,100u);
         }
-        if(!rd(r_->gfxMapped,gfxMap_.mapped))return false;
+        if(!sel(mq::grbmSelect(0u,0u,0u)) || !rd(r_->gfxMapped,gfxMap_.mapped))return false;
         // Capture the GFX ME0/pipe0/queue0 HQD after MAP_QUEUES, while GRBM is
         // back at its default selection. A failed diagnostic read must not
         // change the map result or add any hardware writes.
@@ -816,6 +845,7 @@ private:
         gfxReads=rd(r_->gfxHqdWptr,g.wptrLo) && gfxReads;
         gfxReads=rd(r_->gfxHqdWptrHi,g.wptrHi) && gfxReads;
         g.valid=gfxReads;
+        if(!sel(mq::grbmSelect(0u,0u,0u)))return false;
         if(!sel(mq::grbmSelect(1u,0u,0u)))return false;
         const bool got=rd(mq::hqd(q,kiq::kCpHqdPqRptr),gfxMap_.kiqRptr);
         if(!sel(0u) || !got)return false;

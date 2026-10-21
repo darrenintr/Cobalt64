@@ -3067,7 +3067,11 @@ N48_RESOURCE_SPI
 // ---------------------------------------------------------------------------------------------------------------
 #define N48_HEAP_PAGE   16384ULL
 #define N48_HEAP_ALIGN  256ULL
+#if N48_N33_PROFILE
+#define N48_HEAP_MAX    (0x100000000ULL)   /* experimental Navi33: cap at 4 GiB */
+#else
 #define N48_HEAP_MAX    (0x300000000ULL)   /* 12 GiB, the recommended working set */
+#endif
 static NSUInteger n48_alup(NSUInteger v, NSUInteger a) { return (NSUInteger)n48ha_alup(v, a); }
 // Size and alignment of a texture inside a heap: the tight pixel bytes (all slices), 256-aligned. Device-specific (an Apple-silicon Mac says 16512 for 64x64 RGBA8; any
 // consistent value is correct for a budget).
@@ -5943,8 +5947,8 @@ N48_ENCODER_NOOPS
 
 // MTLGPUFamily values: n48_gate.h (N48G_FAMILY_*, n48g_supports_family).
 
-// Conservative limits, from our RADV gfx1201 vulkaninfo (~/navi48-native/mesa-mac-out/vulkaninfo-full.txt):
-// device-local heap 16911433728 B (15.75 GiB); maxStorageBufferRange 4294967295.
+// Navi48 retains its measured fixed values. The experimental Navi33 profile
+// reports compute limits and local memory from the opened RADV device.
 #define N48_MAX_BUFFER_LENGTH        (0x100000000ULL)   /* 4 GiB */
 #define N48_RECOMMENDED_WORKING_SET  (0x300000000ULL)   /* 12 GiB (< 15.75 GiB VRAM) */
 
@@ -6171,7 +6175,14 @@ static void n48_census_log(void) {
 // MTLIOAccelDevice -currentAllocatedSize SEGVs on this device (measured: it reads the IOAccel resource pool we do not have).
 - (NSUInteger)currentAllocatedSize { return (NSUInteger)atomic_load(&n48_alloc_total); }
 - (NSUInteger)maxThreadgroupMemoryLength { return 32768; }   // Metal reports 32 KiB on every Mac GPU; RADV's local-memory limit is larger, so any kernel that fits here fits there
-- (MTLSize)maxThreadsPerThreadgroup { return MTLSizeMake(1024, 1024, 1024); }   // maxComputeWorkGroupSize 1024,1024,1024 (RADV gfx1201)
+- (MTLSize)maxThreadsPerThreadgroup {
+#if N48_N33_PROFILE
+    if (N48R.ok) return MTLSizeMake(N48R.lim.maxComputeWorkGroupSize[0], N48R.lim.maxComputeWorkGroupSize[1], N48R.lim.maxComputeWorkGroupSize[2]);
+    return MTLSizeMake(1, 1, 1);
+#else
+    return MTLSizeMake(1024, 1024, 1024);
+#endif
+}
 // bundle 10: 1 always; 2 / 4 / 8 when the device's framebuffer colour AND depth/stencil counts include them (RADV open); before RADV is open (asking must not open it) 4 only, which Vulkan requires of every device.
 - (BOOL)supportsSampleCount:(NSUInteger)n { unsigned m = n48_ms_mask(); return n48ms_device_supports((unsigned long)n, N48R.ok ? 1 : 0, m, m) ? YES : NO; }
 - (BOOL)supportsTextureSampleCount:(NSUInteger)n { return [self supportsSampleCount:n]; }
@@ -6255,11 +6266,14 @@ static void n48_census_log(void) {
 
 - (BOOL)supportLazyInitialization { return N48_LAZY ? YES : NO; }
 
-// _MTLDevice -name composes vendorName/familyName/productName, skipping empty parts, joined by " "
-// (SUSPECTED from -[_MTLDevice name] at 0x7ff80f49a2f6; fallback string "Unnamed_GPU") -> "AMD Radeon RX 9070 XT".
+// _MTLDevice -name composes vendorName/familyName/productName, skipping empty parts.
 - (NSString *)vendorName  { return @"AMD"; }
 - (NSString *)familyName  { return @"Radeon"; }
+#if N48_N33_PROFILE
+- (NSString *)productName { return @"RX 7600"; }
+#else
 - (NSString *)productName { return @"RX 9070 XT"; }
+#endif
 
 // featureProfile: -[AppleParavirtDevice featureProfile] (pvm.x86 0xacc3) is `mov eax,0x2710; ret` = 10000 (CONFIRMED).
 - (NSUInteger)featureProfile { return 10000; }
@@ -6283,7 +6297,17 @@ static void n48_census_log(void) {
     }
     N48_ONCE("argumentBuffersSupport -> Tier1 (0) for this application: argument buffers beyond the basics are not implemented"); return (NSUInteger)N48G_ARGBUF_TIER1; }
 - (NSUInteger)maxBufferLength                { return (NSUInteger)N48_MAX_BUFFER_LENGTH; }
-- (uint64_t)recommendedMaxWorkingSetSize     { return N48_RECOMMENDED_WORKING_SET; }
+- (uint64_t)recommendedMaxWorkingSetSize {
+#if N48_N33_PROFILE
+    if (!N48R.ok) return 0;
+    uint64_t bytes = 0;
+    for (uint32_t i = 0; i < N48R.mp.memoryHeapCount; i++)
+        if (N48R.mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) bytes += N48R.mp.memoryHeaps[i].size;
+    return bytes;
+#else
+    return N48_RECOMMENDED_WORKING_SET;
+#endif
+}
 - (BOOL)hasUnifiedMemory { return NO; }
 - (BOOL)isHeadless       { return n48_headless(); }   // 11b: YES unless /private/tmp/n48m-headless-no exists (read once per process)
 - (BOOL)isLowPower       { return NO; }

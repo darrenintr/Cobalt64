@@ -24,20 +24,21 @@ fi
 [ -f "$XL" ] || { echo "build.sh: libn48xlate.dylib not found: $XL" >&2; exit 1; }
 [ "$(lipo -archs "$XL" 2>/dev/null)" = "x86_64" ] || { echo "build.sh: $XL is not a thin x86_64 library" >&2; exit 1; }
 VKINC="${N48_VK_INC:--I/opt/homebrew/include}"
+N33_PROFILE="${N48_N33_PROFILE:-0}"
 rm -rf "$B"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$B/sanity"
 cp "$D/Info.plist" "$APP/Contents/Info.plist"
 cp "$RADV" "$APP/Contents/Resources/libvulkan_radeon.dylib"
 cp "$XL" "$APP/Contents/Resources/libn48xlate.dylib"
 mkdir -p "$APP/Contents/Resources/spvcache"; for f in "$D"/spvcache/*.spv(N) "$D"/spvcache/*.meta.json(N); do cat "$f" > "$APP/Contents/Resources/spvcache/${f:t}"; done   # cat, not cp: cp(1) hung forever in lseek on spvcache/eee33f36...meta.json; empty/missing cache is valid
 clang $VKINC -arch x86_64 -mmacosx-version-min=12.0 -fobjc-arc -O2 -Wall -Wextra -Werror \
-      -DN48_LAZY=$LAZY -DN48_9D=$F9D -I"$D" -bundle -framework Foundation -framework Metal -framework IOKit -framework IOSurface \
+      -DN48_LAZY=$LAZY -DN48_9D=$F9D -DN48_N33_PROFILE=$N33_PROFILE -I"$D" -bundle -framework Foundation -framework Metal -framework IOKit -framework IOSurface \
       -o "$APP/Contents/MacOS/Navi48Metal" "$D/Navi48Device.m"
 xattr -cr "$APP"
 codesign --force --sign - "$APP/Contents/Resources/libvulkan_radeon.dylib"
 codesign --force --sign - "$APP/Contents/Resources/libn48xlate.dylib"
 codesign --force --sign - "$APP"
 # arm64 build of the same source: compile/link sanity only (there is no Rosetta here to load x86_64); never install it.
-clang $VKINC -arch arm64 -fobjc-arc -O2 -Wall -Wextra -Werror -DN48_LAZY=$LAZY -DN48_9D=$F9D \
+clang $VKINC -arch arm64 -fobjc-arc -O2 -Wall -Wextra -Werror -DN48_LAZY=$LAZY -DN48_9D=$F9D -DN48_N33_PROFILE=$N33_PROFILE \
       -I"$D" -bundle -framework Foundation -framework Metal -framework IOKit -framework IOSurface -o "$B/sanity/Navi48Metal-arm64.NOT-SHIPPED" "$D/Navi48Device.m"
 codesign --verify --strict -v "$APP"
 tar --no-xattrs --no-mac-metadata -C "$W" -cf "$B/Navi48Metal.bundle.tar" Navi48Metal.bundle 2>/dev/null || \

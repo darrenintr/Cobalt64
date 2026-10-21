@@ -636,7 +636,7 @@ nclient=(root/'src/Navi33NativeClient.cpp').read_text()
 assert 'PE_parse_boot_argn("navi33-client-gpu",&cgOn,sizeof(cgOn)) && cgOn==1u' in probe
 assert 'clientGpuGate_=!pspKilled &&' in probe
 assert 'if(!clientGpuGate_ || !pspLock_)return kIOReturnUnsupported;' in probe
-assert 'if(!cg::allowed(h->r,off)' in cgw and '!h->heap->covers(off,len)' in cgw
+assert '!cg::allowed(h->r,off)' in cgw and '!h->heap->covers(off,len)' in cgw
 assert 'if(md)gpuHost_.dev.markCpuMapped(slot,handle);' in probe   # CPU-mapped memory never reused
 assert 'owner_->gpuContext(this, N33_CTX_OP_CLOSE, nullptr);' in nclient
 assert 'Navi33DarwinClientGpu.o' in makefile

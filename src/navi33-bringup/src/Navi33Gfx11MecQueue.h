@@ -111,13 +111,15 @@ inline n33_psp_load_result blank() {
     n33_psp_load_result o{};o.abi_version=N33_ABI_VERSION;o.size=sizeof(o);
     o.mec_marker=N33_MEC_MARKER;return o;
 }
-// The queue as gfx_v11_0_compute_mqd_init() sees it: no doorbell in the MQD
-// (hqd_load_v11 turns the logic on by register), WPTR polled from memory.
-inline kiq::KiqQueue queueFor(const Layout &l) {
+// The GFX-map KIQ transport follows gfx_v11_0_kiq_init_register(): doorbell 0
+// in the MQD/HQD, range 0..userqueue_end. The initial ring proof still uses
+// the one-shot WPTR poll; G42 later submits through KIQ's BAR2 doorbell.
+inline kiq::KiqQueue queueFor(const Layout &l,bool gfxMapGate=false) {
     kiq::KiqQueue q{};
     q.mqdGpuVa=l.windowMc+kMqdOff;q.eopGpuVa=l.windowMc+kEopOff;q.pqGpuVa=l.windowMc+kRingOff;
     q.rptrGpuVa=l.windowMc+kRptrOff;q.wptrGpuVa=l.windowMc+kWptrOff;
-    q.queueBytes=kRingBytes;q.eopBytes=kEopBytes;q.useDoorbell=false;
+    q.queueBytes=kRingBytes;q.eopBytes=kEopBytes;q.useDoorbell=gfxMapGate;
+    if(gfxMapGate){q.doorbellIndex=0u;q.doorbellRangeLower=0u;q.doorbellRangeUpper=0x8au;}
     return q;
 }
 // Ring contents: Linux's compute ring test, then a 32-bit RELEASE_MEM fence,
@@ -166,7 +168,7 @@ inline n33_psp_load_result execute(const Regs &r,const Layout &l,const Hw &h,boo
     if(!r.valid){o.state=N33_PSPL_BAD_ROM;return o;}
     o.mec_window_mc=l.windowMc;
     if(!l.windowMc || (l.windowMc&(kWindowBytes-1u))){o.state=N33_PSPL_NO_WINDOW;return o;}
-    const gfx11_mqd::Result mqd=gfx11_mqd::buildKiqMqd(queueFor(l));
+    const gfx11_mqd::Result mqd=gfx11_mqd::buildKiqMqd(queueFor(l,gfxMapGate));
     if(mqd.code!=kiq::Code::PlanOnly){o.state=N33_PSPL_BAD_REQUEST;return o;}
     o.state=sample(r,h,o);
     if(o.state!=N33_PSPL_PLAN_OK || !run)return o;
@@ -232,9 +234,14 @@ inline n33_psp_load_result execute(const Regs &r,const Layout &l,const Hw &h,boo
     o.mec_hqd_active_before=active;
     if(active&1u)return w.stop(N33_PSPL_MEC_BAD_PRECONDITION);
     const uint32_t *img=mqd.image.dw;
-    for(uint32_t dw=kHqdFirst;dw<=kHqdLast;++dw)
-        if(dw!=kHqdHole && !w.put(hqd(r,dw),img[gfx11_mqd::kCpMqdBaseAddrLo+(dw-kHqdFirst)]))
-            return w.stop(N33_PSPL_MEC_WRITE_FAILED);
+    for(uint32_t dw=kHqdFirst;dw<=kHqdLast;++dw)if(dw!=kHqdHole) {
+        uint32_t value=img[gfx11_mqd::kCpMqdBaseAddrLo+(dw-kHqdFirst)];
+        // hqd_load_v11 writes the MQD block before its WPTR poll and EOP
+        // fetcher setup, then asserts ACTIVE as the final HQD write. The KIQ
+        // MQD image has ACTIVE=1, so defer that bit while copying the block.
+        if(dw==kiq::kCpHqdActive)value&=~1u;
+        if(!w.put(hqd(r,dw),value))return w.stop(N33_PSPL_MEC_WRITE_FAILED);
+    }
     const uint64_t wptrMc=l.windowMc+kWptrOff;
     const struct { uint32_t dw; uint32_t v; } tail[]={
         {kiq::kCpHqdPqDoorbellControl,img[gfx11_mqd::kCpHqdPqDoorbellControl]|kDoorbellEn},
