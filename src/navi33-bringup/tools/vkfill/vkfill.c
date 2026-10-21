@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
     GD(vkCreatePipelineLayout); GD(vkCreateComputePipelines); GD(vkCreateDescriptorPool); GD(vkAllocateDescriptorSets);
     GD(vkUpdateDescriptorSets); GD(vkCreateCommandPool); GD(vkAllocateCommandBuffers); GD(vkBeginCommandBuffer);
     GD(vkCmdBindPipeline); GD(vkCmdBindDescriptorSets); GD(vkCmdDispatch); GD(vkEndCommandBuffer);
-    GD(vkCreateFence); GD(vkQueueSubmit); GD(vkWaitForFences); GD(vkDestroyDevice); GD(vkCmdFillBuffer);
+    GD(vkCreateFence); GD(vkQueueSubmit); GD(vkWaitForFences); GD(vkDestroyDevice);
     GD(vkCmdPipelineBarrier);
     VkQueue q; vkGetDeviceQueue(dev, qfi, 0, &q);
 
