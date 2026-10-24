@@ -14,7 +14,7 @@ static Owner readyOwner() {
 int main() {
     static_assert(sizeof(Packet)==256,"packet frame length");
     static_assert(kGfxDoorbellByte==0x458,"Navi33 GFX BAR2 doorbell");
-    assert(header(kAddQueue)==0x00040201u);
+    assert(header(kAddQueue)==0x00040021u);
     Owner o=readyOwner();
     assert(readiness(o).ok());
     o.mesVersion=0x46;assert(readiness(o).code==Code::BadScheduler);
