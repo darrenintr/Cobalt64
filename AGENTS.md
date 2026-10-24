@@ -39,6 +39,16 @@ detach that live display GPU. A fresh macOS or headless VFIO boot, working SSH
 recovery and matching CI artifact are still physical prerequisites. The last
 bare-metal evidence remains 0.0.67: exact compute, graphics ring state 6.
 
+**MES Route B offline groundwork (2026-10-24):** a separate draft PR adds
+GC11.0.2 MES v11 256-byte Scheduler API packet builders, a CPU-only
+128-dword scheduler Ring transport, and an independent ME3 pipe1 (MES KIQ) /
+ME3 pipe0 (Scheduler) bootstrap manifest with disjoint GPU buffer leases.
+See `src/navi33-bringup/MES_ROUTE_B.md`. The new modules are host-tested
+and **not linked to Navi33Probe.kext**; they enable no hardware writes, do not
+replace G34/G42, and do not constitute a successful GFX mapping or Metal proof.
+MES hardware integration needs its own guarded stage and renewed explicit
+physical test approval. Never boot it alongside existing G34/G42 ownership.
+
 ## Repository map
 
 - `src/navi48-bringup`: the working driver. RX 9070 XT (Navi 48, RDNA4,
