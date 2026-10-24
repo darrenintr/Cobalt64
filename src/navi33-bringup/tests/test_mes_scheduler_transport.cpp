@@ -91,7 +91,7 @@ static void wrapAndCapacity() {
     assert(ring[103]==x.query.dw[63]);
     x=stage(t::Step::MapGfx,900,0);
     assert(t::prepare(x).code==t::Code::InsufficientSpace);
-    x=stage(t::Step::MapGfx,900,100);
+    x=stage(t::Step::MapGfx,1000,100);
     assert(t::prepare(x).code==t::Code::InsufficientSpace);
     x=stage(t::Step::MapGfx,1024,0);
     assert(t::prepare(x).code==t::Code::PointerRefused);
