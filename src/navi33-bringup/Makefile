@@ -341,6 +341,18 @@ $(BUILD)/test-gfx11-mes: tests/test_gfx11_mes.cpp src/Navi33GfxMes.h src/Navi33G
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_gfx11_mes.cpp -o $@
 
+$(BUILD)/test-mes-scheduler-bootstrap: tests/test_mes_scheduler_bootstrap.cpp src/Navi33MesSchedulerBootstrap.h src/Navi33MesSchedulerTransport.h src/Navi33MesGfxRouteB.h src/Navi33GfxMesMqd.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_mes_scheduler_bootstrap.cpp -o $@
+
+$(BUILD)/test-mes-scheduler-transport: tests/test_mes_scheduler_transport.cpp src/Navi33MesSchedulerTransport.h src/Navi33MesGfxRouteB.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_mes_scheduler_transport.cpp -o $@
+
+$(BUILD)/test-mes-gfx-routeb: tests/test_mes_gfx_routeb.cpp src/Navi33MesGfxRouteB.h
+	@mkdir -p $(BUILD)
+	$(HOST_CXX) $(HOST_FLAGS) tests/test_mes_gfx_routeb.cpp -o $@
+
 $(BUILD)/test-pci-owner: tests/test_pci_owner.cpp src/Navi33PciOwner.h
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) tests/test_pci_owner.cpp -o $@
@@ -456,7 +468,7 @@ $(BUILD)/test-smu13-enable: tests/test_smu13_enable.cpp src/Navi33Smu13Enable.h 
 	@mkdir -p $(BUILD)
 	$(HOST_CXX) $(HOST_FLAGS) $< -o $@
 
-host-test: $(BUILD)/test-console-sources $(BUILD)/test-metal-nub $(BUILD)/test-client-gpu $(BUILD)/test-gfx11-vm-alloc $(BUILD)/test-vram-heap $(BUILD)/test-gfx11-vm-gradient $(BUILD)/test-gfx11-vmid $(BUILD)/test-autostart $(BUILD)/test-gfx11-gradient $(BUILD)/test-gfx11-mec-queue $(BUILD)/test-gfx11-mes-start $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/test-dma-backend $(BUILD)/test-dma-engine $(BUILD)/test-dma-engine-unsafe $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-ring-test $(BUILD)/test-gfx11-shader $(BUILD)/test-gfx11-dispatch $(BUILD)/sdma6-ring-plan $(BUILD)/test-sdma6-proof-run $(BUILD)/test-sdma6-queue1-config-plan $(BUILD)/test-sdma6-queue1-memory-contract $(BUILD)/test-gfx11-mec-enable $(BUILD)/test-gfx11-kiq-hqd $(BUILD)/test-gfx11-mqd $(BUILD)/test-gfx11-mes $(BUILD)/test-gfx11-mes-mqd $(BUILD)/test-pci-owner $(BUILD)/test-production-owner $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
+host-test: $(BUILD)/test-mes-scheduler-bootstrap $(BUILD)/test-mes-scheduler-transport $(BUILD)/test-mes-gfx-routeb $(BUILD)/test-console-sources $(BUILD)/test-metal-nub $(BUILD)/test-client-gpu $(BUILD)/test-gfx11-vm-alloc $(BUILD)/test-vram-heap $(BUILD)/test-gfx11-vm-gradient $(BUILD)/test-gfx11-vmid $(BUILD)/test-autostart $(BUILD)/test-gfx11-gradient $(BUILD)/test-gfx11-mec-queue $(BUILD)/test-gfx11-mes-start $(BUILD)/test-smu13-enable $(BUILD)/test-identity $(BUILD)/test-discovery $(BUILD)/test-hardware-plan $(BUILD)/test-firmware $(BUILD)/test-sdma6-packet $(BUILD)/test-gmc11-gart $(BUILD)/test-sdma6-ring $(BUILD)/test-dma-scatter $(BUILD)/test-dma-backend $(BUILD)/test-dma-engine $(BUILD)/test-dma-engine-unsafe $(BUILD)/discovery-dump $(BUILD)/backend-report $(BUILD)/test-gfx11-native $(BUILD)/test-gfx11-formats $(BUILD)/native-caps $(BUILD)/test-live-mmio $(BUILD)/test-native-client $(BUILD)/test-psp13-status $(BUILD)/test-psp13-firmware $(BUILD)/test-sha256 $(BUILD)/test-psp13-loader $(BUILD)/test-psp13-ring $(BUILD)/test-psp13-ring-run $(BUILD)/test-psp13-ipfw $(BUILD)/test-psp13-fwload $(BUILD)/test-sdma6-status $(BUILD)/test-sdma6-queue-census $(BUILD)/test-sdma6-staging $(BUILD)/test-sdma6-hardware-gate $(BUILD)/test-sdma6-mmio-queue $(BUILD)/test-sdma6-mmio-off $(BUILD)/test-sdma6-bar-adapter $(BUILD)/test-gmc11-mmhub $(BUILD)/test-gmc11-mmhub-off $(BUILD)/test-hw-probe-logic $(BUILD)/test-mmio-peek $(BUILD)/test-sdma6-ring-test $(BUILD)/test-gfx11-shader $(BUILD)/test-gfx11-dispatch $(BUILD)/sdma6-ring-plan $(BUILD)/test-sdma6-proof-run $(BUILD)/test-sdma6-queue1-config-plan $(BUILD)/test-sdma6-queue1-memory-contract $(BUILD)/test-gfx11-mec-enable $(BUILD)/test-gfx11-kiq-hqd $(BUILD)/test-gfx11-mqd $(BUILD)/test-gfx11-mes $(BUILD)/test-gfx11-mes-mqd $(BUILD)/test-pci-owner $(BUILD)/test-production-owner $(BUILD)/test-dma-lifetime $(BUILD)/test-stage-owner $(BUILD)/test-gmc11-root-vram $(BUILD)/test-sdma6-queue-owner $(BUILD)/test-gmc11-vram-geometry $(BUILD)/test-vram-bo-allocator $(BUILD)/test-gmc11-vram-live $(BUILD)/test-gmc11-vram-lease $(BUILD)/test-nbio43-capacity $(BUILD)/test-gmc11-vram-upload $(BUILD)/test-gmc11-vram-upload-off $(BUILD)/test-rx7600-silicon-bases
 	$(BUILD)/test-vram-heap
 	$(BUILD)/test-gfx11-vm-alloc
 	$(BUILD)/test-metal-nub
@@ -513,6 +525,9 @@ host-test: $(BUILD)/test-console-sources $(BUILD)/test-metal-nub $(BUILD)/test-c
 	$(BUILD)/test-gfx11-mqd
 	$(BUILD)/test-gfx11-mes
 	$(BUILD)/test-gfx11-mes-mqd
+	$(BUILD)/test-mes-gfx-routeb
+	$(BUILD)/test-mes-scheduler-transport
+	$(BUILD)/test-mes-scheduler-bootstrap
 	$(BUILD)/test-pci-owner
 	$(BUILD)/test-production-owner
 	$(BUILD)/test-dma-lifetime
