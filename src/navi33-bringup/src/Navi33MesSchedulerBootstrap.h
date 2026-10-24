@@ -52,7 +52,7 @@ inline bool validateBuffers(const mes::QueueInput &k,const mes::QueueInput &s,
     const mes::QueueInput a[2]={k,s};
     Buffer b[10]{};
     for(unsigned i=0;i<2;i++) {
-        const mes::gfx11_kiq::KiqQueue &q=a[i].q;
+        const auto &q=a[i].q;
         const unsigned o=i*5u;
         b[o+0]={q.mqdGpuVa,kMesMqdBytes};
         b[o+1]={q.pqGpuVa,q.queueBytes};
