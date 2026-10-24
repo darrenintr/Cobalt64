@@ -20,7 +20,7 @@ constexpr uint32_t kResources1MesVersion=0x52;
 constexpr uint32_t kVersionMask=0xfff;
 constexpr uint32_t kMaxMcBits=48;
 constexpr uint64_t kMaxMc=(1ull<<kMaxMcBits)-1ull;
-constexpr uint32_t kLegacyKqBit=1u<<12;
+constexpr uint32_t kLegacyKqBit=1u<<13;
 constexpr uint32_t kResourcesFlags=(1u<<0)|(1u<<1)|(1u<<2)|(1u<<6)|(1u<<10);
 // gc11 mes_v11_api_def.h: 4-byte aligned API packet layout on x86_64.
 // We use named structures and offsetof: no guessed array indexes.
