@@ -80,9 +80,9 @@ static_assert(sizeof(AddQueueFields)<=kFrameBytes,"MES ADD_QUEUE fields fit");
 static_assert(sizeof(ResourcesFields)<=kFrameBytes,"MES SET_HW_RESOURCES fields fit");
 static_assert(sizeof(Resources1Fields)<=kFrameBytes,"MES SET_HW_RESOURCES_1 fields fit");
 static_assert(sizeof(QueryFields)<=kFrameBytes,"MES QUERY fields fit");
-static_assert(offsetof(AddQueueFields, flags)==136,"MES legacy flag offset");
-static_assert(offsetof(AddQueueFields, status)==140,"MES ADD_QUEUE status offset");
-static_assert(offsetof(AddQueueFields, pipe_id)==188,"MES ADD_QUEUE pipe offset");
+static_assert(offsetof(AddQueueFields, flags)==144,"MES legacy flag offset");
+static_assert(offsetof(AddQueueFields, status)==148,"MES ADD_QUEUE status offset");
+static_assert(offsetof(AddQueueFields, pipe_id)==192,"MES ADD_QUEUE pipe offset");
 
 struct Packet { uint32_t dw[kFrameDwords]{}; };
 enum class Code : uint8_t { Ready, BadFirmware, BadOwnership, BadAddress, BadRing, BadScheduler, BadResources };
